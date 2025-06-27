@@ -4497,7 +4497,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await ask_for_invoice_edit_value(update, context)
         else:
             # Если состояние не совпало, игнорируем ввод, чтобы избежать ошибок
-            awai
+            await
 
     elif state_key == 'report':
         step = user_data['report'].get('step')
