@@ -195,14 +195,14 @@ def get_gsheet():
             "https://www.googleapis.com/auth/drive"
         ]
         # Проверяем, запущена ли программа на Railway
-    if 'GOOGLE_CREDENTIALS_JSON' in os.environ:
-        creds_json_str = os.environ.get('GOOGLE_CREDENTIALS_JSON')
-        creds_dict = json.loads(creds_json_str)
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-    else:
+        if 'GOOGLE_CREDENTIALS_JSON' in os.environ:
+            creds_json_str = os.environ.get('GOOGLE_CREDENTIALS_JSON')
+            creds_dict = json.loads(creds_json_str)
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        else:
         # Иначе используем локальный файл (для тестов на вашем компьютере)
-        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-        gc = gspread.authorize(creds)
+            creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+            gc = gspread.authorize(creds)
         
         try:
             sh = gc.open("Магазин: Финансы")
