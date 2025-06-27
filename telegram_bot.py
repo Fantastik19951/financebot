@@ -4496,8 +4496,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Вызываем функцию, чтобы задать следующий вопрос (или показать подтверждение)
             await ask_for_invoice_edit_value(update, context)
         else:
-            # Если состояние не совпало, игнорируем ввод, чтобы избежать ошибок
-            await
+             # Если состояние не совпало, игнорируем ввод, чтобы избежать ошибок
+            await update.message.reply_text("Пожалуйста, используйте кнопки или отвечайте на последний вопрос бота.")
+        return
 
     elif state_key == 'report':
         step = user_data['report'].get('step')
