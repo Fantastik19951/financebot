@@ -3743,16 +3743,38 @@ async def view_debts_history(update: Update, context: ContextTypes.DEFAULT_TYPE,
     
 # 7. Сохранение (после комментария или "пропустить")
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сохраняет накладную и корректно проводит все финансовые операции."""
-    if update.callback_query:
-        query = update.callback_query
-        # await query.answer() # Убрано, т.к. answer есть в handle_callback
-        context.user_data['supplier']['comment'] = ""
-    else:
-        context.user_data['supplier']['comment'] = update.message.text
+    query = update.callback_query
+    message = query.message if query else update.message
+    
+    if query:
+        await query.answer()
+    
+    # --- ГЛАВНОЕ ИСПРАВЛЕНИЕ: Проверяем, существуют ли данные перед их использованием ---
+    if 'supplier' not in context.user_data:
+        await message.edit_text(
+            "❌ Ошибка: сессия добавления накладной утеряна. Пожалуйста, начните заново.", 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")]])
+        )
+        return
 
     supplier_data = context.user_data['supplier']
+
+    # Устанавливаем комментарий, если его пропустили или ввели текстом
+    if query and query.data == "skip_comment_supplier":
+        supplier_data['comment'] = ""
+    elif not query:
+        supplier_data['comment'] = update.message.text
+
+    # Проверяем, что все ключевые данные на месте
+    required_keys = ['name', 'amount_income', 'writeoff', 'invoice_total_markup', 'payment_type']
+    if not all(key in supplier_data for key in required_keys):
+        await message.reply_text("❌ Ошибка: не все данные накладной были введены. Пожалуйста, начните заново.", reply_markup=suppliers_menu_kb())
+        context.user_data.pop('supplier', None)
+        return
+
     pay_type = supplier_data['payment_type']
     who = update.effective_user.first_name
 
@@ -3761,28 +3783,26 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     invoice_total_markup = float(supplier_data['invoice_total_markup'])
     sum_to_pay = amount_income - amount_writeoff
     
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Возвращаем логику списания из сейфа ---
     paid_status = "Нет"
     debt_amount = 0
     due_date = ""
 
     if pay_type == "Долг":
         debt_amount = sum_to_pay
-        due_date = sdate(supplier_data.get('due_date'))
-    else: # Если оплата Наличными или Картой
+        due_date_obj = supplier_data.get('due_date')
+        due_date = sdate(due_date_obj) if due_date_obj else ""
+    else:
         paid_status = f"Да ({sum_to_pay:.2f})"
         try:
-            # Списываем сумму к оплате из сейфа
-            comment = f"Оплата поставщику: {supplier_data['name']} ({pay_type})"
-            add_safe_operation("Расход", sum_to_pay, comment, who)
-            logging.info(f"Списано из сейфа {sum_to_pay} за {supplier_data['name']}")
+            comment_for_safe = f"Оплата поставщику: {supplier_data['name']} ({pay_type})"
+            add_safe_operation("Расход", sum_to_pay, comment_for_safe, who)
         except Exception as e:
             logging.error(f"Ошибка при списании оплаты поставщику из сейфа: {e}")
             
     row_to_save = [
         sdate(), supplier_data['name'], amount_income, amount_writeoff, sum_to_pay,
         invoice_total_markup, pay_type, paid_status, debt_amount, due_date, 
-        supplier_data.get('comment', ''), who
+        supplier_data.get('comment', ''), who, ""
     ]
     
     try:
@@ -3793,7 +3813,6 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ws_debts = GSHEET.worksheet(SHEET_DEBTS)
             ws_debts.append_row([sdate(), supplier_data['name'], sum_to_pay, 0, sum_to_pay, due_date, "Нет", "Наличные"])
 
-        # Добавляем в остаток магазина сумму С НАЦЕНКОЙ
         add_inventory_operation("Приход", invoice_total_markup, f"Поставщик: {supplier_data['name']}", who)
 
         # Автоматическая отметка в журнале прибытия
@@ -3802,8 +3821,8 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
             supplier_name_to_check = supplier_data['name']
             if supplier_name_to_check:
                 ws_plan = GSHEET.worksheet(SHEET_PLAN_FACT)
-                plan_rows = ws_plan.get_all_values()
-                for i, plan_row in enumerate(plan_rows[1:], start=2):
+                plan_rows = get_cached_sheet_data(context, SHEET_PLAN_FACT, force_update=True)
+                for i, plan_row in enumerate(plan_rows, start=2):
                     if len(plan_row) > 5 and plan_row[0] == today_str and plan_row[1] == supplier_name_to_check and plan_row[5] != "Прибыл":
                         ws_plan.update_cell(i, 6, "Прибыл")
                         logging.info(f"Автоматически обновлен статус на 'Прибыл' для '{supplier_name_to_check}'")
@@ -3825,8 +3844,8 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         kb = [[InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")]]
         
-        if update.callback_query:
-            await update.callback_query.message.edit_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
+        if query:
+            await query.message.edit_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
         else:
             await update.message.reply_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
         
@@ -3834,11 +3853,10 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         error_msg = f"❌ Ошибка сохранения поставщика: {str(e)}"
-        if update.callback_query:
-            await update.callback_query.message.edit_text(error_msg)
+        if query:
+            await query.message.edit_text(error_msg)
         else:
             await update.message.reply_text(error_msg)
-            
             
 async def add_shift(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
