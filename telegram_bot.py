@@ -188,101 +188,52 @@ def get_cached_sheet_data(context: ContextTypes.DEFAULT_TYPE, sheet_name: str, c
     
 # --- GOOGLE SHEETS ---
 def get_gsheet():
-    """Инициализирует подключение к Google Таблицам и создает необходимые листы"""
     try:
-        scope = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        # Проверяем, запущена ли программа на Railway
+        scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        
+        # Проверяем, запущена ли программа на Railway (через переменную окружения)
         if 'GOOGLE_CREDENTIALS_JSON' in os.environ:
+            # Читаем учетные данные из переменной окружения
             creds_json_str = os.environ.get('GOOGLE_CREDENTIALS_JSON')
             creds_dict = json.loads(creds_json_str)
             creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
         else:
-        # Иначе используем локальный файл (для тестов на вашем компьютере)
+            # Иначе используем локальный файл (для тестов на вашем компьютере)
             creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-            gc = gspread.authorize(creds)
+
+        gc = gspread.authorize(creds)
+        sh = gc.open("Магазин: Финансы")
+        logging.info("Таблица Google Sheets успешно открыта")
         
-        try:
-            sh = gc.open("Магазин: Финансы")
-            logging.info("Таблица Google Sheets успешно открыта")
-        except gspread.SpreadsheetNotFound:
-            sh = gc.create("Магазин: Финансы")
-            sh.share('your-real-email@example.com', perm_type='user', role='writer')
-            logging.info("Создана новая таблица Google Sheets")
-        
-        # Обновленные заголовки с новыми колонками
         required_sheets = {
-            # --- ЗАМЕНИТЕ ЭТУ СТРОКУ ВНУТРИ required_sheets ---
-            SHEET_REPORT: [
-                'Дата', 'Продавец', 'Наличные', 'Терминал', 'Общая сумма', 
-                'Остаток наличных', 'На завтра (долги)', 'На завтра (план)', 
-                'Комментарий', 'Остаток в сейфе'
-            ],
-            SHEET_SUPPLIERS: [
-                'Дата', 'Поставщик', 'Сумма', 'Тип оплаты', 'Оплачено', 'Долг',
-                'Срок долга', 'Комментарий', 'Внёс', 'История погашений'
-            ],
-            SHEET_EXPENSES: [
-                'Дата', 'Сумма', 'Категория/Комментарий', 'Продавец'
-            ],
-            SHEET_LOG: [
-                'Время', 'Telegram', 'Имя', 'Действие', 'Комментарий'
-            ],
-            SHEET_SHIFTS: [
-                'Дата', 'Продавец 1', 'Продавец 2'
-            ],
-            SHEET_INVENTORY: [
-                "Дата", "Тип", "Сумма", "Комментарий", "Кто внёс"
-            ],
-            "Сейф": [
-                "Дата", "Операция", "Сумма", "Комментарий", "Кто внёс"
-            ],
-            "Переучеты": [
-                "Дата", "Расчетная сумма", "Фактическая сумма", "Разница", "Комментарий", "Кто внёс"
-            ],
-            SHEET_DEBTS: [
-                'Дата', 'Поставщик', 'Сумма', 'Оплачено', 'Остаток', 'Погашено', 'Срок погашения', 'Тип оплаты'
-            ],
-            # <<< НАЧАЛО: НОВЫЙ КОД ДЛЯ ДОБАВЛЕНИЯ >>>
-            SHEET_PLANNING_SCHEDULE: [
-                "День недели", "Поставщик"
-            ],
-            SHEET_PLAN_FACT: [
-                 "Дата", "Поставщик", "Сумма", "Тип оплаты", "Кто заполнил", "Статус" # <-- ДОБАВЬТЕ СЮДА
-            ]
-            # <<< КОНЕЦ: НОВЫЙ КОД ДЛЯ ДОБАВЛЕНИЯ >>>
+            SHEET_REPORT: ['Дата', 'Продавец', 'Наличные', 'Терминал', 'Общая сумма', 'Остаток наличных', 'На завтра (долги)', 'На завтра (план)', 'Комментарий', 'Остаток в сейфе'],
+            SHEET_SALARIES: ['Дата', 'Продавец', 'Тип', 'Сумма', 'Комментарий'],
+            SHEET_SUPPLIERS: ['Дата', 'Поставщик', 'Сумма прихода', 'Возврат/списание', 'К оплате', 'Сумма после наценки', 'Тип оплаты', 'Оплачено', 'Долг', 'Срок долга'],
+            SHEET_EXPENSES: ['Дата', 'Сумма', 'Категория/Комментарий', 'Продавец'],
+            SHEET_LOG: ['Время', 'Telegram', 'Имя', 'Действие', 'Комментарий'],
+            SHEET_SHIFTS: ['Дата', 'Продавец 1', 'Продавец 2'],
+            SHEET_DEBTS: ['Дата', 'Поставщик', 'Сумма', 'Оплачено', 'Остаток', 'Срок погашения', 'Погашено', 'Тип оплаты'],
+            SHEET_PLANNING_SCHEDULE: ["День недели", "Поставщик"],
+            SHEET_PLAN_FACT: ["Дата", "Поставщик", "Сумма", "Тип оплаты", "Кто заполнил", "Статус"],
+            "Переучеты": ["Дата", "Расчетная сумма", "Фактическая сумма", "Разница", "Комментарий", "Кто внёс"],
         }
         
-        existing_sheets = {ws.title: ws for ws in sh.worksheets()}
-        
+        existing_titles = [ws.title for ws in sh.worksheets()]
         for sheet_name, headers in required_sheets.items():
-            if sheet_name not in existing_sheets:
+            if sheet_name not in existing_titles:
                 try:
-                    num_cols = len(headers)
-                    new_ws = sh.add_worksheet(
-                        title=sheet_name, 
-                        rows=300, 
-                        cols=num_cols
-                    )
-                    new_ws.append_row(headers)
+                    ws = sh.add_worksheet(title=sheet_name, rows=1000, cols=len(headers))
+                    ws.append_row(headers)
                     logging.info(f"Создан лист: {sheet_name}")
-                except Exception as e:
-                    logging.error(f"Ошибка создания листа {sheet_name}: {e}")
-            else:
-                # Обновление существующих листов при необходимости
-                try:
-                    ws = sh.worksheet(sheet_name)
-                    existing_headers = ws.row_values(1)
-                    if len(existing_headers) < len(headers):
-                        for i in range(len(existing_headers), len(headers)):
-                            ws.update_cell(1, i+1, headers[i])
-                        logging.info(f"Обновлены заголовки в листе {sheet_name}")
-                except Exception as e:
-                    logging.error(f"Ошибка обновления листа {sheet_name}: {e}")
-        
+                except gspread.exceptions.APIError as e:
+                    if "already exists" in str(e):
+                        logging.warning(f"Лист '{sheet_name}' уже существует.")
+                    else: raise e
         return sh
+        
+    except Exception as e:
+        logging.critical(f"Критическая ошибка подключения к Google Таблицам: {e}")
+        return None
     
     except Exception as e:
         logging.critical(f"Критическая ошибка подключения к Google Таблицам: {e}")
