@@ -3793,11 +3793,12 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
         due_date = sdate(due_date_obj) if due_date_obj else ""
     else:
         paid_status = f"Да ({sum_to_pay:.2f})"
-        try:
-            comment_for_safe = f"Оплата поставщику: {supplier_data['name']} ({pay_type})"
-            add_safe_operation("Расход", sum_to_pay, comment_for_safe, who)
-        except Exception as e:
-            logging.error(f"Ошибка при списании оплаты поставщику из сейфа: {e}")
+        if pay_type == "Наличные":
+            try:
+                comment_for_safe = f"Оплата поставщику: {supplier_data['name']} ({pay_type})"
+                add_safe_operation("Расход", sum_to_pay, comment_for_safe, who)
+            except Exception as e:
+                logging.error(f"Ошибка при списании оплаты поставщику из сейфа: {e}")
             
     row_to_save = [
         sdate(), supplier_data['name'], amount_income, amount_writeoff, sum_to_pay,
