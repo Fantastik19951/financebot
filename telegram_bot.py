@@ -1625,7 +1625,7 @@ async def show_invoices_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
             kb.append([InlineKeyboardButton(btn_text, callback_data=f"view_single_invoice_{date_str}_{i}")])
     
     # Кнопка "Назад" вернет нас в то меню, откуда мы пришли
-    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_previous_menu")])
+    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="suppliers_menu")])
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
 
