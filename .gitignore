@@ -1,0 +1,13 @@
+# Файл с переменными окружения
+.env
+
+# Файл с учетными данными Google
+credentials.json
+
+# Системные файлы macOS и Python
+.DS_Store
+__pycache__/
+*.pyc
+
+# Файлы логов
+*.log
