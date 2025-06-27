@@ -1492,8 +1492,8 @@ async def repay_debt(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Долг не найден в таблице!")
             return
 
-        paid = parse_float(ws_debts.cell(row_idx, 4).value or 0)
-        balance = parse_float(ws_debts.cell(row_idx, 5).value or 0)
+        paid = float(ws_debts.cell(row_idx, 4).value or 0)
+        balance = float(ws_debts.cell(row_idx, 5).value or 0)
         new_paid = paid + amount
         new_balance = balance - amount
 
