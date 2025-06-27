@@ -1466,7 +1466,7 @@ async def ask_for_invoice_edit_value(update: Update, context: ContextTypes.DEFAU
         
 async def repay_debt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        amount = float(update.message.text.replace(',', '.'))
+        amount = parse_float(update.message.text)
         repay_data = context.user_data['repay']
         debt_idx = repay_data['debt_idx']
         who_paid = update.effective_user.first_name
@@ -1923,8 +1923,8 @@ async def view_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE)
         response += (
             f"<b>#{display_idx} {status} {row[1]}</b>\n"
             f"    • Дата: {row[0]}\n"
-            f"    • Сумма: <b>{float(row[2]):.2f}₴</b>\n"
-            f"    • Остаток: <b>{float(row[4]):.2f}₴</b>\n"
+            f"    • Сумма: <b>{parse_float(row[2]):.2f}₴</b>\n"
+            f"    • Остаток: <b>{parse_float(row[4]):.2f}₴</b>\n"
             f"    • Срок: {row[5]}\n"
             f"    • Статус: {row[6]}\n"
             "─────────────\n"
@@ -1985,8 +1985,8 @@ async def show_debts_history(update: Update, context: ContextTypes.DEFAULT_TYPE,
         for i, row in enumerate(debts):
             try:
                 # Заменяем запятые на точки
-                amount = float(row[2].replace(',', '.')) 
-                paid = float(row[3].replace(',', '.')) 
+                amount = parse_float(row[2])
+                paid = parse_float(row[3])
             except ValueError:
                 amount = 0.0
                 paid = 0.0
@@ -2068,7 +2068,7 @@ def get_tomorrow_debts():
         if len(row) >= 6 and row[5] != "Да" and row[4]:  # Не погашен
             # row[5] — срок
             if row[5] == tomorrow:
-                amount = float(row[4])
+                amount = parse_float(row[4])
                 total += amount
                 suppliers.append((row[1], amount))
     return total, suppliers
@@ -4558,7 +4558,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = f"<b>🔎 Результаты поиска по '{search_query}':</b>\n"
             kb = []
             for debt in matches:
-                supplier, total, to_pay, due_date, status, row_index = debt[1], float(debt[2]), float(debt[4]), debt[5], debt[6], debt[-1]
+                supplier, total, to_pay, due_date, status, row_index = debt[1], parse_float(debt[2]), parse_float(debt[4]), debt[5], debt[6], debt[-1]
                 status_icon = "✅" if status.lower() == 'да' else "❌"
                 msg += "\n──────────────────\n"
                 msg += f"{status_icon} <b>{supplier}</b>\n"
