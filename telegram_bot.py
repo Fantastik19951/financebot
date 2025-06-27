@@ -1373,8 +1373,8 @@ async def show_daily_dashboard(update: Update, context: ContextTypes.DEFAULT_TYP
     msg += "\n".join(arrived_suppliers_text) if arrived_suppliers_text else "<i>Нет запланированных прибытий.</i>"
     
     msg += "\n──────────────────\n<b>💰 Финансы на сегодня:</b>\n"
-    msg += f"  • 💵 ОБЩИЙ план наличными: {total_planned_cash:.2f}₴\n"
-    msg += f"  • 💵 Осталось наличными (по плану): {needed_cash_remaining:.2f}₴\n"
+    msg += f"  • 💵 ОБЩИЙ план наличными на сегодня: {total_planned_cash:.2f}₴\n"
+    msg += f"  • 💵 Осталось оплатить поставщикам: {needed_cash_remaining:.2f}₴\n"
     if critical_debts_text:
         msg += "❗️ <b>Критические долги (срок сегодня):</b>\n" + "\n".join(critical_debts_text)
     
@@ -1974,10 +1974,18 @@ async def show_debts_history(update: Update, context: ContextTypes.DEFAULT_TYPE,
         text += "Нет долгов за этот период."
     else:
         for i, row in enumerate(debts):
+            try:
+                # Заменяем запятые на точки
+                amount = float(row[2].replace(',', '.')) 
+                paid = float(row[3].replace(',', '.')) 
+            except ValueError:
+                amount = 0.0
+                paid = 0.0
+            
             status = "✅ Закрыт" if row[6].strip().lower() == "да" else "❌ Открыт"
             history = row[7] if len(row) > 7 else ""
-            text += (f"{i+1}. <b>{row[1]}</b> | {row[0]} | {float(row[2]):.2f}₴ | {status}\n"
-                     f"   Оплачено: {float(row[3]):.2f}₴ | Срок: {row[5]}\n")
+            text += (f"{i+1}. <b>{row[1]}</b> | {row[0]} | {amount:.2f}₴ | {status}\n"
+                     f"   Оплачено: {paid:.2f}₴ | Срок: {row[5]}\n")
             if history:
                 hist_lines = history.replace(';', '\n     •').strip()
                 text += f"   История: \n     •{hist_lines}\n"
