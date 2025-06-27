@@ -4268,7 +4268,7 @@ async def inventory_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.callback_query.message.edit_text(
         f"📦 Текущий остаток магазина: <b>{bal:.2f}₴</b>",
         parse_mode='HTML',
-        reply_markup=back_kb()
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")]])
     )
 
 async def safe_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
