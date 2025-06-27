@@ -80,6 +80,15 @@ def month_range(date=None):
     end = dt.date(date.year, date.month + 1, 1) - dt.timedelta(days=1)
     return start, end
 
+def parse_float(value):
+    """Преобразует строку с запятой в десятичном числе в float."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(value.replace(',', '.').strip())
+    except (ValueError, TypeError):
+        return 0.0
+
 # --- И ЭТУ ФУНКЦИЮ ТОЖЕ ЗАМЕНИТЕ ---
 def get_planning_details_for_date(context: ContextTypes.DEFAULT_TYPE, report_date: dt.date):
     """Собирает данные из ПланФакт для отчета на ЗАДАННУЮ ДАТУ, используя кэш."""
@@ -132,7 +141,7 @@ def get_debts_for_date(context: ContextTypes.DEFAULT_TYPE, report_date: dt.date)
         # Проверяем, что долг не погашен (столбец G, индекс 6) и срок совпадает
         if len(row) > 6 and row[6].strip().lower() != "да" and row[5].strip() == report_date_str:
             try:
-                amount = float(row[4].replace(',', '.')) # Остаток
+                amount = parse_float(row[4])  # Остаток
                 total += amount
                 suppliers.append((row[1], amount))
             except (ValueError, IndexError):
