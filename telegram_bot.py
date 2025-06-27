@@ -3737,8 +3737,8 @@ async def view_debts_history(update: Update, context: ContextTypes.DEFAULT_TYPE,
         msg += (
             f"{idx}. {status} <b>{row[1]}</b>\n"
             f"   • Дата: {row[0]}\n"
-            f"   • Сумма: <b>{float(row[2]):.2f}₴</b>\n"
-            f"   • Оплачено: {float(row[3]):.2f}₴ \n"
+            f"   • Сумма: <b>{parse_float(row[2]):.2f}₴</b>\n"
+            f"   • Оплачено: {parse_float(row[3]):.2f}₴ \n"
             f"   • Срок: {row[5]} | Погашено: {row[6]}\n"
             "─────────────\n"
         )
