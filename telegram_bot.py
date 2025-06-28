@@ -2998,10 +2998,12 @@ async def handle_report_cash(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data['report']['cash'] = cash
         context.user_data['report']['step'] = 'terminal'
         
-        # Создаем клавиатуру с кнопкой отмены
+        # Создаем клавиатуру с кнопкой отмены - ИСПРАВЛЕННЫЙ ВАРИАНТ
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔙 Назад", callback_data="back_to_cash_input"),
-            [InlineKeyboardButton("❌ Отменить отчет", callback_data="cancel_report")]
+            [
+                InlineKeyboardButton("🔙 Назад", callback_data="back_to_cash_input"),
+                InlineKeyboardButton("❌ Отменить отчет", callback_data="cancel_report")
+            ]
         ])
         
         await update.message.reply_text(
