@@ -1719,7 +1719,11 @@ async def handle_planning_supplier_choice(update: Update, context: ContextTypes.
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="planning")]])
         )
     else:
-        context.user_data['planning'] = {'supplier': supplier_name, 'step': 'amount'}
+        # Сохраняем выбранного поставщика и переходим к вводу суммы
+        context.user_data['planning'] = {
+            'supplier': supplier_name,
+            'step': 'amount'
+        }
         await query.message.edit_text(
             f"💰 Введите примерную сумму для <b>{supplier_name}</b> (в гривнах):",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="planning")]]),
@@ -2995,7 +2999,9 @@ async def handle_report_cash(update: Update, context: ContextTypes.DEFAULT_TYPE)
         context.user_data['report']['step'] = 'terminal'
         await update.message.reply_text(
             "💳 Введите сумму по терминалу:",
-            reply_markup=back_kb()
+            kb = [
+                [InlineKeyboardButton("❌ Отменить отчет", callback_data="cancel_report")]     # <-- Добавить отмену
+            ]
         )
     except ValueError:
         await update.message.reply_text("❌ Неверный формат суммы. Введите число:")
@@ -3008,9 +3014,8 @@ async def handle_report_terminal(update: Update, context: ContextTypes.DEFAULT_T
         
         kb = [
             [InlineKeyboardButton("✅ Да", callback_data="exp_yes")],
-            [InlineKeyboardButton("❌ Нет", callback_data="exp_no")],
-            [InlineKeyboardButton("🔙 Назад", callback_data="handle_report_cash")],  # <-- Добавить назад
-            [InlineKeyboardButton("❌ Отменить", callback_data="cancel_report")]     # <-- Добавить отмену
+            [InlineKeyboardButton("❌ Нет", callback_data="exp_no")],# <-- Добавить назад
+            [InlineKeyboardButton("❌ Отменить отчет", callback_data="cancel_report")]     # <-- Добавить отмену
         ]
         
         await update.message.reply_text(
@@ -4585,14 +4590,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif step == 'comment': await save_supplier(update, context)
         return
         
-    elif state_key == 'planning':
+    elif 'planning' in user_data:
         step = user_data['planning'].get('step')
-        if step == 'other_supplier_name':
-            user_data['planning']['supplier'] = update.message.text.strip()
-            user_data['planning']['step'] = 'amount'
-            await update.message.reply_text(f"💰 Введите сумму для <b>{user_data['planning']['supplier']}</b>:", parse_mode=ParseMode.HTML)
-        elif step == 'amount': await handle_planning_amount(update, context)
-        return
+        
+        if step == 'amount':
+            await handle_planning_amount(update, context)
+        elif step == 'other_supplier_name':
+            # Обработка ввода имени внепланового поставщика
+            supplier_name = update.message.text
+            user_data['planning'] = {
+                'supplier': supplier_name,
+                'step': 'amount'
+            }
+            await update.message.reply_text(
+                f"💰 Введите примерную сумму для <b>{supplier_name}</b> (в гривнах):",
+                parse_mode=ParseMode.HTML
+            )
     elif state_key == 'edit_plan':
         if user_data['edit_plan'].get('field') == 'amount':
             try: await edit_plan_save_value(update, context, new_value=parse_float(update.message.text))
