@@ -74,6 +74,18 @@ def week_range(date=None):
     start = date - dt.timedelta(days=date.weekday())
     end = start + dt.timedelta(days=6)
     return start, end
+    
+def delete_plan_by_row_index(row_index: int) -> bool:
+    """Находит и удаляет строку в листе ПланФактНаЗавтра по ее номеру."""
+    try:
+        ws = GSHEET.worksheet(SHEET_PLAN_FACT)
+        ws.delete_rows(row_index)
+        logging.info(f"Запись о плане в строке {row_index} успешно удалена.")
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка удаления записи о плане в строке {row_index}: {e}")
+        return False
+
 def month_range(date=None):
     date = date or dt.date.today()
     start = dt.date(date.year, date.month, 1)
@@ -342,20 +354,24 @@ def month_buttons(start_date, end_date):
 # <<< НАЧАЛО: НОВЫЙ КОД ДЛЯ ДОБАВЛЕНИЯ >>>
 
 # --- ФУНКЦИИ ДЛЯ ПЛАНИРОВАНИЯ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 def get_planned_suppliers(date_str: str):
-    """Получает поставщиков, которые уже были спланированы на заданную дату."""
+    """Получает поставщиков, которые уже были спланированы на заданную дату, вместе с номерами их строк."""
     try:
-        ws = GSHEET.worksheet("ПланФактНаЗавтра")
+        ws = GSHEET.worksheet(SHEET_PLAN_FACT)
         rows = ws.get_all_values()[1:]
-        planned_suppliers = []
-        for row in rows:
+        planned_suppliers_data = []
+        for i, row in enumerate(rows, start=2): # Начинаем с 2, т.к. 1-я строка - заголовок
             if row and row[0] == date_str:
-                planned_suppliers.append(row[1].strip())
-        return planned_suppliers
+                planned_suppliers_data.append({
+                    "supplier": row[1].strip(),
+                    "row_index": i
+                })
+        return planned_suppliers_data
     except Exception as e:
         logging.error(f"Ошибка получения спланированных поставщиков на '{date_str}': {e}")
         return []
-
+        
 def save_plan_fact(date_str, supplier, amount, pay_type, user_name):
     """Сохраняет одну запись о плане на завтра со статусом 'Ожидается'."""
     if not GSHEET: return
@@ -1546,55 +1562,74 @@ async def repay_debt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 DAYS_OF_WEEK_RU = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 
 # 1. Нажатие на кнопку "Планирование"
-# 1. Нажатие на кнопку "Планирование"
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, target_date: dt.date = None):
+    """Показывает комплексное меню планирования с навигацией и управлением записями."""
     query = update.callback_query
     if query:
         await query.answer()
 
-    # Определяем дату для планирования
+    today = dt.date.today()
     if target_date is None:
-        target_date = dt.date.today() + dt.timedelta(days=1)
+        target_date = today + dt.timedelta(days=1)
 
     target_date_str = sdate(target_date)
     day_of_week_name = DAYS_OF_WEEK_RU[target_date.weekday()]
     
-    # Получаем всех поставщиков на выбранный день и тех, кто уже спланирован
-    all_suppliers = get_suppliers_for_day(day_of_week_name)
-    planned_suppliers = get_planned_suppliers(target_date_str)
+    # --- Логика определения периода навигации (до СЛЕДУЮЩЕГО воскресенья) ---
+    days_until_next_sunday = (6 - today.weekday()) + 7
+    end_of_planning_period = today + dt.timedelta(days=days_until_next_sunday)
     
-    unplanned_suppliers = [s for s in all_suppliers if s not in planned_suppliers]
+    # --- Получаем данные ---
+    scheduled_today = get_suppliers_for_day(day_of_week_name)
+    planned_data = get_planned_suppliers(target_date_str)
+    planned_names = {item['supplier'] for item in planned_data}
+    unplanned_scheduled = [s for s in scheduled_today if s not in planned_names]
 
-    # --- Новая логика для кнопок навигации ---
+    # --- Строим клавиатуру ---
     kb = []
+    # 1. Навигация
     nav_row = []
-    today = dt.date.today()
-    
-    # Кнопка "назад" (не раньше завтрашнего дня)
     prev_day = target_date - dt.timedelta(days=1)
     if prev_day > today:
-        nav_row.append(InlineKeyboardButton("◀️ Назад", callback_data=f"plan_nav_{sdate(prev_day)}"))
-
-    # Кнопка "вперед" (не далее ближайшего воскресенья)
-    end_of_week = today + dt.timedelta(days=(6 - today.weekday()))
+        nav_row.append(InlineKeyboardButton("◀️", callback_data=f"plan_nav_{sdate(prev_day)}"))
+    
+    nav_row.append(InlineKeyboardButton(f"{day_of_week_name.capitalize()}, {target_date_str}", callback_data="noop"))
+    
     next_day = target_date + dt.timedelta(days=1)
-    if next_day <= end_of_week:
-        nav_row.append(InlineKeyboardButton("Вперед ▶️", callback_data=f"plan_nav_{sdate(next_day)}"))
-
-    if nav_row:
-        kb.append(nav_row)
-
-    # --- Клавиатура с поставщиками ---
-    if not unplanned_suppliers:
-        # Добавляем сообщение в середину клавиатуры, если поставщиков нет
-        kb.append([InlineKeyboardButton(f"✅ Все на {day_of_week_name} спланированы", callback_data="noop")])
+    if next_day <= end_of_planning_period:
+        nav_row.append(InlineKeyboardButton("▶️", callback_data=f"plan_nav_{sdate(next_day)}"))
+    kb.append(nav_row)
+    
+    kb.append([InlineKeyboardButton("--- Уже запланировано ---", callback_data="noop")])
+    if not planned_data:
+        kb.append([InlineKeyboardButton("Пока пусто", callback_data="noop")])
     else:
-        for supplier in unplanned_suppliers:
+        for item in planned_data:
+            # Кнопки для редактирования и удаления
+            kb.append([
+                InlineKeyboardButton(f"✏️ {item['supplier']}", callback_data=f"edit_plan_{item['row_index']}"),
+                InlineKeyboardButton("❌ Удалить", callback_data=f"plan_delete_{item['row_index']}_{target_date_str}")
+            ])
+
+    kb.append([InlineKeyboardButton("--- Добавить по графику ---", callback_data="noop")])
+    if not unplanned_scheduled:
+        kb.append([InlineKeyboardButton("Все по графику добавлены", callback_data="noop")])
+    else:
+        for supplier in unplanned_scheduled:
             kb.append([InlineKeyboardButton(f"🚚 {supplier}", callback_data=f"plan_sup_{target_date_str}_{supplier}")])
 
     kb.append([InlineKeyboardButton("🛑 Внеплановый поставщик", callback_data=f"plan_sup_{target_date_str}_other")])
     kb.append([InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")])
 
+    message_text = "🗓 <b>Планирование поставщиков</b>"
+    if query:
+        await query.message.edit_text(
+            message_text,
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode=ParseMode.HTML
+        )
+        
     # Формируем заголовок с датой
     header_text = f"🗓 <b>Планирование на {day_of_week_name.capitalize()}, {target_date_str}</b>\n\n"
     message_text = header_text + "Выберите поставщика для планирования:"
@@ -2335,74 +2370,81 @@ async def show_planned_arrivals(update: Update, context: ContextTypes.DEFAULT_TY
             raise e
         
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
-async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает интерактивный журнал, умея обновлять старое сообщение или отправлять новое."""
+# --- ЗАМЕНИТЕ ФУНКЦИЮ show_planned_arrivals НА ЭТУ ---
+async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TYPE, target_date: dt.date = None):
+    """Показывает журнал прибытия (План/Факт) с навигацией по дням."""
     query = update.callback_query
     if query:
         await query.answer()
 
     today = dt.date.today()
-    tomorrow = today + dt.timedelta(days=1)
+    if target_date is None:
+        target_date = today
 
+    target_date_str = sdate(target_date)
+    day_of_week_name = DAYS_OF_WEEK_RU[target_date.weekday()]
+
+    # --- Логика определения периода навигации (до СЛЕДУЮЩЕГО воскресенья) ---
+    days_until_next_sunday = (6 - today.weekday()) + 7
+    end_of_viewing_period = today + dt.timedelta(days=days_until_next_sunday)
+
+    # --- Получаем данные ---
     try:
-        ws = GSHEET.worksheet(SHEET_PLAN_FACT)
-        rows = ws.get_all_values()[1:]
-        actual_invoices_today = get_todays_actual_invoices()
+        all_plans = get_cached_sheet_data(context, SHEET_PLAN_FACT, force_update=True)
+        all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True)
     except Exception as e:
-        error_msg = f"❌ Не удалось прочитать данные: {e}"
-        if query and query.message: await query.message.edit_text(error_msg)
-        else: await context.bot.send_message(update.effective_chat.id, error_msg)
+        # ... обработка ошибок
         return
-
-    today_arrivals = [row + [i+2] for i, row in enumerate(rows) if row and pdate(row[0]) == today]
-    tomorrow_plans = [row + [i+2] for i, row in enumerate(rows) if row and pdate(row[0]) == tomorrow]
+        
+    plans_for_day = [row + [i+2] for i, row in enumerate(all_plans) if row and row[0] == target_date_str]
+    invoices_for_day = [row for row in all_invoices if row and row[0] == target_date_str]
     
-    msg = "<b>🚚 Журнал прибытия и планов</b>\n"
+    # --- Строим сообщение и клавиатуру ---
+    msg = f"<b>🚚 Журнал прибытия на {day_of_week_name.capitalize()}, {target_date_str}</b>\n"
     kb = []
-
-    # Блок "Сегодня"
-    kb.append([InlineKeyboardButton(f"--- План на сегодня ({sdate(today)}) ---", callback_data="noop")])
-    if not today_arrivals:
-        kb.append([InlineKeyboardButton("Нет запланированных прибытий", callback_data="noop")])
-    else:
-        for arrival in today_arrivals:
-            status = arrival[5] if len(arrival) > 5 else "Ожидается"
-            status_icon = "✅" if status == "Прибыл" else "🛑"
-            supplier, planned_amount, planned_pay_type, row_num = arrival[1], arrival[2], arrival[3], arrival[6]
-            planned_pay_type_human = "Наличные" if 'налич' in planned_pay_type.lower() else "Карта" if 'карт' in planned_pay_type.lower() else "Долг"
-            
-            button_text = f"{status_icon} {supplier} - {planned_amount}₴ ({planned_pay_type_human})"
-            if status == "Прибыл" and supplier in actual_invoices_today:
-                actual = actual_invoices_today[supplier]
-                button_text = f"✅ {supplier} - {actual['amount']}₴ ({actual['pay_type']}) (План: {planned_amount}₴)"
-
-            kb.append([InlineKeyboardButton(button_text, callback_data=f"toggle_arrival_{row_num}")])
-
-    # Блок "Завтра"
-    kb.append([InlineKeyboardButton(f"--- Планы на завтра ({sdate(tomorrow)}) ---", callback_data="noop")])
-    if not tomorrow_plans:
-        kb.append([InlineKeyboardButton("Планов на завтра еще нет", callback_data="noop")])
-    else:
-        for plan in tomorrow_plans:
-            supplier, amount, pay_type, row_num = plan[1], plan[2], plan[3], plan[6]
-            pay_type_human = "Наличные" if 'налич' in pay_type.lower() else "Карта" if 'карт' in pay_type.lower() else "Долг"
-            button_text = f"✏️ {supplier} - {amount}₴ ({pay_type_human})"
-            kb.append([InlineKeyboardButton(button_text, callback_data=f"edit_plan_{row_num}")])
-
-    kb.append([InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")])
     
-    try:
-        # Если есть query и сообщение от него - редактируем его
-        if query and query.message:
-            await query.message.edit_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
-        # Если query нет (вызов из handle_text), отправляем новое сообщение
-        else:
-            await context.bot.send_message(update.effective_chat.id, msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
-    except BadRequest as e:
-        if "Message is not modified" in str(e) and query:
-            await query.answer("Нет изменений для обновления.", show_alert=False)
-        else:
-            logging.error(f"Ошибка отправки/редактирования сообщения в журнале: {e}")
+    # Навигация
+    nav_row = []
+    prev_day = target_date - dt.timedelta(days=1)
+    nav_row.append(InlineKeyboardButton("◀️", callback_data=f"journal_nav_{sdate(prev_day)}"))
+    nav_row.append(InlineKeyboardButton("Сегодня", callback_data=f"journal_nav_{sdate(today)}"))
+    next_day = target_date + dt.timedelta(days=1)
+    if next_day <= end_of_viewing_period:
+        nav_row.append(InlineKeyboardButton("▶️", callback_data=f"journal_nav_{sdate(next_day)}"))
+    kb.append(nav_row)
+
+    # Логика отображения
+    if not plans_for_day and not invoices_for_day:
+        msg += "\n<i>На этот день нет ни планов, ни фактических накладных.</i>"
+    else:
+        # Собираем данные в удобную структуру
+        suppliers_status = defaultdict(lambda: {'plan': None, 'fact': 0, 'plan_row': None})
+        
+        for plan in plans_for_day:
+            supplier, amount, p_type, _, _, row_idx = (plan + [None, None])[:6]
+            suppliers_status[supplier]['plan'] = f"{amount}₴ ({p_type})"
+            suppliers_status[supplier]['plan_row'] = row_idx
+
+        for invoice in invoices_for_day:
+            supplier, to_pay = invoice[1], parse_float(invoice[4])
+            suppliers_status[supplier]['fact'] += to_pay
+
+        # Выводим информацию
+        for supplier, data in suppliers_status.items():
+            fact_amount = data['fact']
+            plan_info = data['plan']
+            status_icon = "✅" if fact_amount > 0 else "⌛️"
+            
+            msg += f"\n\n<b>{status_icon} {supplier}</b>\n"
+            if plan_info:
+                msg += f"  • План: {plan_info}\n"
+            msg += f"  • Факт: {fact_amount:.2f}₴"
+    
+    kb.append([InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")])
+
+    if query:
+        await query.message.edit_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
+
 
 async def toggle_arrival_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключает статус прибытия товара."""
@@ -4731,9 +4773,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --- 2. ПЛАНИРОВАНИЕ ---
         elif data == "planning": await start_planning(update, context)
         elif data.startswith("plan_nav_"):
-            target_date_str = data.split('_')[-1]
-            target_date = pdate(target_date_str)
+            target_date = pdate(data.split('_')[-1])
             await start_planning(update, context, target_date=target_date)
+        elif data.startswith("plan_delete_"):
+            _, _, row_index_str, date_str = data.split('_')
+            if delete_plan_by_row_index(int(row_index_str)):
+                await query.answer("План удален!")
+            else:
+                await query.answer("❌ Ошибка удаления", show_alert=True)
+            # Обновляем меню планирования для того же дня
+            await start_planning(update, context, target_date=pdate(date_str))
+        
         elif data.startswith("plan_sup_"): await handle_planning_supplier_choice(update, context)
         elif data.startswith("plan_pay_"): await handle_planning_pay_type(update, context)
         
@@ -4742,6 +4792,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("toggle_arrival_"): await toggle_arrival_status(update, context)
         elif data.startswith("edit_plan_field_"): await edit_plan_choose_field(update, context)
         elif data.startswith("edit_plan_value_"): await edit_plan_save_value(update, context)
+        elif data.startswith("journal_nav_"):
+            target_date = pdate(data.split('_')[-1])
+            await show_arrivals_journal(update, context, target_date=target_date)
         elif data.startswith("edit_plan_"): await edit_plan_start(update, context)
 
         # --- 4. РЕДАКТИРОВАНИЕ НАКЛАДНОЙ (НОВОЕ) ---
