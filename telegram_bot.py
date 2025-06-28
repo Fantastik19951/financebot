@@ -3213,7 +3213,7 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_safe_operation("Зарплата", 700, f"Ставка за смену для {seller}", seller)
         add_salary_record(seller, "Ставка", 700, "Выплачено из сейфа")
         if total_sales > 35000:
-            bonus = round(total_sales * 0.02, 2)
+            bonus = round((total_sales * 0.02)-700, 2)
             add_salary_record(seller, "Премия 2%", bonus, f"За {today_str}")
 
     if 'sheets_cache' in context.bot_data and "Сейф" in context.bot_data['sheets_cache']:
