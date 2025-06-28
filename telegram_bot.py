@@ -2997,11 +2997,16 @@ async def handle_report_cash(update: Update, context: ContextTypes.DEFAULT_TYPE)
         cash = float(update.message.text.replace(',', '.'))
         context.user_data['report']['cash'] = cash
         context.user_data['report']['step'] = 'terminal'
+        
+        # Создаем клавиатуру с кнопкой отмены
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔙 Назад", callback_data="back_to_cash_input"),
+            [InlineKeyboardButton("❌ Отменить отчет", callback_data="cancel_report")]
+        ])
+        
         await update.message.reply_text(
             "💳 Введите сумму по терминалу:",
-            kb = [
-                [InlineKeyboardButton("❌ Отменить отчет", callback_data="cancel_report")]     # <-- Добавить отмену
-            ]
+            reply_markup=keyboard  # Передаем клавиатуру здесь
         )
     except ValueError:
         await update.message.reply_text("❌ Неверный формат суммы. Введите число:")
