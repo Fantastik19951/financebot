@@ -2635,7 +2635,10 @@ async def handle_report_seller(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data['report'] = {'seller': seller, 'step': 'cash'}
     await query.message.edit_text(
         f"💵 Введите сумму наличных за смену (в гривнах):",
-        reply_markup=back_kb()
+        reply_markup=InlineKeyboardMarkup([  # <-- Заменить back_kb() на это
+            [InlineKeyboardButton("🔙 Назад", callback_data="add_report")],
+            [InlineKeyboardButton("❌ Отменить", callback_data="cancel_report")]
+         ])
     )
 
 # --- ДОБАВЬТЕ ВЕСЬ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
@@ -3006,7 +3009,8 @@ async def handle_report_terminal(update: Update, context: ContextTypes.DEFAULT_T
         kb = [
             [InlineKeyboardButton("✅ Да", callback_data="exp_yes")],
             [InlineKeyboardButton("❌ Нет", callback_data="exp_no")],
-            [InlineKeyboardButton("🔙 Назад", callback_data="add_report")]
+            [InlineKeyboardButton("🔙 Назад", callback_data="handle_report_cash")],  # <-- Добавить назад
+            [InlineKeyboardButton("❌ Отменить", callback_data="cancel_report")]     # <-- Добавить отмену
         ]
         
         await update.message.reply_text(
@@ -3014,6 +3018,37 @@ async def handle_report_terminal(update: Update, context: ContextTypes.DEFAULT_T
             reply_markup=InlineKeyboardMarkup(kb))
     except ValueError:
         await update.message.reply_text("❌ Неверный формат суммы. Введите число:")
+
+async def cancel_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отменяет процесс сдачи отчета и возвращает в главное меню"""
+    query = update.callback_query
+    await query.answer("Сдача отчета отменена")
+    
+    # Очищаем состояние отчета
+    if 'report' in context.user_data:
+        del context.user_data['report']
+    
+    # Возвращаем в главное меню
+    is_admin = str(query.from_user.id) in ADMINS
+    await query.message.edit_text(
+        "❌ Сдача отчета отменена",
+        reply_markup=main_kb(is_admin)
+    )
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отменяет текущую операцию"""
+    # Очищаем все состояния
+    for key in ['report', 'supplier', 'expense', 'inventory_expense']:
+        if key in context.user_data:
+            del context.user_data[key]
+    
+    is_admin = str(update.effective_user.id) in ADMINS
+    await update.message.reply_text(
+        "❌ Текущая операция отменена",
+        reply_markup=main_kb(is_admin)
+    )
+
+# Добавьте в прилож
 
 async def handle_report_expenses_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -3213,7 +3248,7 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_safe_operation("Зарплата", 700, f"Ставка за смену для {seller}", seller)
         add_salary_record(seller, "Ставка", 700, "Выплачено из сейфа")
         if total_sales > 35000:
-            bonus = round((total_sales * 0.02)-700, 2)
+            bonus = round(total_sales * 0.02, 2)
             add_salary_record(seller, "Премия 2%", bonus, f"За {today_str}")
 
     if 'sheets_cache' in context.bot_data and "Сейф" in context.bot_data['sheets_cache']:
@@ -4463,20 +4498,54 @@ async def export_to_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- ОБРАБОТЧИКИ ТЕКСТА ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = update.message.text.strip().lower()
+    
+    # Обработка команды /cancel в тексте - в самом начале
+    if text == "/cancel":
+        return await cancel(update, context)
     user_data = context.user_data
+    user_state = context.user_data
     state_key = next((key for key in [
         'revision', 'report', 'supplier', 'planning', 'edit_plan', 'edit_invoice', 
         'search_debt', 'safe_op', 'inventory_expense', 'repay', 'shift', 'report_period'
     ] if key in user_data), None)
-
-    if state_key == 'revision':
+    if 'report' in user_state:
+        current_step = user_state['report'].get('step')
+        
+        if current_step == 'cash':
+            return await handle_report_cash(update, context)
+        elif current_step == 'terminal':
+            return await handle_report_terminal(update, context)
+        elif current_step == 'expenses':
+            return await handle_report_expenses(update, context)
+        elif current_step == 'expense_comment':
+            return await handle_expense_comment(update, context)
+        elif current_step == 'comment':
+            return await save_report(update, context)
+    elif 'supplier' in user_state:
+        current_step = user_state['supplier'].get('step')
+        
+        if current_step == 'name':
+            return await handle_supplier_name(update, context)
+        elif current_step == 'amount_income':
+            return await handle_supplier_amount_income(update, context)
+        # Добавьте другие шаги по аналогии
+    # Удаляем блок проверки /cancel отсюда, т.к. мы уже проверили в начале
+    elif 'expense' in user_state:
+        current_step = user_state['expense'].get('step')
+        
+        if current_step == 'value':
+            return await handle_expense_value(update, context)
+        elif current_step == 'comment':
+            return await save_expense(update, context)
+    
+    elif state_key == 'revision':
         step = user_data['revision'].get('step')
         if step == 'actual_amount':
             await handle_revision_amount(update, context)
         elif step == 'comment':
             await save_revision(update, context)
         return
-
     elif state_key == 'edit_invoice':
         edit_state = user_data['edit_invoice']
         step = edit_state.get('step', '')
@@ -4486,7 +4555,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Проверяем, что мы действительно ждем ввод для этого поля
         fields_to_edit = edit_state.get('fields_to_edit_list', [])
         current_index = edit_state.get('current_field_index', 0)
-
         if fields_to_edit and current_index < len(fields_to_edit) and fields_to_edit[current_index] == field_key:
             # Сохраняем введенное значение
             edit_state.setdefault('new_values', {})[field_key] = update.message.text
@@ -4499,7 +4567,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
              # Если состояние не совпало, игнорируем ввод, чтобы избежать ошибок
             await update.message.reply_text("Пожалуйста, используйте кнопки или отвечайте на последний вопрос бота.")
         return
-
     elif state_key == 'report':
         step = user_data['report'].get('step')
         if step == 'cash': await handle_report_cash(update, context)
@@ -4508,7 +4575,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif step == 'expense_comment': await handle_expense_comment(update, context)
         elif step == 'comment': user_data['report']['comment'] = update.message.text; await save_report(update, context)
         return
-
     elif state_key == 'supplier':
         step = user_data['supplier'].get('step')
         if step == 'name': await handle_supplier_name(update, context)
@@ -4527,10 +4593,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"💰 Введите сумму для <b>{user_data['planning']['supplier']}</b>:", parse_mode=ParseMode.HTML)
         elif step == 'amount': await handle_planning_amount(update, context)
         return
-
     elif state_key == 'edit_plan':
         if user_data['edit_plan'].get('field') == 'amount':
-            try: await edit_plan_save_value(update, context, new_value=float(update.message.text.replace(',', '.')))
+            try: await edit_plan_save_value(update, context, new_value=parse_float(update.message.text))
             except ValueError: await update.message.reply_text("❌ Пожалуйста, введите числовое значение.")
         return
         
@@ -4544,7 +4609,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await update.message.reply_text(f"❌ Ошибка чтения таблицы долгов: {e}")
             return
-
         matches = []
         for i, row in enumerate(rows):
             if len(row) < 7: continue
@@ -4552,7 +4616,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             date_str, name_str, amount_str = row[0].strip(), row[1].strip().lower(), row[2].replace(',', '.')
             if (search_query == date_str or search_query.lower() in name_str or (search_query.replace(',', '.').isdigit() and search_query == amount_str)):
                 matches.append(row + [i+2])
-
         if not matches:
             await update.message.reply_text("🚫 Ничего не найдено.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="debts_menu")]]))
         else:
@@ -4572,7 +4635,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb.append([InlineKeyboardButton("🔙 Назад", callback_data="debts_menu")])
             await update.message.reply_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
         return
-
     elif state_key == 'safe_op':
         step = user_data['safe_op'].get('step')
         if step == 'amount': await handle_safe_amount(update, context)
@@ -4584,17 +4646,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if step == 'amount': await handle_inventory_expense(update, context)
         elif step == 'comment': await save_inventory_expense(update, context)
         return
-
     elif state_key == 'repay':
         step = user_data['repay'].get('step')
         if step == 'amount': await repay_debt(update, context)
         return
-
     elif state_key == 'shift':
         step = user_data['shift'].get('step')
         if step == 'date': await handle_shift_date(update, context)
         return
-
     elif state_key == 'report_period':
         step = user_data['report_period'].get('step')
         if step == 'start_date': await handle_report_start_date(update, context)
@@ -4602,8 +4661,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
         
     else:
-        await update.message.reply_text("Используйте меню для выбора действия")
-# --- ГЛАВНЫЙ ОБРАБОТЧИК CALLBACK ---
+        await update.message.reply_text(
+        "ℹ️ Выберите действие в меню",
+        reply_markup=main_kb(str(update.effective_user.id) in ADMINS)
+    )
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -4841,6 +4902,8 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
     
     # Основные обработчики
+    application.add_handler(CallbackQueryHandler(cancel_report, pattern="^cancel_report$"))
+    application.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
