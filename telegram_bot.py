@@ -1570,8 +1570,9 @@ DAYS_OF_WEEK_RU = ["понедельник", "вторник", "среда", "ч
 # 1. Нажатие на кнопку "Планирование"
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, target_date: dt.date = None):
-    """Показывает обновленное, красивое меню планирования."""
+    """Показывает обновленное, чистое и компактное меню планирования."""
     query = update.callback_query
     if query:
         await query.answer()
@@ -1583,7 +1584,7 @@ async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, tar
     target_date_str = sdate(target_date)
     day_of_week_name = DAYS_OF_WEEK_RU[target_date.weekday()]
     
-    # Расширенный период планирования до следующего воскресенья
+    # Расширенный период планирования
     days_until_next_sunday = (6 - today.weekday()) + 7
     end_of_planning_period = today + dt.timedelta(days=days_until_next_sunday)
     
@@ -1594,12 +1595,11 @@ async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, tar
     unplanned_scheduled = [s for s in scheduled_today if s not in planned_names]
 
     # --- Строим сообщение и клавиатуру ---
-    # 1. Новый красивый заголовок
-    header_text = f"🗓️  <b>Планирование на {day_of_week_name.upper()}, {target_date_str}</b>\n"
-    header_text += "─" * 24 + "\n"
+    # 1. Новый чистый заголовок
+    header_text = f"🗓️  <b>ПЛАНИРОВАНИЕ НА {day_of_week_name.upper()}, {target_date_str}</b>"
 
     kb = []
-    # 2. Обновленная навигация (без даты в кнопке)
+    # 2. Навигация
     nav_row = []
     prev_day = target_date - dt.timedelta(days=1)
     if prev_day > today:
@@ -1612,25 +1612,26 @@ async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, tar
     if nav_row:
         kb.append(nav_row)
     
-    # 3. Обновленный блок "Уже запланировано" с деталями
+    # 3. Обновленный блок "Уже запланировано" с компактными кнопками
     kb.append([InlineKeyboardButton("--- ✏️ Уже запланировано ---", callback_data="noop")])
     if not planned_data:
         kb.append([InlineKeyboardButton("(пусто)", callback_data="noop")])
     else:
         for item in planned_data:
-            btn_text = f"{item['supplier']} - {item['amount']}₴ ({item['pay_type']})"
+            # Текст кнопки стал короче, чтобы влезать в одну строку
+            btn_text = f"{item['supplier']} ({item['amount']}₴, {item['pay_type']})"
             kb.append([
                 InlineKeyboardButton(btn_text, callback_data=f"edit_plan_{item['row_index']}"),
                 InlineKeyboardButton("❌", callback_data=f"plan_delete_{item['row_index']}_{target_date_str}")
             ])
 
-    # 4. Блок "Добавить по графику"
+    # 4. Блок "Добавить по графику" с новым эмодзи
     kb.append([InlineKeyboardButton("--- 🚚 Добавить по графику ---", callback_data="noop")])
     if not unplanned_scheduled:
         kb.append([InlineKeyboardButton("(все добавлены)", callback_data="noop")])
     else:
         for supplier in unplanned_scheduled:
-            kb.append([InlineKeyboardButton(f"+ {supplier}", callback_data=f"plan_sup_{target_date_str}_{supplier}")])
+            kb.append([InlineKeyboardButton(f"➕ {supplier}", callback_data=f"plan_sup_{target_date_str}_{supplier}")])
 
     kb.append([InlineKeyboardButton("📝 Внеплановый поставщик", callback_data=f"plan_sup_{target_date_str}_other")])
     kb.append([InlineKeyboardButton("🔙 В меню", callback_data="suppliers_menu")])
@@ -1641,7 +1642,6 @@ async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, tar
             reply_markup=InlineKeyboardMarkup(kb),
             parse_mode=ParseMode.HTML
         )
-        
 # --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
 
 async def show_invoices_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2373,8 +2373,9 @@ async def show_planned_arrivals(update: Update, context: ContextTypes.DEFAULT_TY
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 # --- ЗАМЕНИТЕ ФУНКЦИЮ show_planned_arrivals НА ЭТУ ---
 # --- ЗАМЕНИТЕ ФУНКЦИЮ show_arrivals_journal НА ЭТУ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TYPE, target_date: dt.date = None):
-    """Показывает красивый и компактный журнал прибытия (План/Факт) с навигацией."""
+    """Показывает обновленный, красивый и устойчивый журнал прибытия (План/Факт)."""
     query = update.callback_query
     if query:
         await query.answer()
@@ -2390,7 +2391,7 @@ async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TY
     days_until_next_sunday = (6 - today.weekday()) + 7
     end_of_viewing_period = today + dt.timedelta(days=days_until_next_sunday)
 
-    # --- Получаем все данные ---
+    # --- Получение данных ---
     try:
         all_plans = get_cached_sheet_data(context, SHEET_PLAN_FACT, force_update=True) or []
         all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []
@@ -2402,8 +2403,7 @@ async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TY
     invoices_for_day = [row for row in all_invoices if row and row[0] == target_date_str]
     
     # --- Собираем сообщение ---
-    msg = f"<b>🚚 Журнал прибытия на {day_of_week_name.upper()}, {target_date_str}</b>\n"
-    msg += "─" * 28 + "\n"
+    msg_parts = [f"<b>🚚 Журнал прибытия на {day_of_week_name.upper()}, {target_date_str}</b>"]
 
     # --- Агрегируем данные для сводки ---
     suppliers_status = defaultdict(lambda: {
@@ -2422,36 +2422,45 @@ async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TY
         suppliers_status[supplier]['fact_types'].add(pay_type)
 
     if not suppliers_status:
-        msg += "\n<i>На этот день нет ни планов, ни фактов.</i>"
+        msg_parts.append("\n<i>На этот день нет ни планов, ни фактов.</i>")
     else:
-        # Используем моноширинный шрифт для красивого выравнивания
-        msg += "<code>Поставщик      | План      | Факт</code>\n"
-        msg += "<code>---------------|-----------|-----------</code>\n"
         for supplier, data in sorted(suppliers_status.items()):
             status_icon = "✅" if data['fact_amount'] > 0 else "⌛️"
             
-            # Обрезаем имя поставщика, если оно слишком длинное
-            sup_name = (supplier[:13] + '…') if len(supplier) > 14 else supplier
+            plan_amount_str = f"{data['plan_amount']:.2f}₴"
+            fact_amount_str = f"{data['fact_amount']:.2f}₴"
             
-            plan_str = f"{data['plan_amount']:.0f} ({data['plan_type'][0]})".ljust(9)
-            fact_str = f"{data['fact_amount']:.0f} ({', '.join(t[0] for t in data['fact_types']) or '-'})".ljust(9)
-            
-            msg += f"<code>{status_icon} {sup_name.ljust(14)}| {plan_str}| {fact_str}</code>\n"
+            plan_type_str = data['plan_type']
+            fact_type_str = ", ".join(sorted(list(data['fact_types']))) or "-"
+
+            supplier_block = (
+                f"──────────────────\n"
+                f"{status_icon} <b>{supplier}</b>\n"
+                f"    • <b>План:</b> {plan_amount_str} <i>({plan_type_str})</i>\n"
+                f"    • <b>Факт:</b> {fact_amount_str} <i>({fact_type_str})</i>"
+            )
+            msg_parts.append(supplier_block)
 
     # --- Собираем клавиатуру ---
     kb = []
     nav_row = []
     prev_day = target_date - dt.timedelta(days=1)
-    nav_row.append(InlineKeyboardButton("◀️", callback_data=f"journal_nav_{sdate(prev_day)}"))
+    # Ограничим навигацию назад, чтобы не уходить в далекое прошлое (например, 30 дней)
+    if (today - prev_day).days < 30:
+        nav_row.append(InlineKeyboardButton("◀️", callback_data=f"journal_nav_{sdate(prev_day)}"))
+    
     nav_row.append(InlineKeyboardButton("Сегодня", callback_data=f"journal_nav_{sdate(today)}"))
+    
     next_day = target_date + dt.timedelta(days=1)
     if next_day <= end_of_viewing_period:
         nav_row.append(InlineKeyboardButton("▶️", callback_data=f"journal_nav_{sdate(next_day)}"))
+    
     kb.append(nav_row)
     kb.append([InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")])
 
+    final_msg = "\n".join(msg_parts)
     if query:
-        await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+        await query.message.edit_text(final_msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
         
 
 async def toggle_arrival_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
