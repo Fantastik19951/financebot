@@ -4902,8 +4902,8 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
     
     # Основные обработчики
-    application.add_handler(CallbackQueryHandler(cancel_report, pattern="^cancel_report$"))
-    application.add_handler(CommandHandler("cancel", cancel))
+    app.add_handler(CallbackQueryHandler(cancel_report, pattern="^cancel_report$"))
+    app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
