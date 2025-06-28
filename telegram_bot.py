@@ -1546,44 +1546,65 @@ async def repay_debt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 DAYS_OF_WEEK_RU = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 
 # 1. Нажатие на кнопку "Планирование"
-async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# 1. Нажатие на кнопку "Планирование"
+async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, target_date: dt.date = None):
     query = update.callback_query
-    await query.answer()
+    if query:
+        await query.answer()
 
-    tomorrow = dt.date.today() + dt.timedelta(days=1)
-    tomorrow_str = sdate(tomorrow)
-    day_of_week = DAYS_OF_WEEK_RU[tomorrow.weekday()]
+    # Определяем дату для планирования
+    if target_date is None:
+        target_date = dt.date.today() + dt.timedelta(days=1)
 
-    # Получаем всех поставщиков на завтра и тех, что уже спланированы
-    all_suppliers = get_suppliers_for_day(day_of_week)
-    planned_suppliers = get_planned_suppliers(tomorrow_str)
+    target_date_str = sdate(target_date)
+    day_of_week_name = DAYS_OF_WEEK_RU[target_date.weekday()]
     
-    # Оставляем только тех, кого еще не планировали
+    # Получаем всех поставщиков на выбранный день и тех, кто уже спланирован
+    all_suppliers = get_suppliers_for_day(day_of_week_name)
+    planned_suppliers = get_planned_suppliers(target_date_str)
+    
     unplanned_suppliers = [s for s in all_suppliers if s not in planned_suppliers]
 
-    if not unplanned_suppliers:
-        await query.message.edit_text(
-            f"✅ Все поставщики на завтра ({day_of_week}) уже спланированы.\n\n"
-            f"Нажмите «Сдать смену», чтобы увидеть итоговый отчет.",
-            reply_markup=back_kb()
-        )
-        return
-    
-    # Создаем клавиатуру с кнопками для каждого не-спланированного поставщика
+    # --- Новая логика для кнопок навигации ---
     kb = []
-    for supplier in unplanned_suppliers:
-        # callback_data будет 'plan_sup_ИмяПоставщика'
-        kb.append([InlineKeyboardButton(f"🚚 {supplier}", callback_data=f"plan_sup_{supplier}")])
-        
-    kb.append([InlineKeyboardButton("🛑 Внеплановый поставщик", callback_data="plan_sup_other")])
+    nav_row = []
+    today = dt.date.today()
+    
+    # Кнопка "назад" (не раньше завтрашнего дня)
+    prev_day = target_date - dt.timedelta(days=1)
+    if prev_day > today:
+        nav_row.append(InlineKeyboardButton("◀️ Назад", callback_data=f"plan_nav_{sdate(prev_day)}"))
+
+    # Кнопка "вперед" (не далее ближайшего воскресенья)
+    end_of_week = today + dt.timedelta(days=(6 - today.weekday()))
+    next_day = target_date + dt.timedelta(days=1)
+    if next_day <= end_of_week:
+        nav_row.append(InlineKeyboardButton("Вперед ▶️", callback_data=f"plan_nav_{sdate(next_day)}"))
+
+    if nav_row:
+        kb.append(nav_row)
+
+    # --- Клавиатура с поставщиками ---
+    if not unplanned_suppliers:
+        # Добавляем сообщение в середину клавиатуры, если поставщиков нет
+        kb.append([InlineKeyboardButton(f"✅ Все на {day_of_week_name} спланированы", callback_data="noop")])
+    else:
+        for supplier in unplanned_suppliers:
+            kb.append([InlineKeyboardButton(f"🚚 {supplier}", callback_data=f"plan_sup_{target_date_str}_{supplier}")])
+
+    kb.append([InlineKeyboardButton("🛑 Внеплановый поставщик", callback_data=f"plan_sup_{target_date_str}_other")])
     kb.append([InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")])
 
-    await query.message.edit_text(
-        f"🗓 <b>Планирование на завтра ({tomorrow_str})</b>\n\n"
-        f"Выберите поставщика, чтобы указать примерную сумму к оплате:",
-        reply_markup=InlineKeyboardMarkup(kb),
-        parse_mode=ParseMode.HTML
-    )
+    # Формируем заголовок с датой
+    header_text = f"🗓 <b>Планирование на {day_of_week_name.capitalize()}, {target_date_str}</b>\n\n"
+    message_text = header_text + "Выберите поставщика для планирования:"
+
+    if query:
+        await query.message.edit_text(
+            message_text,
+            reply_markup=InlineKeyboardMarkup(kb),
+            parse_mode=ParseMode.HTML
+        )
 
 # --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
 
@@ -1710,22 +1731,28 @@ async def handle_planning_supplier_choice(update: Update, context: ContextTypes.
     query = update.callback_query
     await query.answer()
     
-    supplier_name = query.data.split('_', 2)[2]
+    # Новый формат: plan_sup_ДАТА_ИмяПоставщика или plan_sup_ДАТА_other
+    parts = query.data.split('_', 3)
+    target_date_str = parts[2]
+    supplier_name = parts[3]
+    
+    # Сохраняем дату в состояние планирования
+    context.user_data['planning'] = {
+        'date': target_date_str
+    }
     
     if supplier_name == "other":
-        context.user_data['planning'] = {'step': 'other_supplier_name'}
+        context.user_data['planning']['step'] = 'other_supplier_name'
         await query.message.edit_text(
-            "✍️ Введите имя внепланового поставщика:",
+            f"✍️ Введите имя внепланового поставщика на {target_date_str}:",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="planning")]])
         )
     else:
         # Сохраняем выбранного поставщика и переходим к вводу суммы
-        context.user_data['planning'] = {
-            'supplier': supplier_name,
-            'step': 'amount'
-        }
+        context.user_data['planning']['supplier'] = supplier_name
+        context.user_data['planning']['step'] = 'amount'
         await query.message.edit_text(
-            f"💰 Введите примерную сумму для <b>{supplier_name}</b> (в гривнах):",
+            f"💰 Введите примерную сумму для <b>{supplier_name}</b> на {target_date_str} (в гривнах):",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="planning")]]),
             parse_mode=ParseMode.HTML
         )
@@ -1763,25 +1790,23 @@ async def handle_planning_pay_type(update: Update, context: ContextTypes.DEFAULT
     supplier = planning_data['supplier']
     amount = planning_data['amount']
     user_name = update.effective_user.first_name
-    tomorrow_str = sdate(dt.date.today() + dt.timedelta(days=1))
+    # Используем дату, сохраненную на предыдущем шаге
+    target_date_str = planning_data['date']
     
     # Сохраняем в таблицу
-    save_plan_fact(tomorrow_str, supplier, amount, pay_type, user_name)
+    save_plan_fact(target_date_str, supplier, amount, pay_type, user_name)
     
     await query.message.edit_text(
-        f"✅ План для <b>{supplier}</b> на сумму <b>{amount:.2f}₴</b> ({pay_type}) сохранен!\n\n"
+        f"✅ План для <b>{supplier}</b> на <b>{target_date_str}</b> на сумму <b>{amount:.2f}₴</b> ({pay_type}) сохранен!\n\n"
         "Хотите спланировать следующего поставщика?",
         parse_mode=ParseMode.HTML,
-        # Клавиатура, которая ведет обратно в меню планирования
         reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("Продолжить планирование", callback_data="planning")],
             [InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")],
-            [InlineKeyboardButton("Главное меню", callback_data="main_menu")]
         ])
     )
-    # Очищаем состояние
     context.user_data.pop('planning', None)
-
+    
 # --- ПЕРЕУЧЕТ ---
 
 
@@ -4705,6 +4730,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # --- 2. ПЛАНИРОВАНИЕ ---
         elif data == "planning": await start_planning(update, context)
+        elif data.startswith("plan_nav_"):
+            target_date_str = data.split('_')[-1]
+            target_date = pdate(target_date_str)
+            await start_planning(update, context, target_date=target_date)
         elif data.startswith("plan_sup_"): await handle_planning_supplier_choice(update, context)
         elif data.startswith("plan_pay_"): await handle_planning_pay_type(update, context)
         
