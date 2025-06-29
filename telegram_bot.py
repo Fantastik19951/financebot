@@ -921,7 +921,7 @@ async def edit_invoice_toggle_field(update: Update, context: ContextTypes.DEFAUL
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выполняет сохранение и ВСЕ необходимые пересчеты, включая удаление старых долгов."""
+    """Выполняет сохранение и ВСЕ необходимые пересчеты, включая сейф и долги."""
     query = update.callback_query
     await query.answer("Обрабатываю изменения...", show_alert=False)
 
@@ -936,8 +936,8 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
     # 1. Получаем старые данные из кэша ДО изменений
     all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS)
     old_row = all_invoices[row_index - 2]
-    old_to_pay = float(old_row[4].replace(',', '.'))
-    old_markup = float(old_row[5].replace(',', '.'))
+    old_to_pay = parse_float(old_row[4])
+    old_markup = parse_float(old_row[5])
     old_pay_type = old_row[6]
     original_date = old_row[0]
     original_supplier = old_row[1]
@@ -947,39 +947,48 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
         update_invoice_in_sheet(row_index, field, new_value)
     
     # 3. Принудительно сбрасываем кэш, чтобы прочитать новые данные
-    if 'sheets_cache' in context.bot_data:
-        context.bot_data['sheets_cache'].pop(SHEET_SUPPLIERS, None)
-    
+    get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True)
     all_invoices_new = get_cached_sheet_data(context, SHEET_SUPPLIERS)
     new_row = all_invoices_new[row_index - 2]
     
     # 3.1. Пересчитываем и обновляем "К оплате"
-    new_income = float(new_row[2].replace(',', '.'))
-    new_writeoff = float(new_row[3].replace(',', '.'))
+    new_income = parse_float(new_row[2])
+    new_writeoff = parse_float(new_row[3])
     new_to_pay = new_income - new_writeoff
     update_invoice_in_sheet(row_index, 'to_pay', f"{new_to_pay:.2f}")
 
     # 4. Корректируем связанные операции
     who = query.from_user.first_name
-    comment_prefix = f"Корректировка по накл. от {original_date} ({original_supplier})"
+    comment_prefix = f"Корректировка накл. от {original_date} ({original_supplier})"
     new_pay_type = new_row[6]
     
     # 4.1. Корректировка остатка магазина
-    new_markup = float(new_row[5].replace(',', '.'))
+    new_markup = parse_float(new_row[5])
     markup_diff = new_markup - old_markup
     if abs(markup_diff) > 0.01:
         add_inventory_operation("Корректировка", markup_diff, comment_prefix, who)
 
-    # 4.2. Корректировка сейфа
-    old_spent_from_safe = 0 if old_pay_type == "Долг" else old_to_pay
-    new_spent_from_safe = 0 if new_pay_type == "Долг" else new_to_pay
-    safe_diff = new_spent_from_safe - old_spent_from_safe
-    if abs(safe_diff) > 0.01:
-        op_type = "Расход" if safe_diff > 0 else "Пополнение"
-        add_safe_operation(op_type, abs(safe_diff), comment_prefix, who)
-        if 'sheets_cache' in context.bot_data:
-            context.bot_data['sheets_cache'].pop("Сейф", None)
-
+    # --- НАЧАЛО КЛЮЧЕВОГО ИСПРАВЛЕНИЯ (КОРРЕКТИРОВКА СЕЙФА) ---
+    # 4.2. Точная корректировка сейфа на основе типа оплаты
+    cash_spent_before = old_to_pay if old_pay_type == "Наличные" else 0
+    cash_spent_after = new_to_pay if new_pay_type == "Наличные" else 0
+    
+    safe_adjustment = cash_spent_before - cash_spent_after
+    
+    if abs(safe_adjustment) > 0.01:
+        if safe_adjustment > 0:
+            # Если мы потратили меньше наличных, чем думали (например, было "Наличные", стало "Карта"),
+            # то возвращаем разницу в сейф.
+            op_type = "Пополнение"
+            comment = f"{comment_prefix} (возврат в кассу)"
+        else:
+            # Если мы потратили больше наличных (было "Карта", стало "Наличные"),
+            # то списываем разницу из сейфа.
+            op_type = "Расход"
+            comment = f"{comment_prefix} (оплата из кассы)"
+        
+        add_safe_operation(op_type, abs(safe_adjustment), comment, who)
+        
     # 5. Обновляем лист "Долги"
     ws_debts = GSHEET.worksheet(SHEET_DEBTS)
     # Принудительно читаем свежие данные, так как могли быть изменения
@@ -990,9 +999,9 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
             found_debt_row_index = i + 2
             break
             
-    # Сценарий 1: Теперь это долг (а раньше не был, или был, но сумма изменилась)
-    if new_pay_type == "Долг":
+    if new_pay_type.startswith("Долг"):
         due_date = new_row[9] if len(new_row) > 9 and new_row[9] else ""
+        debt_pay_type = "Карта" if "(Карта)" in new_pay_type else "Наличные"
         if found_debt_row_index != -1:
             logging.info(f"Обновляем существующий долг в строке {found_debt_row_index}")
             ws_debts.update_cell(found_debt_row_index, 3, new_to_pay)
@@ -1003,7 +1012,11 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
                 ws_debts.update_cell(found_debt_row_index, 6, new_values['due_date'])
         else:
             logging.info("Создаем новую запись о долге.")
-            ws_debts.append_row([original_date, original_supplier, new_to_pay, 0, new_to_pay, due_date, "Нет", "Наличные"])
+            ws_debts.append_row([original_date, original_supplier, new_to_pay, 0, new_to_pay, due_date, "Нет", debt_pay_type])
+
+    elif old_pay_type.startswith("Долг") and not new_pay_type.startswith("Долг"):
+        if found_debt_row_index != -1:
+            ws_debts.delete_rows(found_debt_row_index)
     
     # Сценарий 2: Это больше не долг (а раньше был)
     elif old_pay_type == "Долг" and new_pay_type != "Долг":
@@ -1013,17 +1026,18 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
             ws_debts.delete_rows(found_debt_row_index)
 
     # 6. Обновляем главную таблицу "Поставщики" финальными статусами
-    if new_pay_type != "Долг":
-        update_invoice_in_sheet(row_index, 'due_date', "") # Очищаем срок долга
+    if not new_pay_type.startswith("Долг"):
+        update_invoice_in_sheet(row_index, 'due_date', "") 
 
-    final_paid_status = "Да" if new_pay_type != "Долг" else "Нет"
-    final_debt_amount = new_to_pay if new_pay_type == "Долг" else 0
+    final_paid_status = "Да" if not new_pay_type.startswith("Долг") else "Нет"
+    final_debt_amount = new_to_pay if new_pay_type.startswith("Долг") else 0
     update_invoice_in_sheet(row_index, 'paid_status', final_paid_status)
     update_invoice_in_sheet(row_index, 'debt_amount', f"{final_debt_amount:.2f}")
 
     # Финальные действия
     context.user_data.pop('edit_invoice', None)
-    await query.message.edit_text("✅ Накладная успешно обновлена! Все связанные данные пересчитаны.",
+    get_cached_sheet_data(context, "Сейф", force_update=True) # Сбрасываем кэш сейфа
+    await query.message.edit_text("✅ Накладная успешно обновлена! Все связанные данные, включая сейф, пересчитаны.",
                                   reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Продолжить просмотр", callback_data=f"edit_invoice_cancel_{row_index}")]]))
 
 
