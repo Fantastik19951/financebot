@@ -799,6 +799,7 @@ def calculate_accrued_bonus(seller_name: str, all_reports=None, all_salaries=Non
             total_sales = float(row[4].replace(',', '.'))
             
             if start_period <= report_date <= end_period and report_seller == seller_name:
+                bonus = round((total_sales * 0.02) - 700, 2)
                 if bonus > 0:
                     total_accrued += bonus
                     bonus_days.append({'date': sdate(report_date), 'sales': total_sales, 'bonus': bonus})
