@@ -2271,6 +2271,7 @@ def stock_safe_menu_kb():
         [InlineKeyboardButton("💵 Изъятие З/П за день", callback_data="withdraw_salary")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
+    
 def analytics_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📊 Финансовая Панель", callback_data="analytics_financial_dashboard")],
@@ -2391,16 +2392,6 @@ def debts_menu_kb():
         [InlineKeyboardButton("✅ Погасить долг", callback_data="close_debt")],
         [InlineKeyboardButton("📜 История долгов", callback_data="debts_history_0")],
         [InlineKeyboardButton("🔎 Поиск долгов", callback_data="search_debts")],
-        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
-    ])
-
-def analytics_menu_kb():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📈 Продажи", callback_data="sales_analytics")],
-        [InlineKeyboardButton("💸 Расходы", callback_data="expenses_analytics")],
-        [InlineKeyboardButton("📦 Поставщики", callback_data="suppliers_analytics")],
-        [InlineKeyboardButton("👥 Продавцы", callback_data="sellers_analytics")],
-        [InlineKeyboardButton("📊 Финансовый отчёт", callback_data="financial_report")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
 
