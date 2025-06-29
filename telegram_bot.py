@@ -1507,8 +1507,10 @@ async def ask_for_invoice_edit_value(update: Update, context: ContextTypes.DEFAU
     if current_field == 'pay_type':
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("💵 Наличные", callback_data="invoice_edit_value_Наличные")],
-            [InlineKeyboardButton("💳 Карта", callback_data="invoice_edit_value_Карта")],
-            [InlineKeyboardButton("📆 Долг", callback_data="invoice_edit_value_Долг")]])
+            [InlineKeyboardButton("💳 Карта (факт. оплата)", callback_data="invoice_edit_value_Карта")],
+            [InlineKeyboardButton("📆 Долг (Наличные)", callback_data="invoice_edit_value_Долг")],
+            [InlineKeyboardButton("💳 Долг (Карта)", callback_data="invoice_edit_value_Долг (Карта)")]
+        ])
     
     if query:
         await message.edit_text(prompt_text, reply_markup=kb)
