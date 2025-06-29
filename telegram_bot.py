@@ -2670,15 +2670,15 @@ async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⚙️ Настройки системы\nВыберите действие:",
         reply_markup=settings_menu_kb())
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def stock_safe_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    push_nav(context, "stock_safe_menu")
     query = update.callback_query
     await query.answer()
     await query.message.edit_text(
         "💼 Работа с остатком и сейфом. Выберите действие:",
-        reply_markup=stock_safe_kb(str(query.from_user.id) in ADMINS)
+        # ИСПРАВЛЕНИЕ: Вызываем новую функцию клавиатуры
+        reply_markup=stock_safe_menu_kb()
     )
-
     
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
