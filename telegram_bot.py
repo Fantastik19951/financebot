@@ -4463,55 +4463,64 @@ async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_in
         logging.error(f"Ошибка финального погашения долга: {e}", exc_info=True)
         await query.answer(f"❌ Ошибка обновления таблицы: {e}", show_alert=True)
         
-async def view_debts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Показывает список НЕПОГАШЕННЫХ долгов и создает для них кнопки
-    с ПРАВИЛЬНЫМ идентификатором (номером строки в Google Таблице).
-    """
-    # Определяем, откуда пришел вызов (от кнопки или от текста)
-    if hasattr(update, "callback_query") and update.callback_query:
-        query = update.callback_query
-        await query.answer()
-        msg_func = query.message.edit_text
-    else:
-        msg_func = update.message.reply_text
-
-    try:
-        ws = GSHEET.worksheet(SHEET_DEBTS)
-        rows = ws.get_all_values()[1:]
-    except Exception as e:
-        await msg_func(f"❌ Ошибка чтения таблицы долгов: {e}")
-        return
-
-    # Отбираем только непогашенные долги (столбец G, индекс 6) и добавляем к ним реальный номер строки (i+2)
-    unpaid_debts = [row + [i+2] for i, row in enumerate(rows) if len(row) > 6 and row[6].strip().lower() != "да"]
-    unpaid_debts.sort(key=lambda x: pdate(x[5]) or dt.date.max) # Сортируем по сроку погашения
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+async def view_debts_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
+    query = update.callback_query
+    await query.answer()
     
-    # Сохраняем этот список для дальнейшей работы (важно для repay_confirm)
-    context.user_data['repay_debts'] = unpaid_debts
+    context.user_data['debts_history_page'] = page
+    rows = get_cached_sheet_data(context, SHEET_DEBTS)
+    if rows is None:
+        await query.message.edit_text("❌ Ошибка чтения истории долгов.")
+        return
+        
+    per_page = 10
+    total_records = len(rows)
+    total_pages = math.ceil(total_records / per_page) if total_records > 0 else 1
+    page = max(0, min(page, total_pages - 1))
 
-    if not unpaid_debts:
-        await msg_func("🟢 Отлично! Нет долгов для погашения.", reply_markup=debts_menu_kb())
+    # Новые записи показываем сверху
+    rows.reverse()
+    page_rows = rows[page * per_page : (page + 1) * per_page]
+
+    if not page_rows:
+        await query.message.edit_text("История долгов пуста.", reply_markup=debts_menu_kb())
         return
 
-    text = "<b>💸 Погасить долг</b>\n\nВыберите из списка:\n"
-    kb = []
-    # Используем enumerate для нумерации в тексте, но callback делаем с реальным индексом строки
-    for i, debt_data in enumerate(unpaid_debts):
-        # Безопасно извлекаем данные
-        date, supplier, total_str, _, _, due, _, row_index = (debt_data + [sdate(), 0])[:8]
+    msg = f"<b>📜 История долгов (Стр. {page + 1}/{total_pages}):</b>\n"
+    for idx, row in enumerate(page_rows, start=1 + page * per_page):
+        # Безопасно извлекаем все данные
+        date, supplier, total, _, _, due_date, is_paid, pay_type = (row + [""] * 8)[:8]
         
-        text += (f"\n<b>{i+1}. {supplier}</b>\n"
-                 f"   - Дата: {date}, Срок: {due}\n"
-                 f"   - Сумма: <b>{float(total_str.replace(',','.')):.2f}₴</b>\n")
+        status_icon = "✅" if is_paid.strip().lower() == "да" else "🟠"
         
-        # --- ГЛАВНОЕ ИСПРАВЛЕНИЕ ---
-        # Создаем кнопку с ПРАВИЛЬНЫМ номером строки, а не с порядковым номером i
-        kb.append([InlineKeyboardButton(f"✅ Погасить долг №{i+1} для {supplier}", callback_data=f"repay_confirm_{row_index}")])
-        
-    kb.append([InlineKeyboardButton("🔙 Назад в меню долгов", callback_data="debts_menu")])
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Формируем более понятный тип долга ---
+        if pay_type == "Карта":
+            debt_type_str = "Долг (Карта)"
+        else:
+            debt_type_str = "Долг (Наличные)"
 
-    await msg_func(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
+        msg += "\n" + "─" * 28 + "\n"
+        msg += f"{idx}. {status_icon} <b>{supplier}</b> | {date}\n"
+        msg += f"  • Сумма: <b>{parse_float(total):.2f}₴</b>\n"
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Новая строка для типа долга и удалена строка "Оплачено" ---
+        msg += f"  • Тип: {debt_type_str}\n"
+        msg += f"  • Срок: {due_date} | Статус: {is_paid}"
+
+    # Навигация
+    kb = []
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("⬅️ Назад", callback_data="debts_history_prev"))
+    if (page + 1) < total_records:
+        nav.append(InlineKeyboardButton("➡️ Вперёд", callback_data="debts_history_next"))
+    if nav:
+        kb.append(nav)
+    kb.append([InlineKeyboardButton("🔙 Долги", callback_data="debts_menu")])
+
+    await query.message.edit_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
+    context.user_data['debts_history_page'] = page
+
 # --- ОБРАБОТЧИКИ СЕЙФОВ, ПЕРЕУЧЕТОВ И ЗП ---
 
 async def inventory_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
