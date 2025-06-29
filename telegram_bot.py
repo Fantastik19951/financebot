@@ -3783,7 +3783,7 @@ async def inventory_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"{icon} <b>{op_type}: {amount_text}</b> ({user})\n"
             text += f"   <i>{date} - {comment}</i>"
         
-    await query.message.edit_text(text, parse_mode='HTML', reply_markup=stock_safe_kb())
+    await query.message.edit_text(text, parse_mode='HTML', reply_markup=stock_menu_kb())
 
 
     
@@ -4620,7 +4620,7 @@ async def safe_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text += f"{icon} <b>{op_type}: {amount}₴</b> ({user})\n"
             text += f"   <i>{date} - {comment}</i>"
         
-    await query.message.edit_text(text, parse_mode='HTML', reply_markup=stock_safe_kb())
+    await query.message.edit_text(text, parse_mode='HTML', reply_markup=safe_menu_kb())
 
 
 
