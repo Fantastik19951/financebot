@@ -1987,7 +1987,7 @@ async def show_invoices_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
     Показывает новый экран-список накладных за выбранный день.
     """
     query = update.callback_query
-    await query.answer()
+    await query.message.edit_text("⏳ Загружаю данные по накладным...")
 
     try:
         # Формат: invoices_list_ДАТА
@@ -2034,21 +2034,31 @@ async def show_invoices_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
-async def show_single_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+async def show_single_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE, date_str: str = None, list_index: int = None):
     """
-    Показывает детальный вид ОДНОЙ накладной с пагинацией и кнопкой редактирования.
+    Показывает детальный вид ОДНОЙ накладной.
+    Корректно обрабатывает получение данных из аргументов или из query.data.
     """
     query = update.callback_query
     await query.answer()
 
-    if date_str is None or current_index is None:
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Четко определяем переменные в начале ---
+    target_date_str = date_str
+    target_index = list_index
+
+    # Если аргументы не были переданы напрямую, извлекаем их из данных кнопки
+    if target_date_str is None or target_index is None:
         try:
             parts = query.data.split('_')
-            date_str, current_index = parts[3], int(parts[4])
+            target_date_str, target_index = parts[3], int(parts[4])
         except (ValueError, IndexError):
             await query.message.edit_text("❌ Ошибка навигации по накладным.")
             return
 
+    # Теперь вся остальная функция использует переменные target_date_str и target_index,
+    # которые гарантированно имеют значение.
+    
     day_invoice_rows_indices = context.user_data.get('day_invoice_rows', [])
     all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS)
 
@@ -2057,22 +2067,26 @@ async def show_single_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
         
     total_invoices = len(day_invoice_rows_indices)
-    current_index = max(0, min(current_index, total_invoices - 1))
+    current_index = max(0, min(target_index, total_invoices - 1))
     
+    if current_index >= len(day_invoice_rows_indices):
+        await query.message.edit_text("❌ Ошибка: неверный индекс накладной.")
+        return
+        
     target_row_num = day_invoice_rows_indices[current_index]
     invoice_data = all_invoices[target_row_num - 2]
 
     # --- Форматируем красивое сообщение (как и раньше) ---
     supplier = invoice_data[1] if len(invoice_data) > 1 else "???"
-    amount_income = float(invoice_data[2].replace(',', '.')) if len(invoice_data) > 2 and invoice_data[2] else 0
-    writeoff = float(invoice_data[3].replace(',', '.')) if len(invoice_data) > 3 and invoice_data[3] else 0
-    to_pay = float(invoice_data[4].replace(',', '.')) if len(invoice_data) > 4 and invoice_data[4] else 0
-    markup_amount = float(invoice_data[5].replace(',', '.')) if len(invoice_data) > 5 and invoice_data[5] else 0
+    amount_income = parse_float(invoice_data[2]) if len(invoice_data) > 2 else 0
+    writeoff = parse_float(invoice_data[3]) if len(invoice_data) > 3 else 0
+    to_pay = parse_float(invoice_data[4]) if len(invoice_data) > 4 else 0
+    markup_amount = parse_float(invoice_data[5]) if len(invoice_data) > 5 else 0
     pay_type = invoice_data[6] if len(invoice_data) > 6 else "???"
     due_date = invoice_data[9] if len(invoice_data) > 9 else ""
     comment = invoice_data[10] if len(invoice_data) > 10 else ""
 
-    msg = f"🧾 <b>Детали накладной ({current_index + 1}/{total_invoices})</b> за {date_str}\n\n"
+    msg = f"🧾 <b>Детали накладной ({current_index + 1}/{total_invoices})</b> за {target_date_str}\n\n"
     msg += f"<b>Поставщик:</b> {supplier}\n"
     if writeoff > 0:
         msg += f"  • Сумма прихода: {amount_income:.2f}₴\n"
@@ -2080,7 +2094,7 @@ async def show_single_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
     msg += f"  • <b>К оплате:</b> {to_pay:.2f}₴\n"
     msg += f"  • <b>Сумма после наценки:</b> {markup_amount:.2f}₴\n"
     msg += f"  • <b>Тип оплаты:</b> {pay_type}\n"
-    if pay_type == "Долг" and due_date:
+    if pay_type.startswith("Долг") and due_date:
         msg += f"     <i>(Срок погашения: {due_date})</i>\n"
     if comment:
         msg += f"  • <b>Комментарий:</b> {comment}\n"
@@ -2088,16 +2102,15 @@ async def show_single_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
     # --- Клавиатура с пагинацией и кнопкой "Редактировать" ---
     kb_nav = []
     if current_index > 0:
-        kb_nav.append(InlineKeyboardButton("◀️ Пред.", callback_data=f"view_single_invoice_{date_str}_{current_index - 1}"))
+        kb_nav.append(InlineKeyboardButton("◀️ Пред.", callback_data=f"view_single_invoice_{target_date_str}_{current_index - 1}"))
     if current_index < total_invoices - 1:
-        kb_nav.append(InlineKeyboardButton("След. ▶️", callback_data=f"view_single_invoice_{date_str}_{current_index + 1}"))
+        kb_nav.append(InlineKeyboardButton("След. ▶️", callback_data=f"view_single_invoice_{target_date_str}_{current_index + 1}"))
     
     kb = []
     if kb_nav: kb.append(kb_nav)
     
-    # Добавляем кнопку редактирования, передавая номер строки в таблице
     kb.append([InlineKeyboardButton(f"✏️ Редактировать ({supplier})", callback_data=f"edit_invoice_start_{target_row_num}")])
-    kb.append([InlineKeyboardButton("🔙 К списку накладных", callback_data=f"invoices_list_{date_str}")])
+    kb.append([InlineKeyboardButton("🔙 К списку накладных", callback_data=f"invoices_list_{target_date_str}")])
     
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
     
