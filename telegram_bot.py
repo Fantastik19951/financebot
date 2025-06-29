@@ -47,7 +47,7 @@ SHEET_INVENTORY = "Остаток магазина"
 DIALOG_KEYS = [
     'report', 'supplier', 'planning', 'edit_plan', 'edit_invoice',
     'revision', 'search_debt', 'safe_op', 'inventory_expense', 
-    'repay', 'shift', 'report_period', 'admin_expense'
+    'repay', 'shift', 'report_period', 'admin_expense', 'custom_analytics_period'
 ]
 
 
@@ -64,27 +64,29 @@ def push_nav(context, target):
 # --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
 
 def expense_chart_period_kb():
-    """Клавиатура для выбора периода ТОЛЬКО для диаграммы расходов."""
+    """Клавиатура для выбора периода для диаграммы расходов."""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("Неделя", callback_data="exp_chart_period_7"),
             InlineKeyboardButton("Месяц", callback_data="exp_chart_period_30"),
             InlineKeyboardButton("3 месяца", callback_data="exp_chart_period_90")
         ],
+        [InlineKeyboardButton("🗓 Произвольный период", callback_data="custom_period_expense_chart")],
         [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
     ])
 
 def financial_dashboard_period_kb():
-    """Клавиатура для выбора периода ТОЛЬКО для финансовой панели."""
+    """Клавиатура для выбора периода для финансовой панели."""
     return InlineKeyboardMarkup([
         [
             InlineKeyboardButton("Неделя", callback_data="fin_dash_period_7"),
             InlineKeyboardButton("Месяц", callback_data="fin_dash_period_30"),
             InlineKeyboardButton("3 месяца", callback_data="fin_dash_period_90")
         ],
+        [InlineKeyboardButton("🗓 Произвольный период", callback_data="custom_period_financial_dashboard")],
         [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
     ])
-
+    
 def pop_nav(context):
     stack = context.user_data.get('nav_stack', [])
     if stack:
@@ -231,12 +233,15 @@ async def show_expense_pie_chart_menu(update: Update, context: ContextTypes.DEFA
             reply_markup=keyboard
         )
         
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def process_expense_chart_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает выбор периода, генерирует и отправляет диаграмму."""
     query = update.callback_query
     await query.message.edit_text("⏳ Собираю данные и рисую диаграмму, пожалуйста, подождите...")
 
     days = int(query.data.split('_')[-1])
+    
+    # ИЗМЕНЕНИЕ: Конечная дата - снова СЕГОДНЯ
     end_date = dt.date.today()
     start_date = end_date - dt.timedelta(days=days - 1)
 
@@ -245,7 +250,7 @@ async def process_expense_chart_period(update: Update, context: ContextTypes.DEF
     if image_buffer is None:
         await query.message.edit_text(
             "😔 За выбранный период не найдено расходов для построения диаграммы.",
-            reply_markup=analytics_period_kb()
+            reply_markup=expense_chart_period_kb()
         )
         return
         
@@ -253,20 +258,20 @@ async def process_expense_chart_period(update: Update, context: ContextTypes.DEF
     await context.bot.send_photo(
         chat_id=query.message.chat_id,
         photo=image_buffer,
-        caption=f"📊 Структура ваших расходов за последние {days} дней.",
+        caption=f"📊 Структура ваших расходов за последние {days} дней (включая сегодня).",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_expense_pie_chart")]])
     )
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
+# --- И ЭТУ ФУНКЦИЮ ТОЖЕ ЗАМЕНИТЕ ---
 async def process_financial_dashboard_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает выбор периода, генерирует и отправляет фин. отчет."""
     query = update.callback_query
     await query.message.edit_text("⏳ Собираю финансовый отчет...")
 
     days = int(query.data.split('_')[-1])
-    
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-    # Конечной датой теперь всегда является ВЧЕРА
-    end_date = dt.date.today() - dt.timedelta(days=1)
+
+    # ИЗМЕНЕНИЕ: Конечная дата - снова СЕГОДНЯ
+    end_date = dt.date.today()
     start_date = end_date - dt.timedelta(days=days - 1)
 
     summary_text = generate_financial_summary(context, start_date, end_date)
@@ -1378,6 +1383,64 @@ async def show_financial_dashboard_menu(update: Update, context: ContextTypes.DE
         "🧮 Пожалуйста, выберите период для финансового отчета:",
         reply_markup=financial_dashboard_period_kb()
     )
+
+# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
+
+async def start_custom_period_analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает диалог выбора произвольного периода для аналитики."""
+    query = update.callback_query
+    # Определяем, какой отчет нужен, из callback_data
+    report_type = query.data.replace("custom_period_", "")
+    
+    context.user_data['custom_analytics_period'] = {
+        'step': 'start_date',
+        'report_type': report_type
+    }
+    await query.message.edit_text("📅 Введите начальную дату периода (ДД.ММ.ГГГГ):")
+
+async def handle_analytics_start_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает ввод начальной даты для аналитики."""
+    try:
+        start_date = pdate(update.message.text)
+        if not start_date: raise ValueError("Неверный формат")
+        
+        context.user_data['custom_analytics_period']['start_date'] = start_date
+        context.user_data['custom_analytics_period']['step'] = 'end_date'
+        
+        await update.message.reply_text(f"Начальная дата: {sdate(start_date)}\n\nТеперь введите конечную дату (ДД.ММ.ГГГГ):")
+    except (ValueError, TypeError):
+        await update.message.reply_text("❌ Неверный формат даты. Введите ДД.ММ.ГГГГ")
+
+async def handle_analytics_end_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает конечную дату и запускает генерацию нужного отчета."""
+    try:
+        end_date = pdate(update.message.text)
+        if not end_date: raise ValueError("Неверный формат")
+
+        period_data = context.user_data['custom_analytics_period']
+        start_date = period_data['start_date']
+        report_type = period_data['report_type']
+
+        if end_date < start_date:
+            return await update.message.reply_text("❌ Конечная дата не может быть раньше начальной.")
+
+        await update.message.reply_text("⏳ Готовлю ваш отчет...")
+
+        if report_type == 'expense_chart':
+            image_buffer = generate_expense_pie_chart(context, start_date, end_date)
+            if image_buffer:
+                await context.bot.send_photo(chat_id=update.effective_chat.id, photo=image_buffer)
+            else:
+                await update.message.reply_text("Нет данных для отчета.")
+        
+        elif report_type == 'financial_dashboard':
+            summary_text = generate_financial_summary(context, start_date, end_date)
+            await update.message.reply_text(summary_text, parse_mode=ParseMode.HTML)
+            
+    except (ValueError, TypeError):
+        await update.message.reply_text("❌ Неверный формат даты. Введите ДД.ММ.ГГГГ")
+    finally:
+        context.user_data.pop('custom_analytics_period', None)
 
 async def execute_payout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выполняет выплату и записывает данные."""
@@ -5066,6 +5129,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if step == 'amount': return await handle_admin_expense_amount(update, context)
         elif step == 'comment': return await handle_admin_expense_comment(update, context)
 
+    elif state_key == 'custom_analytics_period':
+        step = user_data['custom_analytics_period'].get('step')
+        if step == 'start_date': return await handle_analytics_start_date(update, context)
+        elif step == 'end_date': return await handle_analytics_end_date(update, context)
+
     elif state_key == 'revision':
         step = user_data['revision'].get('step')
         if step == 'actual_amount': return await handle_revision_amount(update, context)
@@ -5429,6 +5497,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_financial_dashboard_menu(update, context)
         elif data.startswith("fin_dash_period_"): # Используем новый префикс для избежания путаницы
              await process_financial_dashboard_period(update, context)
+        elif data.startswith("custom_period_"):
+            await start_custom_period_analytics(update, context)
+
     
         # --- 11. СЕЙФ И ОСТАТОК ---
         elif data == "inventory_balance": await inventory_balance(update, context)
