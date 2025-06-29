@@ -1468,10 +1468,39 @@ async def ask_for_invoice_edit_value(update: Update, context: ContextTypes.DEFAU
     edit_state = context.user_data.get('edit_invoice', {})
     row_index = edit_state.get('row_index')
     
+    # --- НАЧАЛО БЛОКА ИСПРАВЛЕНИЙ ---
+    # Этот блок будет обрабатывать ответы с кнопок и динамически менять очередь вопросов
+    if query and query.data.startswith("invoice_edit_value_"):
+        new_value = query.data.replace("invoice_edit_value_", "")
+        fields_to_edit = edit_state.get('fields_to_edit_list', [])
+        current_index = edit_state.get('current_field_index', 0)
+        
+        if fields_to_edit and current_index < len(fields_to_edit):
+            current_field = fields_to_edit[current_index]
+            edit_state.setdefault('new_values', {})[current_field] = new_value
+            
+            # Если мы только что изменили Тип оплаты на Долг
+            if current_field == 'pay_type' and "Долг" in new_value:
+                # И если вопроса о дате долга еще нет в нашей очереди
+                if 'due_date' not in fields_to_edit:
+                    # Вставляем его следующим в очередь
+                    fields_to_edit.insert(current_index + 1, 'due_date')
+
+            edit_state['current_field_index'] += 1
+            
+    # Этот блок обработает текстовый ввод
+    elif not query:
+        fields_to_edit = edit_state.get('fields_to_edit_list', [])
+        current_index = edit_state.get('current_field_index', 0)
+        if fields_to_edit and current_index < len(fields_to_edit):
+            current_field = fields_to_edit[current_index]
+            edit_state.setdefault('new_values', {})[current_field] = message.text
+            edit_state['current_field_index'] += 1
+    # --- КОНЕЦ БЛОКА ИСПРАВЛЕНИЙ ---
+
     # Если мы только начинаем задавать вопросы, формируем список полей
     if 'fields_to_edit_list' not in edit_state:
         fields_to_edit = list(edit_state.get('selected_fields', {}).keys())
-        # Правильная последовательность запросов
         field_order = ['amount_income', 'writeoff', 'markup_amount', 'comment', 'pay_type', 'due_date']
         edit_state['fields_to_edit_list'] = [f for f in field_order if f in fields_to_edit]
         edit_state['current_field_index'] = 0
@@ -1512,10 +1541,12 @@ async def ask_for_invoice_edit_value(update: Update, context: ContextTypes.DEFAU
             [InlineKeyboardButton("💳 Долг (Карта)", callback_data="invoice_edit_value_Долг (Карта)")]
         ])
     
+    # Этот блок не изменился
     if query:
         await message.edit_text(prompt_text, reply_markup=kb)
     else:
         await message.reply_text(prompt_text, reply_markup=kb)
+
         
 async def repay_debt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
