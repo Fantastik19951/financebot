@@ -68,7 +68,117 @@ def pop_nav(context):
     context.user_data['nav_stack'] = stack
     return stack[-1] if stack else "main_menu"
 
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+def generate_expense_pie_chart(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> io.BytesIO | None:
+    """Собирает данные о расходах, группирует по категориям и рисует круговую диаграмму."""
+    rows = get_cached_sheet_data(context, SHEET_EXPENSES)
+    if not rows:
+        return None
 
+    # Группируем расходы по категориям за выбранный период
+    expenses_by_category = defaultdict(float)
+    for row in rows:
+        try:
+            exp_date = pdate(row[0])
+            if exp_date and start_date <= exp_date <= end_date:
+                amount = parse_float(row[1])
+                # Категорией считаем комментарий. Приводим к единому виду.
+                category = row[2].strip().capitalize() if len(row) > 2 and row[2] else "Без категории"
+                expenses_by_category[category] += amount
+        except (ValueError, IndexError):
+            continue
+
+    if not expenses_by_category:
+        return None
+
+    # --- Подготовка данных для диаграммы: группируем мелкие расходы в "Прочее" ---
+    total_expenses = sum(expenses_by_category.values())
+    labels = []
+    sizes = []
+    other_sum = 0
+    # Сортируем категории по убыванию суммы
+    sorted_expenses = sorted(expenses_by_category.items(), key=lambda item: item[1], reverse=True)
+    
+    # Берем топ-6 категорий, остальные складываем в "Прочее"
+    for i, (category, amount) in enumerate(sorted_expenses):
+        if i < 6:
+            labels.append(f"{category}\n({amount:.0f}₴)")
+            sizes.append(amount)
+        else:
+            other_sum += amount
+    
+    if other_sum > 0:
+        labels.append(f"Прочее\n({other_sum:.0f}₴)")
+        sizes.append(other_sum)
+
+    # --- Рисуем диаграмму ---
+    plt.style.use('seaborn-v0_8-pastel')
+    fig, ax = plt.subplots(figsize=(10, 8))
+    
+    wedges, texts, autotexts = ax.pie(
+        sizes, 
+        autopct='%1.1f%%', 
+        startangle=90,
+        pctdistance=0.85, # Расположение процентов
+        explode=[0.02] * len(sizes) # Небольшой отступ между секторами
+    )
+    
+    plt.setp(autotexts, size=10, weight="bold", color="white")
+    ax.legend(wedges, labels, title="Категории", loc="center left", bbox_to_anchor=(1, 0, 0.5, 1))
+    ax.set_title(f"Структура расходов за период\n{sdate(start_date)} - {sdate(end_date)}", fontsize=16)
+    
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png', bbox_inches='tight')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+# --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
+
+def analytics_period_kb():
+    """Клавиатура для выбора периода для аналитики."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("Неделя", callback_data="exp_chart_period_7"),
+            InlineKeyboardButton("Месяц", callback_data="exp_chart_period_30"),
+            InlineKeyboardButton("3 месяца", callback_data="exp_chart_period_90")
+        ],
+        [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
+    ])
+
+async def show_expense_pie_chart_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню выбора периода для отчета по расходам."""
+    query = update.callback_query
+    await query.message.edit_text(
+        "📊 Пожалуйста, выберите период для анализа расходов:",
+        reply_markup=analytics_period_kb()
+    )
+
+async def process_expense_chart_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор периода, генерирует и отправляет диаграмму."""
+    query = update.callback_query
+    await query.message.edit_text("⏳ Собираю данные и рисую диаграмму, пожалуйста, подождите...")
+
+    days = int(query.data.split('_')[-1])
+    end_date = dt.date.today()
+    start_date = end_date - dt.timedelta(days=days - 1)
+
+    image_buffer = generate_expense_pie_chart(context, start_date, end_date)
+
+    if image_buffer is None:
+        await query.message.edit_text(
+            "😔 За выбранный период не найдено расходов для построения диаграммы.",
+            reply_markup=analytics_period_kb()
+        )
+        return
+        
+    await query.message.delete()
+    await context.bot.send_photo(
+        chat_id=query.message.chat_id,
+        photo=image_buffer,
+        caption=f"📊 Структура ваших расходов за последние {days} дней.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_expense_pie_chart")]])
+    )
 
 def now(): return dt.datetime.now().strftime("%d.%m.%Y %H:%M")
 def sdate(d=None): 
@@ -4977,6 +5087,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.edit_text("🗄️ Операции с сейфом:", reply_markup=safe_menu_kb())
         elif data == "stock_menu":
             await query.message.edit_text("📦 Операции с остатком:", reply_markup=stock_menu_kb())
+        elif data == "analytics_menu": 
+             await query.message.edit_text("📈 Аналитика", reply_markup=analytics_menu_kb())
+        
         
         # --- 2. ПЛАНИРОВАНИЕ ---
         elif data == "planning": await start_planning(update, context)
@@ -5198,6 +5311,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "compare_sellers": await show_sellers_comparison(update, context)
         elif data == "withdraw_salary":
             await withdraw_daily_salary(update, context)
+        elif data == "analytics_expense_pie_chart":
+            await show_expense_pie_chart_menu(update, context)
+        elif data.startswith("exp_chart_period_"):
+            await process_expense_chart_period(update, context)
     
         # --- 11. СЕЙФ И ОСТАТОК ---
         elif data == "inventory_balance": await inventory_balance(update, context)
