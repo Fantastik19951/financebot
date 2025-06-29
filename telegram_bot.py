@@ -69,6 +69,58 @@ def pop_nav(context):
     return stack[-1] if stack else "main_menu"
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+def generate_financial_summary(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> str:
+    """Собирает данные из разных таблиц и формирует текстовый финансовый отчет."""
+    
+    # 1. Собираем данные
+    reports = get_cached_sheet_data(context, SHEET_REPORT) or []
+    expenses = get_cached_sheet_data(context, SHEET_EXPENSES) or []
+    suppliers = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
+    salaries = get_cached_sheet_data(context, SHEET_SALARIES) or []
+
+    # 2. Считаем показатели за период
+    total_revenue = 0
+    for row in reports:
+        if len(row) > 4 and (d := pdate(row[0])) and start_date <= d <= end_date:
+            total_revenue += parse_float(row[4]) # Общая сумма продаж
+
+    total_cogs = 0 # Cost of Goods Sold (Затраты на закупку)
+    for row in suppliers:
+        if len(row) > 4 and (d := pdate(row[0])) and start_date <= d <= end_date:
+            total_cogs += parse_float(row[4]) # К оплате
+
+    total_expenses = 0
+    for row in expenses:
+        if len(row) > 1 and (d := pdate(row[0])) and start_date <= d <= end_date:
+            total_expenses += parse_float(row[1])
+
+    total_salaries = 0
+    for row in salaries:
+        if len(row) > 3 and (d := pdate(row[0])) and start_date <= d <= end_date:
+            total_salaries += parse_float(row[3])
+            
+    # 3. Считаем прибыль
+    gross_profit = total_revenue - total_cogs
+    net_profit = gross_profit - total_expenses - total_salaries
+
+    # 4. Формируем красивый отчет
+    summary = (
+        f"📊 <b>Финансовый отчет за период:</b>\n"
+        f"<code>{sdate(start_date)} - {sdate(end_date)}</code>\n"
+        "────────────────────────\n"
+        f"💰 <b>Выручка:</b> {total_revenue:,.2f}₴\n\n"
+        
+        f"<b>Расходы:</b>\n"
+        f"  • Закупка товаров: {total_cogs:,.2f}₴\n"
+        f"  • Прочие расходы: {total_expenses:,.2f}₴\n"
+        f"  • Зарплаты: {total_salaries:,.2f}₴\n"
+        "────────────────────────\n"
+        f"📈 <b>Валовая прибыль:</b> {gross_profit:,.2f}₴\n"
+        f"✅ <b>Чистая прибыль: {net_profit:,.2f}₴</b>"
+    )
+    return summary.replace(',', ' ') # Заменяем запятые на пробелы для красоты
+
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 def generate_expense_pie_chart(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> io.BytesIO | None:
     """Собирает данные о расходах, группирует по категориям и рисует круговую диаграмму."""
     rows = get_cached_sheet_data(context, SHEET_EXPENSES)
@@ -146,14 +198,26 @@ def analytics_period_kb():
         [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
     ])
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def show_expense_pie_chart_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает меню выбора периода для отчета по расходам."""
+    """Показывает меню выбора периода, корректно обрабатывая предыдущее сообщение (текст или фото)."""
     query = update.callback_query
-    await query.message.edit_text(
-        "📊 Пожалуйста, выберите период для анализа расходов:",
-        reply_markup=analytics_period_kb()
-    )
+    
+    text_to_send = "📊 Пожалуйста, выберите период для анализа расходов:"
+    keyboard = analytics_period_kb()
 
+    # Пытаемся отредактировать сообщение. Если это не получается (потому что там фото),
+    # то удаляем его и отправляем новое.
+    try:
+        await query.message.edit_text(text_to_send, reply_markup=keyboard)
+    except BadRequest:
+        await query.message.delete()
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=text_to_send,
+            reply_markup=keyboard
+        )
+        
 async def process_expense_chart_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает выбор периода, генерирует и отправляет диаграмму."""
     query = update.callback_query
@@ -1260,6 +1324,37 @@ async def safe_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='HTML',
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")]])
     )
+
+# --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
+
+async def show_financial_dashboard_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню выбора периода для финансового отчета."""
+    query = update.callback_query
+    # Мы можем переиспользовать ту же клавиатуру, что и для расходов
+    await query.message.edit_text(
+        "🧮 Пожалуйста, выберите период для финансового отчета:",
+        reply_markup=analytics_period_kb() # Используем существующую клавиатуру
+    )
+
+async def process_financial_dashboard_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор периода, генерирует и отправляет фин. отчет."""
+    query = update.callback_query
+    # Меняем текст на "Загрузка"
+    await query.message.edit_text("⏳ Собираю финансовый отчет...")
+
+    days = int(query.data.split('_')[-1])
+    end_date = dt.date.today()
+    start_date = end_date - dt.timedelta(days=days - 1)
+
+    # Генерируем текст отчета
+    summary_text = generate_financial_summary(context, start_date, end_date)
+
+    await query.message.edit_text(
+        summary_text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_financial_dashboard")]])
+    )
+    
 async def execute_payout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выполняет выплату и записывает данные."""
     query = update.callback_query
@@ -5306,6 +5401,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_expense_pie_chart_menu(update, context)
         elif data.startswith("exp_chart_period_"):
             await process_expense_chart_period(update, context)
+        elif data == "analytics_financial_dashboard":
+            await show_financial_dashboard_menu(update, context)
+        elif data.startswith("fin_dash_period_"): # Используем новый префикс для избежания путаницы
+             await process_financial_dashboard_period(update, context)
     
         # --- 11. СЕЙФ И ОСТАТОК ---
         elif data == "inventory_balance": await inventory_balance(update, context)
