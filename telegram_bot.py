@@ -1542,7 +1542,7 @@ async def repay_debt(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 row_idx = i
                 break
         if not row_idx:
-            await update.message.reply_text("❌ Долг не найден в таблице!")
+            await update.message.reply_text("❌ Долг не найден в таблице")
             return
 
         paid = float(ws_debts.cell(row_idx, 4).value or 0)
