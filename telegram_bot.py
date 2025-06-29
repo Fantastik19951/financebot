@@ -187,17 +187,19 @@ def generate_expense_pie_chart(context: ContextTypes.DEFAULT_TYPE, start_date: d
 
 # --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 def analytics_period_kb():
     """Клавиатура для выбора периода для аналитики."""
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton("Неделя", callback_data="exp_chart_period_7"),
-            InlineKeyboardButton("Месяц", callback_data="exp_chart_period_30"),
-            InlineKeyboardButton("3 месяца", callback_data="exp_chart_period_90")
+            # Меняем префикс на fin_dash_period_
+            InlineKeyboardButton("Неделя", callback_data="fin_dash_period_7"),
+            InlineKeyboardButton("Месяц", callback_data="fin_dash_period_30"),
+            InlineKeyboardButton("3 месяца", callback_data="fin_dash_period_90")
         ],
         [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
     ])
-
+    
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def show_expense_pie_chart_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает меню выбора периода, корректно обрабатывая предыдущее сообщение (текст или фото)."""
