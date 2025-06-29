@@ -24,6 +24,14 @@ load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DATE_FMT = "%d.%m.%Y"
 ADMINS = {"5144039813", "476179186"}  # ID администраторов
+USER_ID_TO_NAME = {
+    "5144039813": "Евгений",  # Админ
+    "476179186": "Наталия",   # Админ
+    "5276110033": "Сергей",
+    "6851274022": "Людмила",
+
+    "7880600411": "Мария"
+}
 SELLERS = ["Сергей", "Наталия", "Людмила", "Мария"]
 ADMIN_CHAT_IDS = [5144039813, 476179186]
 SHEET_REPORT = "Дневные отчёты"
@@ -2139,24 +2147,38 @@ def is_date(string):
         return False
     
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-def stock_safe_kb(is_admin=False):
-    kb = [
-        [InlineKeyboardButton("📦 Остаток магазина", callback_data="inventory_balance")],
-        [InlineKeyboardButton("💵 Остаток в сейфе", callback_data="safe_balance")],
-        # Размещаем обе истории в одном ряду
-        [
-            InlineKeyboardButton("🧾 История остатка", callback_data="inventory_history"),
-            InlineKeyboardButton("🧾 История сейфа", callback_data="safe_history")
-        ],
-        [
-            InlineKeyboardButton("➕ Положить в сейф", callback_data="safe_deposit"),
-            InlineKeyboardButton("➖ Снять из сейфа", callback_data="safe_withdraw")
-        ],
-        [InlineKeyboardButton("➖ Добавить списание с остатка", callback_data="add_inventory_expense")],
-        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
-    ]
-    return InlineKeyboardMarkup(kb)
+# --- УДАЛИТЕ СТАРУЮ stock_safe_kb И ДОБАВЬТЕ ЭТИ ТРИ НОВЫЕ ФУНКЦИИ ---
 
+def stock_safe_menu_kb():
+    """Новое главное меню для раздела."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🗄️ Сейф", callback_data="safe_menu")],
+        [InlineKeyboardButton("📦 Остаток", callback_data="stock_menu")],
+        [InlineKeyboardButton("💵 Изъятие З/П за день", callback_data="withdraw_salary")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
+    ])
+
+def safe_menu_kb():
+    """Меню для операций с сейфом."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💵 Остаток в сейфе", callback_data="safe_balance")],
+        [InlineKeyboardButton("🧾 История сейфа", callback_data="safe_history")],
+        [
+            InlineKeyboardButton("➕ Положить", callback_data="safe_deposit"),
+            InlineKeyboardButton("➖ Снять", callback_data="safe_withdraw")
+        ],
+        [InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")]
+    ])
+
+def stock_menu_kb():
+    """Меню для операций с остатком магазина."""
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📦 Остаток магазина", callback_data="inventory_balance")],
+        [InlineKeyboardButton("🧾 История остатка", callback_data="inventory_history")],
+        [InlineKeyboardButton("➖ Списание с остатка", callback_data="add_inventory_expense")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")]
+    ])
+    
 def get_tomorrow_debts():
     ws = GSHEET.worksheet(SHEET_DEBTS)
     rows = ws.get_all_values()[1:]
@@ -2740,16 +2762,26 @@ async def handle_report_end_date(update: Update, context: ContextTypes.DEFAULT_T
         
         
 # --- ОТЧЕТ О СМЕНЕ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def start_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает процесс сдачи отчета, автоматически определяя продавца."""
     query = update.callback_query
     await query.answer()
-    kb = [[InlineKeyboardButton(seller, callback_data=f"report_seller_{seller}")] for seller in SELLERS]
-    kb.append([InlineKeyboardButton("❌ Отмена", callback_data="finance_menu")])
-    await query.message.edit_text(
-        "👤 Выберите продавца:",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
+    
+    user_id = str(update.effective_user.id)
+    seller_name = USER_ID_TO_NAME.get(user_id, "Неизвестный")
 
+    # Сразу переходим к вводу наличных
+    context.user_data['report'] = {'seller': seller_name, 'step': 'cash'}
+    await query.message.edit_text(
+        f"👤 Продавец: <b>{seller_name}</b>\n\n"
+        f"💵 Введите сумму наличных за смену (в гривнах):",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("❌ Отменить", callback_data="finance_menu")]
+         ]),
+        parse_mode=ParseMode.HTML
+    )
+    
 async def handle_report_seller(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -3373,10 +3405,8 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_safe_operation("Пополнение", cash_balance, "Остаток кассы за день", seller)
     add_inventory_operation("Продажа", total_sales, "Продажа товаров за смену", seller)
     
-    # Вычитаем ставку ЗП из сейфа
+    # Начисляем бонус
     if seller in ["Мария", "Людмила"]:
-        add_safe_operation("Зарплата", 700, f"Ставка за смену для {seller}", seller)
-        add_salary_record(seller, "Ставка", 700, "Выплачено из сейфа")
         if total_sales > 35000:
             bonus = round((total_sales * 0.02) - 700, 2)
             if bonus > 0:
@@ -4503,7 +4533,7 @@ async def view_debts_history(update: Update, context: ContextTypes.DEFAULT_TYPE,
         else:
             debt_type_str = "Наличные"
 
-        msg += "\n───────────────────────\n"
+        msg += "\n─────────────────\n"
         msg += f"{idx}. {status_icon} <b>{supplier}</b> | {date}\n"
         msg += f"  • Сумма: <b>{parse_float(total):.2f}₴</b>\n"
         # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Новая строка для типа долга и удалена строка "Оплачено" ---
@@ -4534,6 +4564,38 @@ async def inventory_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='HTML',
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")]])
     )
+
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+async def withdraw_daily_salary(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает изъятие дневной ставки ЗП из сейфа."""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = str(query.from_user.id)
+    seller_name = USER_ID_TO_NAME.get(user_id)
+
+    # Разрешаем операцию только определенным продавцам и админам
+    if seller_name not in ["Мария", "Людмила", "Евгений", "Наталия"]:
+        return await query.message.edit_text("🚫 У вас нет прав на выполнение этой операции.", reply_markup=stock_safe_menu_kb())
+
+    today_str = sdate()
+    # Проверяем, не была ли уже выплачена ставка сегодня
+    try:
+        salaries_rows = get_cached_sheet_data(context, SHEET_SALARIES, force_update=True) or []
+        for row in salaries_rows:
+            # Ищем запись: Дата=сегодня, Продавец=текущий, Тип=Ставка
+            if len(row) > 2 and row[0] == today_str and row[1] == seller_name and row[2] == "Ставка":
+                await query.message.edit_text(f"❗️ <b>{seller_name}</b>, вы уже получили ставку за сегодня.", parse_mode=ParseMode.HTML, reply_markup=stock_safe_menu_kb())
+                return
+    except Exception as e:
+        await query.message.edit_text(f"❌ Ошибка проверки истории зарплат: {e}", reply_markup=stock_safe_menu_kb())
+        return
+
+    # Если проверка пройдена, выплачиваем
+    add_safe_operation("Зарплата", 700, f"Ставка за смену для {seller_name}", seller_name)
+    add_salary_record(seller_name, "Ставка", 700, "Выплачено из сейфа")
+    
+    await query.message.edit_text(f"✅ <b>{seller_name}</b>, ваша ставка (700₴) за смену успешно выплачена из сейфа.", parse_mode=ParseMode.HTML, reply_markup=stock_safe_menu_kb())
 
 async def safe_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -4860,6 +4922,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "staff_management": await staff_management_menu(update, context)
         elif data == "stock_safe_menu": await stock_safe_menu(update, context)
         elif data == "staff_menu": await staff_menu(update, context)
+        elif data == "safe_menu":
+            await query.message.edit_text("🗄️ Операции с сейфом:", reply_markup=safe_menu_kb())
+        elif data == "stock_menu":
+            await query.message.edit_text("📦 Операции с остатком:", reply_markup=stock_menu_kb())
         
         # --- 2. ПЛАНИРОВАНИЕ ---
         elif data == "planning": await start_planning(update, context)
@@ -5079,6 +5145,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("view_seller_stats_"):
             await show_seller_stats(update, context)
         elif data == "compare_sellers": await show_sellers_comparison(update, context)
+        elif data == "withdraw_salary":
+            await withdraw_daily_salary(update, context)
     
         # --- 11. СЕЙФ И ОСТАТОК ---
         elif data == "inventory_balance": await inventory_balance(update, context)
