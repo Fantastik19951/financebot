@@ -44,6 +44,11 @@ SHEET_SALARIES = "Зарплаты"
 SHEET_PLAN_FACT = "ПланФактНаЗавтра" 
 SHEET_PLANNING_SCHEDULE = "ПланированиеПоставщиков"
 SHEET_INVENTORY = "Остаток магазина"
+DIALOG_KEYS = [
+    'report', 'supplier', 'planning', 'edit_plan', 'edit_invoice',
+    'revision', 'search_debt', 'safe_op', 'inventory_expense', 
+    'repay', 'shift', 'report_period', 'admin_expense'
+]
 
 
 logging.basicConfig(
@@ -85,15 +90,12 @@ def week_range(date=None):
     end = start + dt.timedelta(days=6)
     return start, end
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 def clear_conversation_state(context: ContextTypes.DEFAULT_TYPE):
-    """Очищает все возможные ключи состояния диалога из user_data."""
-    dialog_keys = [
-        'report', 'supplier', 'planning', 'edit_plan', 'edit_invoice',
-        'revision', 'search_debt', 'safe_op', 'inventory_expense', 
-        'repay', 'shift', 'report_period', 'admin_expense'  # <-- ДОБАВИТЬ СЮДА
-    ]
+    """Очищает все возможные ключи состояния диалога из user_data, используя глобальный список."""
     key_found = False
-    for key in dialog_keys:
+    # Используем глобальную константу DIALOG_KEYS
+    for key in DIALOG_KEYS:
         if key in context.user_data:
             context.user_data.pop(key, None)
             logging.info(f"Состояние диалога '{key}' было принудительно очищено.")
@@ -4804,10 +4806,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await cancel(update, context)
 
     user_data = context.user_data
-    state_key = next((key for key in [
-        'revision', 'report', 'supplier', 'planning', 'edit_plan', 'edit_invoice', 
-        'search_debt', 'safe_op', 'inventory_expense', 'repay', 'shift', 'report_period'
-    ] if key in user_data), None)
+    state_key = next((key for key in DIALOG_KEYS if key in user_data), None)
     
 
     # Если никакого состояния нет, выходим
@@ -4844,10 +4843,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif state_key == 'admin_expense':
         step = user_data['admin_expense'].get('step')
-        if step == 'amount':
-            return await handle_admin_expense_amount(update, context)
-        elif step == 'comment':
-            return await handle_admin_expense_comment(update, context)
+        if step == 'amount': return await handle_admin_expense_amount(update, context)
+        elif step == 'comment': return await handle_admin_expense_comment(update, context)
 
     elif state_key == 'revision':
         step = user_data['revision'].get('step')
