@@ -799,13 +799,12 @@ def calculate_accrued_bonus(seller_name: str, all_reports=None, all_salaries=Non
             total_sales = float(row[4].replace(',', '.'))
             
             if start_period <= report_date <= end_period and report_seller == seller_name:
-                if total_sales > 35000:
-                    bonus = round(total_sales * 0.02, 2)
+                if bonus > 0:
                     total_accrued += bonus
                     bonus_days.append({'date': sdate(report_date), 'sales': total_sales, 'bonus': bonus})
         except (ValueError, IndexError, TypeError):
             continue
-            
+                   
     # 3. Считаем ОБЩУЮ СУММУ всех ВЫПЛАЧЕННЫХ бонусов за этот же период
     total_paid_out = 0
     period_str = f"за период {sdate(start_period)}-{sdate(end_period)}"
