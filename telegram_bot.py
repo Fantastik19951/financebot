@@ -695,6 +695,7 @@ def get_safe_balance(context: ContextTypes.DEFAULT_TYPE):
             continue
     return balance
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 def build_edit_invoice_keyboard(invoice_data: list, selected_fields: dict, row_index: int):
     """Строит клавиатуру для режима редактирования накладной."""
     fields = {
@@ -705,10 +706,11 @@ def build_edit_invoice_keyboard(invoice_data: list, selected_fields: dict, row_i
     
     kb = []
     for field_key, field_name in fields.items():
-        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-        # Проверяем, что в текущем типе оплаты есть слово "Долг"
         current_pay_type = selected_fields.get('pay_type', invoice_data[6])
-        if field_key == 'due_date' and not current_pay_type.startswith("Долг"):
+        
+        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+        # Сначала проверяем, что current_pay_type - это строка, и только потом вызываем .startswith()
+        if field_key == 'due_date' and not (isinstance(current_pay_type, str) and current_pay_type.startswith("Долг")):
             continue
             
         icon = "✅" if field_key in selected_fields else "❌"
@@ -719,7 +721,7 @@ def build_edit_invoice_keyboard(invoice_data: list, selected_fields: dict, row_i
         InlineKeyboardButton("🚫 Отмена", callback_data=f"edit_invoice_cancel_{row_index}")
     ])
     return InlineKeyboardMarkup(kb)
-
+    
 def update_plan_in_sheet(row_num: int, field: str, new_value) -> bool:
     """Простая функция для обновления одной ячейки в ПланФакт. Возвращает True/False."""
     try:
