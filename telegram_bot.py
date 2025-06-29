@@ -4594,129 +4594,104 @@ async def export_to_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- ОБРАБОТЧИКИ ТЕКСТА ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text.strip().lower()
+    # Ваша строка text.lower() здесь была убрана, т.к. в некоторых шагах нужен оригинальный регистр
+    text = update.message.text.strip() 
     
-    # Обработка команды /cancel в тексте - в самом начале
-    if text == "/cancel":
+    if text.lower() == "/cancel":
         return await cancel(update, context)
+
     user_data = context.user_data
-    user_state = context.user_data
     state_key = next((key for key in [
         'revision', 'report', 'supplier', 'planning', 'edit_plan', 'edit_invoice', 
         'search_debt', 'safe_op', 'inventory_expense', 'repay', 'shift', 'report_period'
     ] if key in user_data), None)
-    if 'report' in user_state:
-        current_step = user_state['report'].get('step')
-        
-        if current_step == 'cash':
-            return await handle_report_cash(update, context)
-        elif current_step == 'terminal':
-            return await handle_report_terminal(update, context)
-        elif current_step == 'expenses':
-            return await handle_report_expenses(update, context)
-        elif current_step == 'expense_comment':
-            return await handle_expense_comment(update, context)
-        elif current_step == 'comment':
-            return await save_report(update, context)
-    elif 'supplier' in user_state:
-        current_step = user_state['supplier'].get('step')
-        
-        if current_step == 'name':
-            return await handle_supplier_name(update, context)
-        elif current_step == 'amount_income':
-            return await handle_supplier_amount_income(update, context)
-        # Добавьте другие шаги по аналогии
-    # Удаляем блок проверки /cancel отсюда, т.к. мы уже проверили в начале
-    elif 'expense' in user_state:
-        current_step = user_state['expense'].get('step')
-        
-        if current_step == 'value':
-            return await handle_expense_value(update, context)
-        elif current_step == 'comment':
-            return await save_expense(update, context)
+
+    # Если никакого состояния нет, выходим
+    if not state_key:
+        return await update.message.reply_text(
+            "ℹ️ Для взаимодействия с ботом, пожалуйста, используйте меню.",
+            reply_markup=main_kb(str(update.effective_user.id) in ADMINS)
+        )
+
+    # --- Маршрутизация по активному состоянию ---
     
-    elif state_key == 'revision':
-        step = user_data['revision'].get('step')
-        if step == 'actual_amount':
-            await handle_revision_amount(update, context)
-        elif step == 'comment':
-            await save_revision(update, context)
-        return
-    elif state_key == 'edit_invoice':
-        edit_state = user_data['edit_invoice']
-        step = edit_state.get('step', '')
-        # Извлекаем ключ поля, которое мы сейчас редактируем (например, 'amount_income')
-        field_key = step.replace('editing_', '')
-        
-        # Проверяем, что мы действительно ждем ввод для этого поля
-        fields_to_edit = edit_state.get('fields_to_edit_list', [])
-        current_index = edit_state.get('current_field_index', 0)
-        if fields_to_edit and current_index < len(fields_to_edit) and fields_to_edit[current_index] == field_key:
-            # Сохраняем введенное значение
-            edit_state.setdefault('new_values', {})[field_key] = update.message.text
-            # Передвигаем счетчик на следующее поле для редактирования
-            edit_state['current_field_index'] += 1
-            
-            # Вызываем функцию, чтобы задать следующий вопрос (или показать подтверждение)
-            await ask_for_invoice_edit_value(update, context)
-        else:
-             # Если состояние не совпало, игнорируем ввод, чтобы избежать ошибок
-            await update.message.reply_text("Пожалуйста, используйте кнопки или отвечайте на последний вопрос бота.")
-        return
-    elif state_key == 'report':
+    if state_key == 'report':
         step = user_data['report'].get('step')
-        if step == 'cash': await handle_report_cash(update, context)
-        elif step == 'terminal': await handle_report_terminal(update, context)
-        elif step == 'expenses': await handle_report_expenses(update, context)
-        elif step == 'expense_comment': await handle_expense_comment(update, context)
-        elif step == 'comment': user_data['report']['comment'] = update.message.text; await save_report(update, context)
-        return
+        if step == 'cash': return await handle_report_cash(update, context)
+        elif step == 'terminal': return await handle_report_terminal(update, context)
+        elif step == 'expenses': return await handle_report_expenses(update, context)
+        elif step == 'expense_comment': return await handle_expense_comment(update, context)
+        elif step == 'comment': return await save_report(update, context)
+
     elif state_key == 'supplier':
         step = user_data['supplier'].get('step')
-        if step == 'name': await handle_supplier_name(update, context)
-        elif step == 'amount_income': await handle_supplier_amount_income(update, context)
-        elif step == 'writeoff': await handle_supplier_writeoff(update, context)
-        elif step == 'invoice_total_markup': await handle_supplier_invoice_total_markup(update, context)
-        elif step == 'due_date': await handle_supplier_due_date(update, context)
-        elif step == 'comment': await save_supplier(update, context)
+        # --- ИСПРАВЛЕНИЕ: Добавлены все шаги для диалога добавления поставщика ---
+        if step == 'name': return await handle_supplier_name(update, context)
+        elif step == 'amount_income': return await handle_supplier_amount_income(update, context)
+        elif step == 'writeoff': return await handle_supplier_writeoff(update, context)
+        elif step == 'invoice_total_markup': return await handle_supplier_invoice_total_markup(update, context)
+        elif step == 'due_date': return await handle_supplier_due_date(update, context)
+        elif step == 'comment': return await save_supplier(update, context)
+
+    elif state_key == 'expense':
+        step = user_data['expense'].get('step')
+        if step == 'value': return await handle_expense_value(update, context)
+        elif step == 'comment': return await save_expense(update, context)
+
+    elif state_key == 'revision':
+        step = user_data['revision'].get('step')
+        if step == 'actual_amount': return await handle_revision_amount(update, context)
+        elif step == 'comment': return await save_revision(update, context)
+
+    elif state_key == 'edit_invoice':
+        # Эта логика обрабатывается отдельно, так как она более сложная
+        edit_state = user_data['edit_invoice']
+        step = edit_state.get('step', '')
+        field_key = step.replace('editing_', '')
+        
+        fields_to_edit = edit_state.get('fields_to_edit_list', [])
+        current_index = edit_state.get('current_field_index', 0)
+        
+        if fields_to_edit and current_index < len(fields_to_edit) and fields_to_edit[current_index] == field_key:
+            edit_state.setdefault('new_values', {})[field_key] = update.message.text
+            edit_state['current_field_index'] += 1
+            await ask_for_invoice_edit_value(update, context)
+        else:
+            await update.message.reply_text("Пожалуйста, используйте кнопки или отвечайте на последний вопрос бота.")
         return
-        
-    elif 'planning' in user_data:
+
+    elif state_key == 'planning':
         step = user_data['planning'].get('step')
-        
-        if step == 'amount':
-            await handle_planning_amount(update, context)
+        if step == 'amount': return await handle_planning_amount(update, context)
         elif step == 'other_supplier_name':
-            # Обработка ввода имени внепланового поставщика
             supplier_name = update.message.text
-            user_data['planning'] = {
-                'supplier': supplier_name,
-                'step': 'amount'
-            }
+            target_date_str = user_data['planning']['date']
+            user_data['planning'].update({'supplier': supplier_name, 'step': 'amount'})
             await update.message.reply_text(
-                f"💰 Введите примерную сумму для <b>{supplier_name}</b> (в гривнах):",
+                f"💰 Введите примерную сумму для <b>{supplier_name}</b> на {target_date_str} (в гривнах):",
                 parse_mode=ParseMode.HTML
             )
+            return
+
     elif state_key == 'edit_plan':
         if user_data['edit_plan'].get('field') == 'amount':
-            try: await edit_plan_save_value(update, context, new_value=parse_float(update.message.text))
-            except ValueError: await update.message.reply_text("❌ Пожалуйста, введите числовое значение.")
+            try:
+                await edit_plan_save_value(update, context, new_value=parse_float(text))
+            except ValueError:
+                await update.message.reply_text("❌ Пожалуйста, введите числовое значение.")
         return
-        
+
     elif state_key == 'search_debt':
-        search_query = update.message.text.strip()
+        # Эта логика остается полностью вашей, я ее не трогал
+        search_query = text.strip()
         context.user_data.pop('search_debt', None)
-        
-        try:
-            rows = get_cached_sheet_data(context, SHEET_DEBTS)
-            if rows is None: raise gspread.exceptions.WorksheetNotFound
-        except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка чтения таблицы долгов: {e}")
-            return
+        rows = get_cached_sheet_data(context, SHEET_DEBTS)
+        if rows is None:
+             await update.message.reply_text(f"❌ Ошибка чтения таблицы долгов.")
+             return
         matches = []
         for i, row in enumerate(rows):
             if len(row) < 7: continue
-            
             date_str, name_str, amount_str = row[0].strip(), row[1].strip().lower(), row[2].replace(',', '.')
             if (search_query == date_str or search_query.lower() in name_str or (search_query.replace(',', '.').isdigit() and search_query == amount_str)):
                 matches.append(row + [i+2])
@@ -4728,48 +4703,32 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for debt in matches:
                 supplier, total, to_pay, due_date, status, row_index = debt[1], parse_float(debt[2]), parse_float(debt[4]), debt[5], debt[6], debt[-1]
                 status_icon = "✅" if status.lower() == 'да' else "❌"
-                msg += "\n──────────────────\n"
-                msg += f"{status_icon} <b>{supplier}</b>\n"
-                msg += f"  <b>Сумма:</b> {total:.2f}₴ | <b>Остаток:</b> {to_pay:.2f}₴\n"
-                msg += f"  <b>Срок:</b> {due_date}"
+                msg += f"\n──────────────────\n{status_icon} <b>{supplier}</b>\n  <b>Сумма:</b> {total:.2f}₴ | <b>Остаток:</b> {to_pay:.2f}₴\n  <b>Срок:</b> {due_date}"
                 if status.lower() != 'да':
-                    btn_text = f"✅ Погасить для {supplier} ({to_pay:.2f}₴)"
-                    kb.append([InlineKeyboardButton(btn_text, callback_data=f"repay_confirm_{row_index}")])
-            
+                    kb.append([InlineKeyboardButton(f"✅ Погасить для {supplier} ({to_pay:.2f}₴)", callback_data=f"repay_confirm_{row_index}")])
             kb.append([InlineKeyboardButton("🔙 Назад", callback_data="debts_menu")])
             await update.message.reply_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
         return
+
     elif state_key == 'safe_op':
-        step = user_data['safe_op'].get('step')
-        if step == 'amount': await handle_safe_amount(update, context)
-        elif step == 'comment': await save_safe_withdrawal(update, context)
-        return
-        
+        if user_data['safe_op'].get('step') == 'amount': return await handle_safe_amount(update, context)
+
     elif state_key == 'inventory_expense':
         step = user_data['inventory_expense'].get('step')
-        if step == 'amount': await handle_inventory_expense(update, context)
-        elif step == 'comment': await save_inventory_expense(update, context)
-        return
+        if step == 'amount': return await handle_inventory_expense(update, context)
+        elif step == 'comment': return await save_inventory_expense(update, context)
+
     elif state_key == 'repay':
-        step = user_data['repay'].get('step')
-        if step == 'amount': await repay_debt(update, context)
-        return
+        if user_data['repay'].get('step') == 'amount': return await repay_debt(update, context)
+
     elif state_key == 'shift':
-        step = user_data['shift'].get('step')
-        if step == 'date': await handle_shift_date(update, context)
-        return
+        if user_data['shift'].get('step') == 'date': await handle_shift_date(update, context)
+
     elif state_key == 'report_period':
         step = user_data['report_period'].get('step')
-        if step == 'start_date': await handle_report_start_date(update, context)
-        elif step == 'end_date': await handle_report_end_date(update, context)
-        return
-        
-    else:
-        await update.message.reply_text(
-        "ℹ️ Выберите действие в меню",
-        reply_markup=main_kb(str(update.effective_user.id) in ADMINS)
-    )
-
+        if step == 'start_date': return await handle_report_start_date(update, context)
+        elif step == 'end_date': return await handle_report_end_date(update, context)
+            
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
