@@ -4527,16 +4527,16 @@ async def view_debts_history(update: Update, context: ContextTypes.DEFAULT_TYPE,
         
         # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Формируем более понятный тип долга ---
         if pay_type == "Карта":
-            debt_type_str = "Долг (Карта)"
+            debt_type_str = "Карта"
         else:
-            debt_type_str = "Долг (Наличные)"
+            debt_type_str = "Наличные"
 
         msg += "\n" + "─" * 28 + "\n"
         msg += f"{idx}. {status_icon} <b>{supplier}</b> | {date}\n"
         msg += f"  • Сумма: <b>{parse_float(total):.2f}₴</b>\n"
         # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Новая строка для типа долга и удалена строка "Оплачено" ---
-        msg += f"  • Тип: {debt_type_str}\n"
-        msg += f"  • Срок: {due_date} | Статус: {is_paid}"
+        msg += f"  • Тип оплаты: {debt_type_str}\n"
+        msg += f"  • Срок: {due_date} | Оплачено?: {is_paid}"
 
     # Навигация
     kb = []
