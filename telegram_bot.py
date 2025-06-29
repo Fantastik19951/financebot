@@ -1069,7 +1069,7 @@ def calculate_accrued_bonus(seller_name: str, all_reports=None, all_salaries=Non
 async def staff_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает оптимизированное меню управления персоналом."""
     query = update.callback_query
-    await query.answer("Загружаю данные...") # Даем понять пользователю, что идет работа
+    await query.message.edit_text("⏳ Загружаю данные по зарплатам...")
 
     sellers_to_check = ["Людмила", "Мария"]
     kb = []
@@ -1149,7 +1149,7 @@ async def edit_invoice_toggle_field(update: Update, context: ContextTypes.DEFAUL
 async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выполняет сохранение и ВСЕ необходимые пересчеты, включая сейф и долги."""
     query = update.callback_query
-    await query.answer("Обрабатываю изменения...", show_alert=False)
+    await query.message.edit_text("⏳ Сохраняю изменения и пересчитываю данные...")
 
     edit_state = context.user_data.get('edit_invoice', {})
     row_index = edit_state.get('row_index')
@@ -1913,7 +1913,7 @@ async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, tar
     """Показывает обновленное, чистое и компактное меню планирования."""
     query = update.callback_query
     if query:
-        await query.answer()
+        await query.message.edit_text("⏳ Загружаю список поставщиков...")
 
     today = dt.date.today()
     if target_date is None:
@@ -2733,7 +2733,7 @@ async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TY
     """Показывает обновленный, красивый и устойчивый журнал прибытия (План/Факт)."""
     query = update.callback_query
     if query:
-        await query.answer()
+        await query.message.edit_text("⏳ Загружаю журнал прибытия...")
 
     today = dt.date.today()
     if target_date is None:
@@ -3749,37 +3749,45 @@ async def show_today_invoices(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
     
 async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.callback_query:
-        # Если пропустили комментарий, устанавливаем его пустым
-        if 'report' not in context.user_data: context.user_data['report'] = {}
+    query = update.callback_query
+    message = update.message
+    
+    # --- НАЧАЛО ИСПРАВЛЕНИЙ: Правильная обработка входа в функцию ---
+    if query: # Если функция вызвана нажатием кнопки (пропуск комментария)
+        await query.answer()
         context.user_data['report']['comment'] = ""
-    else:
-        context.user_data['report']['comment'] = update.message.text
+        # Редактируем сообщение с кнопками, показывая статус загрузки
+        await query.message.edit_text("⏳ Процесс создания вечернего отчета, пожалуйста, подождите...")
+        processing_message = query.message
+    else: # Если функция вызвана текстовым сообщением (введен комментарий)
+        context.user_data['report']['comment'] = message.text
+        # Отправляем новое сообщение со статусом загрузки
+        processing_message = await message.reply_text("⏳ Процесс создания вечернего отчета, пожалуйста, подождите...")
+    # --- КОНЕЦ ИСПРАВЛЕНИЙ ---
 
-    report_data = context.user_data['report']
+    report_data = context.user_data.get('report', {})
     today_str = sdate()
     current_date = pdate(today_str)
     tomorrow_date = current_date + dt.timedelta(days=1)
     
-    # 1. Очищаем планы, которые были составлены НА СЕГОДНЯ
+    # 1. Очищаем планы
     clear_plan_for_date(today_str)
 
-    # 2. Собираем данные из отчета
-    cash = report_data['cash']
-    terminal = report_data['terminal']
+    # 2. Собираем данные
+    cash = report_data.get('cash', 0)
+    terminal = report_data.get('terminal', 0)
     total_sales = cash + terminal
-    seller = report_data['seller']
+    seller = report_data.get('seller', 'Неизвестный')
     comment = report_data.get('comment', '')
     
-    # 3. Записываем расходы в таблицу РАСХОДЫ
+    # 3. Записываем расходы
     expenses_total = sum(exp['amount'] for exp in report_data.get('expenses', []))
     if 'expenses' in report_data and report_data['expenses']:
         ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
         for exp in report_data['expenses']:
-            # Расходы вычитаются из кассы, поэтому не трогаем сейф напрямую
             ws_exp.append_row([today_str, exp['amount'], exp.get('comment', ''), seller])
 
-    # 4. Проводим операции с СЕЙФОМ
+    # 4. Проводим операции с сейфом
     balance_before_shift = get_safe_balance(context)
     cash_balance = cash - expenses_total
     add_safe_operation("Пополнение", cash_balance, "Остаток кассы за день", seller)
@@ -3787,23 +3795,20 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Начисляем бонус
     if seller in ["Мария", "Людмила"]:
-        if total_sales > 35000:
-            bonus = round((total_sales * 0.02) - 700, 2)
-            if bonus > 0:
-                add_salary_record(seller, "Премия 2%", bonus, f"За {today_str} (продажи: {total_sales:.2f}₴)")
+        bonus = round((total_sales * 0.02) - 700, 2)
+        if bonus > 0:
+            add_salary_record(seller, "Премия 2%", bonus, f"За {today_str} (продажи: {total_sales:.2f}₴)")
 
+    # Сбрасываем кэш и получаем финальный баланс
     if 'sheets_cache' in context.bot_data and "Сейф" in context.bot_data['sheets_cache']:
         del context.bot_data['sheets_cache']["Сейф"]
-
-
-    # Фиксируем итоговый баланс сейфа
     safe_bal_after_shift = get_safe_balance(context)
 
-    # 5. Получаем данные для отчета НА ЗАВТРА
+    # 5. Получаем данные на завтра
     total_debts, suppliers_debts = get_debts_for_date(context, tomorrow_date)
     planning_report, planned_cash, planned_card, planned_total = get_planning_details_for_date(context, tomorrow_date)
     
-    # 6. Записываем итоговую строку в ДНЕВНЫЕ ОТЧЕТЫ
+    # 6. Записываем дневной отчет
     ws_report = GSHEET.worksheet(SHEET_REPORT)
     report_row_data = [
         today_str, seller, cash, terminal, total_sales, 
@@ -3811,7 +3816,7 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     ws_report.append_row(report_row_data)
 
-    # 7. Формируем финальное сообщение
+    # 7. Формируем финальное сообщение (здесь без изменений)
     resp = (f"✅ <b>Смена полностью завершена!</b>\n\n"
             f"📅 Дата: {today_str}\n"
             f"👤 Продавец: {seller}\n"
@@ -3849,7 +3854,11 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         await update.callback_query.message.edit_text(resp, parse_mode=ParseMode.HTML, reply_markup=markup)
     else:
-        await update.message.reply_text(resp, parse_mode=ParseMode.HTML, reply_markup=markup)
+        await processing_message.edit_text(
+        resp,  # 'resp' - это переменная с текстом итогового отчета, которая у вас уже есть
+        parse_mode=ParseMode.HTML,
+        reply_markup=markup
+    )
     context.user_data.pop('report', None)
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
