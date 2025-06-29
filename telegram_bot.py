@@ -2041,12 +2041,13 @@ async def show_single_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
 
-    try:
-        parts = query.data.split('_')
-        date_str, current_index = parts[3], int(parts[4])
-    except (ValueError, IndexError):
-        await query.message.edit_text("❌ Ошибка навигации по накладным.")
-        return
+    if date_str is None or current_index is None:
+        try:
+            parts = query.data.split('_')
+            date_str, current_index = parts[3], int(parts[4])
+        except (ValueError, IndexError):
+            await query.message.edit_text("❌ Ошибка навигации по накладным.")
+            return
 
     day_invoice_rows_indices = context.user_data.get('day_invoice_rows', [])
     all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS)
@@ -5357,10 +5358,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 list_index = day_invoice_rows.index(row_index)
                 all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS)
                 date_str = sdate(pdate(all_invoices[row_index-2][0]))
-                query.data = f"view_single_invoice_{date_str}_{list_index}"
-                await show_single_invoice(update, context)
+                
+                # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+                # Вместо изменения query.data, вызываем функцию с параметрами
+                await show_single_invoice(update, context, date_str=date_str, list_index=list_index)
+
             except (ValueError, IndexError):
                 await suppliers_menu(update, context)
+            
+            # Очищаем состояние редактирования в любом случае
             context.user_data.pop('edit_invoice', None)
             
         # Внутри вашей основной функции handle_callback
