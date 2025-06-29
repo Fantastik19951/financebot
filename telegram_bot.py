@@ -3818,20 +3818,34 @@ async def handle_supplier_invoice_total_markup(update: Update, context: ContextT
 
 
 # 5. Тип оплаты (callback)
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_supplier_pay_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    pay_type = query.data.split('_', 1)[1] # Теперь здесь будет "Наличные", "Карта" или "Долг"
+    pay_type = query.data.split('_', 1)[1]
     context.user_data['supplier']['payment_type'] = pay_type
 
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Проверяем по-русски ---
-    if pay_type == "Долг":
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+    if pay_type == "Карта":
+        # Если выбрана карта, показываем дополнительное меню
+        context.user_data['supplier']['step'] = 'card_payment_choice'
+        kb = [
+            [InlineKeyboardButton("✅ Фактическая оплата", callback_data="card_pay_actual")],
+            [InlineKeyboardButton("📆 Долг (Карта)", callback_data="card_pay_debt")]
+        ]
+        await query.message.edit_text(
+            "Это фактическая оплата картой или долг?",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+        return
+
+    elif pay_type == "Долг":
         context.user_data['supplier']['step'] = 'due_date'
         await query.message.edit_text(
             "📅 Введите дату погашения долга (ДД.ММ.ГГГГ):",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]])
         )
-    else:
+    else: # Для наличных
         context.user_data['supplier']['step'] = 'comment'
         await query.message.edit_text(
             "📝 Добавьте комментарий (или нажмите 'Пропустить'):",
@@ -3840,7 +3854,34 @@ async def handle_supplier_pay_type(update: Update, context: ContextTypes.DEFAULT
                 [InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]
             ])
         )
-# 6. Срок долга
+
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+async def handle_card_payment_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор между фактической оплатой картой и долгом по карте."""
+    query = update.callback_query
+    await query.answer()
+    choice = query.data
+
+    if choice == 'card_pay_actual':
+        # Если это фактическая оплата, просто переходим к комментарию
+        context.user_data['supplier']['payment_type'] = 'Карта'
+        context.user_data['supplier']['step'] = 'comment'
+        await query.message.edit_text(
+            "📝 Добавьте комментарий (или нажмите 'Пропустить'):",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⏭ Пропустить", callback_data="skip_comment_supplier")],
+                [InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]
+            ])
+        )
+    elif choice == 'card_pay_debt':
+        # Если это долг, меняем тип оплаты и запрашиваем дату
+        context.user_data['supplier']['payment_type'] = 'Долг (Карта)'
+        context.user_data['supplier']['step'] = 'due_date'
+        await query.message.edit_text(
+            "📅 Введите дату погашения долга (ДД.ММ.ГГГГ):",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]])
+        )
+
 async def handle_supplier_due_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         due_date = pdate(update.message.text)
@@ -3951,13 +3992,15 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     debt_amount = 0
     due_date = ""
 
-    if pay_type == "Долг":
+    if pay_type.startswith("Долг"): # Ловит и "Долг", и "Долг (Карта)"
         debt_amount = sum_to_pay
         due_date_obj = supplier_data.get('due_date')
         due_date = sdate(due_date_obj) if due_date_obj else ""
     else:
-        paid_status = f"Да ({sum_to_pay:.2f})"
+        paid_status = "Да"
         if pay_type == "Наличные":
+            add_safe_operation("Расход", sum_to_pay, f"Оплата поставщику: {supplier_data['name']}", who)
+            
             try:
                 comment_for_safe = f"Оплата поставщику: {supplier_data['name']} ({pay_type})"
                 add_safe_operation("Расход", sum_to_pay, comment_for_safe, who)
@@ -3974,9 +4017,11 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
         ws_sup.append_row(row_to_save)
 
-        if pay_type == "Долг":
+        if pay_type.startswith("Долг"):
+            # Определяем тип для таблицы "Долги"
+            debt_pay_type = "Карта" if "(Карта)" in pay_type else "Наличные"
             ws_debts = GSHEET.worksheet(SHEET_DEBTS)
-            ws_debts.append_row([sdate(), supplier_data['name'], sum_to_pay, 0, sum_to_pay, due_date, "Нет", "Наличные"])
+            ws_debts.append_row([sdate(), supplier_data['name'], sum_to_pay, 0, sum_to_pay, due_date, "Нет", debt_pay_type])
 
         add_inventory_operation("Приход", invoice_total_markup, f"Поставщик: {supplier_data['name']}", who)
 
@@ -4343,7 +4388,7 @@ async def view_repayable_debts(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_index: int):
-    """Окончательно закрывает долг, обновляя все связанные таблицы (Долги, Сейф, Поставщики)."""
+    """Окончательно закрывает долг, НЕ трогая сейф при погашении долга по карте."""
     query = update.callback_query
     
     try:
@@ -4352,17 +4397,25 @@ async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_in
         
         date_created = debt_row[0]
         supplier_name = debt_row[1]
-        total = float(debt_row[2].replace(',', '.'))
+        total_to_pay = float(debt_row[4].replace(',', '.')) # Погашаем остаток
         
-        # 1. Закрываем долг в листе "Долги"
-        ws_debts.update_cell(row_index, 4, total)      # Оплачено
-        ws_debts.update_cell(row_index, 5, 0)          # Остаток
-        ws_debts.update_cell(row_index, 7, "Да")       # Погашено
-        
-        # 2. Списываем сумму с сейфа
-        who = query.from_user.first_name
-        comment = f"Оплата долга {supplier_name} за {date_created}"
-        add_safe_operation("Расход", total, comment, who)
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Проверяем тип оплаты долга ---
+        # Столбец H (индекс 7) в таблице "Долги" - Тип оплаты
+        payment_method = debt_row[7] if len(debt_row) > 7 else "Наличные"
+
+        # 1. Списываем деньги из сейфа, ТОЛЬКО если это не карточный долг
+        if payment_method != "Карта":
+            who = query.from_user.first_name
+            comment = f"Оплата долга {supplier_name} за {date_created}"
+            add_safe_operation("Расход", total_to_pay, comment, who)
+        else:
+            logging.info(f"Погашение карточного долга для {supplier_name}. Сейф не затронут.")
+
+        # 2. Закрываем долг в листе "Долги"
+        current_paid = float(debt_row[3].replace(',', '.'))
+        ws_debts.update_cell(row_index, 4, current_paid + total_to_pay) # Оплачено
+        ws_debts.update_cell(row_index, 5, 0) # Остаток
+        ws_debts.update_cell(row_index, 7, "Да") # Погашено
         
         # 3. Обновляем статус в листе "Поставщики"
         ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
@@ -4877,6 +4930,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "add_supplier": await start_supplier(update, context)
         elif data.startswith("add_sup_"): await handle_add_supplier_choice(update, context)
         elif data.startswith("pay_"): await handle_supplier_pay_type(update, context)
+        elif data == "card_pay_actual": await handle_card_payment_choice(update, context)
+        elif data == "card_pay_debt": await handle_card_payment_choice(update, context)
         elif data == "skip_comment_supplier": await save_supplier(update, context)
 
         # --- 6. СДАЧА СМЕНЫ ---
