@@ -74,6 +74,21 @@ def week_range(date=None):
     start = date - dt.timedelta(days=date.weekday())
     end = start + dt.timedelta(days=6)
     return start, end
+
+def clear_conversation_state(context: ContextTypes.DEFAULT_TYPE):
+    """Очищает все возможные ключи состояния диалога из user_data."""
+    dialog_keys = [
+        'report', 'supplier', 'planning', 'edit_plan', 'edit_invoice',
+        'revision', 'search_debt', 'safe_op', 'inventory_expense',
+        'repay', 'shift', 'report_period'
+    ]
+    key_found = False
+    for key in dialog_keys:
+        if key in context.user_data:
+            context.user_data.pop(key, None)
+            logging.info(f"Состояние диалога '{key}' было принудительно очищено.")
+            key_found = True
+    return key_found
     
 def delete_plan_by_row_index(row_index: int) -> bool:
     """Находит и удаляет строку в листе ПланФактНаЗавтра по ее номеру."""
@@ -4733,6 +4748,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data
+    resetting_callbacks = [
+        "main_menu", "finance_menu", "suppliers_menu", "debts_menu",
+        "staff_menu", "admin_panel", "stock_safe_menu", "analytics_menu",
+        "settings_menu", "cancel_report", "back" 
+    ]
+    if data in resetting_callbacks:
+        if clear_conversation_state(context):
+             await query.answer("Текущая операция отменена.", show_alert=False)
+
+    # Теперь отвечаем на колбэк после возможной очистки
     await query.answer()
 
     try:
