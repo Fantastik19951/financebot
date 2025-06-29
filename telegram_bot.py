@@ -61,6 +61,75 @@ def push_nav(context, target):
     stack.append(target)
     context.user_data['nav_stack'] = stack
 
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+def generate_sales_trend_chart(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> io.BytesIO | None:
+    """Собирает данные о продажах и рисует линейный график динамики."""
+    from matplotlib.ticker import FuncFormatter
+
+    reports = get_cached_sheet_data(context, SHEET_REPORT)
+    if not reports:
+        return None
+
+    # Создаем словарь с датами в качестве ключей для удобного доступа
+    sales_by_date_str = {row[0].strip(): parse_float(row[4]) for row in reports if len(row) > 4}
+
+    # Генерируем полный диапазон дат для оси X
+    date_range = [start_date + dt.timedelta(days=x) for x in range((end_date - start_date).days + 1)]
+    
+    # Формируем данные для графика (если в какой-то день продаж не было, будет 0)
+    x_labels = [d.strftime('%d.%m') for d in date_range]
+    y_values = [sales_by_date_str.get(sdate(d), 0) for d in date_range]
+
+    if not any(y_values): # Если все значения нулевые
+        return None
+
+    # --- Рисуем график ---
+    plt.style.use('seaborn-v0_8-darkgrid')
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    # Рисуем линию и закрашиваем область под ней
+    ax.plot(x_labels, y_values, marker='o', linestyle='-', color='#4c72b0', label='Выручка')
+    ax.fill_between(x_labels, y_values, color='#4c72b0', alpha=0.1)
+
+    # Форматирование для красоты
+    ax.set_title(f"Динамика выручки с {sdate(start_date)} по {sdate(end_date)}", fontsize=16)
+    ax.set_ylabel("Сумма продаж, ₴")
+    ax.grid(True, which='major', linestyle='--', linewidth=0.5)
+    plt.xticks(rotation=45)
+    
+    # Форматируем ось Y, чтобы показывать "50k" вместо "50000"
+    def k_formatter(x, pos):
+        return f'{int(x/1000)}k' if x > 0 else '0'
+    ax.yaxis.set_major_formatter(FuncFormatter(k_formatter))
+
+    # Добавляем значения на точки, если их не слишком много
+    if len(x_labels) <= 15:
+        for i, val in enumerate(y_values):
+            if val > 0:
+                ax.text(i, val + (max(y_values) * 0.02), f"{val:.0f}", ha='center')
+
+    fig.tight_layout()
+    
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close(fig)
+    return buf
+
+# --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ И ОДНУ КЛАВИАТУРУ ---
+
+def sales_trend_period_kb():
+    """Клавиатура для выбора периода для графика продаж."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("7 дней", callback_data="sales_trend_period_7"),
+            InlineKeyboardButton("30 дней", callback_data="sales_trend_period_30"),
+            InlineKeyboardButton("90 дней", callback_data="sales_trend_period_90")
+        ],
+        [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
+    ])
+
+
 # --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
 
 def expense_chart_period_kb():
@@ -1118,6 +1187,40 @@ async def edit_invoice_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     kb = build_edit_invoice_keyboard(invoice_data, {}, row_index)
     await query.message.edit_text("<b>✏️ Редактирование накладной</b>\n\nВыберите галочками поля, которые хотите изменить, и нажмите 'Сохранить'.",
                                   parse_mode=ParseMode.HTML, reply_markup=kb)
+
+async def show_sales_trend_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню выбора периода для графика продаж."""
+    query = update.callback_query
+    await query.message.edit_text(
+        "📈 Пожалуйста, выберите период для построения графика динамики продаж:",
+        reply_markup=sales_trend_period_kb()
+    )
+
+async def process_sales_trend_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор периода, генерирует и отправляет график."""
+    query = update.callback_query
+    await query.message.edit_text("⏳ Собираю данные и рисую график, пожалуйста, подождите...")
+
+    days = int(query.data.split('_')[-1])
+    end_date = dt.date.today()
+    start_date = end_date - dt.timedelta(days=days - 1)
+
+    image_buffer = generate_sales_trend_chart(context, start_date, end_date)
+
+    if image_buffer is None:
+        await query.message.edit_text(
+            "😔 За выбранный период не найдено продаж для построения графика.",
+            reply_markup=sales_trend_period_kb()
+        )
+        return
+        
+    await query.message.delete()
+    await context.bot.send_photo(
+        chat_id=query.message.chat_id,
+        photo=image_buffer,
+        caption=f"📈 Динамика продаж за последние {days} дней.",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_sales_trends")]])
+    )
 
 async def edit_invoice_toggle_field(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключает (✅/❌) поле для редактирования."""
@@ -5292,6 +5395,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
              await query.message.edit_text("📈 Аналитика", reply_markup=analytics_menu_kb())
         
         
+        
         # --- 2. ПЛАНИРОВАНИЕ ---
         elif data == "planning": await start_planning(update, context)
         elif data.startswith("plan_nav_"):
@@ -5458,6 +5562,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("detail_report_nav_"): await show_detailed_report(update, context)
         elif data.startswith("invoices_list_"): await show_invoices_list(update, context)
         elif data.startswith("view_single_invoice_"): await show_single_invoice(update, context)
+        elif data == "analytics_sales_trends":
+            await show_sales_trend_menu(update, context)
+        elif data.startswith("sales_trend_period_"):
+            await process_sales_trend_period(update, context)
         
         # --- 9. ДОЛГИ ---
         elif data.startswith("current_debts_"):
