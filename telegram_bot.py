@@ -61,6 +61,30 @@ def push_nav(context, target):
     stack.append(target)
     context.user_data['nav_stack'] = stack
 
+# --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
+
+def expense_chart_period_kb():
+    """Клавиатура для выбора периода ТОЛЬКО для диаграммы расходов."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("Неделя", callback_data="exp_chart_period_7"),
+            InlineKeyboardButton("Месяц", callback_data="exp_chart_period_30"),
+            InlineKeyboardButton("3 месяца", callback_data="exp_chart_period_90")
+        ],
+        [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
+    ])
+
+def financial_dashboard_period_kb():
+    """Клавиатура для выбора периода ТОЛЬКО для финансовой панели."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("Неделя", callback_data="fin_dash_period_7"),
+            InlineKeyboardButton("Месяц", callback_data="fin_dash_period_30"),
+            InlineKeyboardButton("3 месяца", callback_data="fin_dash_period_90")
+        ],
+        [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
+    ])
+
 def pop_nav(context):
     stack = context.user_data.get('nav_stack', [])
     if stack:
@@ -188,28 +212,15 @@ def generate_expense_pie_chart(context: ContextTypes.DEFAULT_TYPE, start_date: d
 # --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-def analytics_period_kb():
-    """Клавиатура для выбора периода для аналитики."""
-    return InlineKeyboardMarkup([
-        [
-            # Меняем префикс на fin_dash_period_
-            InlineKeyboardButton("Неделя", callback_data="fin_dash_period_7"),
-            InlineKeyboardButton("Месяц", callback_data="fin_dash_period_30"),
-            InlineKeyboardButton("3 месяца", callback_data="fin_dash_period_90")
-        ],
-        [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
-    ])
-    
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def show_expense_pie_chart_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает меню выбора периода, корректно обрабатывая предыдущее сообщение (текст или фото)."""
+    """Показывает меню выбора периода для отчета по расходам."""
     query = update.callback_query
-    
     text_to_send = "📊 Пожалуйста, выберите период для анализа расходов:"
-    keyboard = analytics_period_kb()
+    # ИСПРАВЛЕНИЕ: Вызываем правильную клавиатуру
+    keyboard = expense_chart_period_kb()
 
-    # Пытаемся отредактировать сообщение. Если это не получается (потому что там фото),
-    # то удаляем его и отправляем новое.
     try:
         await query.message.edit_text(text_to_send, reply_markup=keyboard)
     except BadRequest:
@@ -245,7 +256,27 @@ async def process_expense_chart_period(update: Update, context: ContextTypes.DEF
         caption=f"📊 Структура ваших расходов за последние {days} дней.",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_expense_pie_chart")]])
     )
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+async def process_financial_dashboard_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор периода, генерирует и отправляет фин. отчет."""
+    query = update.callback_query
+    await query.message.edit_text("⏳ Собираю финансовый отчет...")
 
+    days = int(query.data.split('_')[-1])
+    
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+    # Конечной датой теперь всегда является ВЧЕРА
+    end_date = dt.date.today() - dt.timedelta(days=1)
+    start_date = end_date - dt.timedelta(days=days - 1)
+
+    summary_text = generate_financial_summary(context, start_date, end_date)
+
+    await query.message.edit_text(
+        summary_text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_financial_dashboard")]])
+    )
+    
 def now(): return dt.datetime.now().strftime("%d.%m.%Y %H:%M")
 def sdate(d=None): 
     d = d or dt.date.today()
@@ -1338,25 +1369,16 @@ async def show_financial_dashboard_menu(update: Update, context: ContextTypes.DE
         reply_markup=analytics_period_kb() # Используем существующую клавиатуру
     )
 
-async def process_financial_dashboard_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает выбор периода, генерирует и отправляет фин. отчет."""
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+async def show_financial_dashboard_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню выбора периода для финансового отчета."""
     query = update.callback_query
-    # Меняем текст на "Загрузка"
-    await query.message.edit_text("⏳ Собираю финансовый отчет...")
-
-    days = int(query.data.split('_')[-1])
-    end_date = dt.date.today()
-    start_date = end_date - dt.timedelta(days=days - 1)
-
-    # Генерируем текст отчета
-    summary_text = generate_financial_summary(context, start_date, end_date)
-
+    # ИСПРАВЛЕНИЕ: Вызываем правильную клавиатуру
     await query.message.edit_text(
-        summary_text,
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_financial_dashboard")]])
+        "🧮 Пожалуйста, выберите период для финансового отчета:",
+        reply_markup=financial_dashboard_period_kb()
     )
-    
+
 async def execute_payout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выполняет выплату и записывает данные."""
     query = update.callback_query
