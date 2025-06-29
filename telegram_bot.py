@@ -3946,58 +3946,7 @@ async def handle_supplier_due_date(update: Update, context: ContextTypes.DEFAULT
     except ValueError:
         await update.message.reply_text("❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ")
 
-async def view_debts_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
-    query = update.callback_query
-    await query.answer()
-    
-    context.user_data['debts_history_page'] = page
-    rows = get_cached_sheet_data(context, SHEET_DEBTS)
-    if rows is None:
-        await query.message.edit_text("❌ Ошибка чтения истории долгов.")
-        return
-        
-    per_page = 10
-    total = len(rows)
-    total_pages = max(1, math.ceil(total / per_page))
 
-    # Новые сверху:
-    rows = rows[::-1]
-    page_rows = rows[page * per_page : (page + 1) * per_page]
-
-    if not page_rows:
-        await query.message.edit_text("История долгов пуста.", reply_markup=debts_menu_kb())
-        return
-
-    msg = f"<b>📜 История долгов (стр. {page+1}/{total_pages}):</b>\n\n"
-    for idx, row in enumerate(page_rows, 1 + page * per_page):
-        status = "✅" if row[6].strip().lower() == "да" else "🟠"
-        msg += (
-            f"{idx}. {status} <b>{row[1]}</b>\n"
-            f"   • Дата: {row[0]}\n"
-            f"   • Сумма: <b>{parse_float(row[2]):.2f}₴</b>\n"
-            f"   • Оплачено: {parse_float(row[3]):.2f}₴ \n"
-            f"   • Срок: {row[5]} | Погашено: {row[6]}\n"
-            "─────────────\n"
-        )
-
-    # Кнопки Вперёд/Назад
-    kb = []
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton("⬅️ Назад", callback_data="debts_history_prev"))
-    if (page + 1) * per_page < total:
-        nav.append(InlineKeyboardButton("➡️ Вперёд", callback_data="debts_history_next"))
-    if nav:
-        kb.append(nav)
-    kb.append([InlineKeyboardButton("🔙 Долги", callback_data="debts_menu")])
-
-    await query.message.edit_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
-    context.user_data['debts_history_page'] = page
-
-    
-# 7. Сохранение (после комментария или "пропустить")
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сохраняет накладную и корректно проводит все финансовые операции."""
     query = update.callback_query
