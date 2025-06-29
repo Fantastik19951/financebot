@@ -705,9 +705,10 @@ def build_edit_invoice_keyboard(invoice_data: list, selected_fields: dict, row_i
     
     kb = []
     for field_key, field_name in fields.items():
-        # Не показывать кнопку "Дата долга", если тип оплаты - не "Долг"
+        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+        # Проверяем, что в текущем типе оплаты есть слово "Долг"
         current_pay_type = selected_fields.get('pay_type', invoice_data[6])
-        if field_key == 'due_date' and current_pay_type != "Долг":
+        if field_key == 'due_date' and not current_pay_type.startswith("Долг"):
             continue
             
         icon = "✅" if field_key in selected_fields else "❌"
@@ -718,7 +719,6 @@ def build_edit_invoice_keyboard(invoice_data: list, selected_fields: dict, row_i
         InlineKeyboardButton("🚫 Отмена", callback_data=f"edit_invoice_cancel_{row_index}")
     ])
     return InlineKeyboardMarkup(kb)
-
 
 def update_plan_in_sheet(row_num: int, field: str, new_value) -> bool:
     """Простая функция для обновления одной ячейки в ПланФакт. Возвращает True/False."""
@@ -1008,6 +1008,7 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
             current_paid = float(ws_debts.cell(found_debt_row_index, 4).value.replace(',', '.'))
             new_balance = new_to_pay - current_paid
             ws_debts.update_cell(found_debt_row_index, 5, new_balance)
+            ws_debts.update_cell(found_debt_row_index, 8, debt_pay_type) # <-- ДОБАВЛЕНА ЭТА СТРОКА
             if 'due_date' in new_values:
                 ws_debts.update_cell(found_debt_row_index, 6, new_values['due_date'])
         else:
