@@ -63,6 +63,8 @@ def pop_nav(context):
     context.user_data['nav_stack'] = stack
     return stack[-1] if stack else "main_menu"
 
+
+
 def now(): return dt.datetime.now().strftime("%d.%m.%Y %H:%M")
 def sdate(d=None): 
     d = d or dt.date.today()
@@ -87,8 +89,8 @@ def clear_conversation_state(context: ContextTypes.DEFAULT_TYPE):
     """Очищает все возможные ключи состояния диалога из user_data."""
     dialog_keys = [
         'report', 'supplier', 'planning', 'edit_plan', 'edit_invoice',
-        'revision', 'search_debt', 'safe_op', 'inventory_expense',
-        'repay', 'shift', 'report_period'
+        'revision', 'search_debt', 'safe_op', 'inventory_expense', 
+        'repay', 'shift', 'report_period', 'admin_expense'  # <-- ДОБАВИТЬ СЮДА
     ]
     key_found = False
     for key in dialog_keys:
@@ -2157,7 +2159,15 @@ def stock_safe_menu_kb():
         [InlineKeyboardButton("💵 Изъятие З/П за день", callback_data="withdraw_salary")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
-
+def analytics_menu_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📊 Финансовая Панель", callback_data="analytics_financial_dashboard")],
+        [InlineKeyboardButton("🍰 Расходы по категориям", callback_data="analytics_expense_pie_chart")],
+        [InlineKeyboardButton("📈 Динамика Продаж", callback_data="analytics_sales_trends")],
+        [InlineKeyboardButton("📦 ABC-анализ Поставщиков", callback_data="analytics_abc_suppliers")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
+    ])
+    
 def safe_menu_kb():
     """Меню для операций с сейфом."""
     return InlineKeyboardMarkup([
@@ -2212,13 +2222,16 @@ def main_kb(is_admin=False):
         [InlineKeyboardButton("👥 Персонал", callback_data="staff_menu")],
         [InlineKeyboardButton("📦 Поставщики", callback_data="suppliers_menu"),
          InlineKeyboardButton("🏦 Долги", callback_data="debts_menu")],
-        [InlineKeyboardButton("📈 Аналитика", callback_data="analytics_menu")],
-        [InlineKeyboardButton("⚙️ Настройки", callback_data="settings_menu")]
     ]
+    
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Кнопки только для админов ---
     if is_admin:
+        kb.append([InlineKeyboardButton("📈 Аналитика", callback_data="analytics_menu")])
         kb.append([InlineKeyboardButton("🔐 Админ-панель", callback_data="admin_panel")])
+
     kb.append([InlineKeyboardButton("❌ Закрыть", callback_data="close")])
     return InlineKeyboardMarkup(kb)
+
 
 def finance_menu_kb():
     return InlineKeyboardMarkup([
@@ -2290,7 +2303,8 @@ def settings_menu_kb():
 
 def admin_panel_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📊 Финансовый анализ", callback_data="financial_analysis")],
+        [InlineKeyboardButton("➕ Добавить расход", callback_data="add_admin_expense")],
+        [InlineKeyboardButton("🧾 История расходов", callback_data="expense_history")],
         [InlineKeyboardButton("👥 Управление персоналом", callback_data="staff_management")],
         [InlineKeyboardButton("⚙️ Системные настройки", callback_data="system_settings")],
         [InlineKeyboardButton("📋 Журнал действий", callback_data="action_log")],
@@ -2566,6 +2580,87 @@ async def edit_plan_choose_field(update: Update, context: ContextTypes.DEFAULT_T
             [InlineKeyboardButton("📆 Долг", callback_data="edit_plan_value_Долг")],
         ]
         await query.message.edit_text("Выберите новый тип оплаты:", reply_markup=InlineKeyboardMarkup(kb))
+
+# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
+
+async def start_admin_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает диалог добавления расхода из админ-панели."""
+    query = update.callback_query
+    await query.answer()
+    context.user_data['admin_expense'] = {'step': 'amount'}
+    await query.message.edit_text(
+        "💸 Введите сумму расхода:",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="admin_panel")]])
+    )
+
+async def handle_admin_expense_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает сумму расхода и запрашивает комментарий."""
+    try:
+        amount = parse_float(update.message.text)
+        context.user_data['admin_expense']['amount'] = amount
+        context.user_data['admin_expense']['step'] = 'comment'
+        await update.message.reply_text(
+            "📝 Введите комментарий/категорию расхода (напр. Аренда, Коммуналка):"
+        )
+    except ValueError:
+        await update.message.reply_text("❌ Пожалуйста, введите сумму числом.")
+
+async def handle_admin_expense_comment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает комментарий и запрашивает тип оплаты."""
+    context.user_data['admin_expense']['comment'] = update.message.text
+    context.user_data['admin_expense']['step'] = 'pay_type'
+    
+    kb = [
+        [InlineKeyboardButton("💵 Наличные (из сейфа)", callback_data="exp_pay_type_Наличные")],
+        [InlineKeyboardButton("💳 Карта (без списания)", callback_data="exp_pay_type_Карта")]
+    ]
+    await update.message.reply_text("Выберите тип оплаты:", reply_markup=InlineKeyboardMarkup(kb))
+
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+async def show_expense_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает последние 15 записей о расходах."""
+    query = update.callback_query
+    await query.answer()
+
+    rows = get_cached_sheet_data(context, SHEET_EXPENSES)
+    if not rows:
+        return await query.message.edit_text("История расходов пуста.", reply_markup=admin_panel_kb())
+
+    last_ops = rows[-15:]
+    last_ops.reverse()
+    
+    text = "<b>🧾 Последние 15 расходов:</b>\n"
+    for row in last_ops:
+        date, amount, comment, user = (row + ["", "", "", ""])[:4]
+        text += "\n──────────────────\n"
+        text += f"🗓 <b>{date}</b> - <b>{amount}₴</b>\n"
+        text += f"   • {comment} ({user})"
+        
+    await query.message.edit_text(text, parse_mode='HTML', reply_markup=admin_panel_kb())
+
+async def handle_admin_expense_pay_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает тип оплаты и сохраняет расход."""
+    query = update.callback_query
+    pay_type = query.data.split('_')[-1]
+    
+    expense_data = context.user_data['admin_expense']
+    amount = expense_data['amount']
+    comment = expense_data['comment']
+    who = USER_ID_TO_NAME.get(str(query.from_user.id), "Админ")
+    
+    # Списываем из сейфа, если оплата наличными
+    if pay_type == "Наличные":
+        add_safe_operation("Расход", amount, f"Админ. расход: {comment}", who)
+
+    # Записываем в таблицу расходов
+    ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
+    ws_exp.append_row([sdate(), amount, comment, who])
+
+    await query.message.edit_text(
+        f"✅ Расход '{comment}' на сумму {amount:.2f}₴ ({pay_type}) успешно добавлен.",
+        reply_markup=admin_panel_kb()
+    )
+    context.user_data.pop('admin_expense', None)
 
 
 async def edit_plan_save_value(update: Update, context: ContextTypes.DEFAULT_TYPE, new_value=None):
@@ -4713,6 +4808,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'revision', 'report', 'supplier', 'planning', 'edit_plan', 'edit_invoice', 
         'search_debt', 'safe_op', 'inventory_expense', 'repay', 'shift', 'report_period'
     ] if key in user_data), None)
+    
 
     # Если никакого состояния нет, выходим
     if not state_key:
@@ -4745,6 +4841,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         step = user_data['expense'].get('step')
         if step == 'value': return await handle_expense_value(update, context)
         elif step == 'comment': return await save_expense(update, context)
+
+    elif state_key == 'admin_expense':
+        step = user_data['admin_expense'].get('step')
+        if step == 'amount':
+            return await handle_admin_expense_amount(update, context)
+        elif step == 'comment':
+            return await handle_admin_expense_comment(update, context)
 
     elif state_key == 'revision':
         step = user_data['revision'].get('step')
@@ -4844,6 +4947,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         step = user_data['report_period'].get('step')
         if step == 'start_date': return await handle_report_start_date(update, context)
         elif step == 'end_date': return await handle_report_end_date(update, context)
+
+
             
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -5106,6 +5211,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "safe_withdraw": await start_safe_withdraw(update, context)
         elif data == "add_inventory_expense": await start_inventory_expense(update, context)
         elif data == "admin_revision": await start_revision(update, context)
+
+        elif data == "add_admin_expense": await start_admin_expense(update, context)
+        elif data == "expense_history": await show_expense_history(update, context)
+        elif data.startswith("exp_pay_type_"): await handle_admin_expense_pay_type(update, context)
+        
+        elif data == "staff_management": await staff_management_menu(update, context)
 
         # --- 12. ПРОЧЕЕ ---
         elif data == "noop": pass
