@@ -5674,7 +5674,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_sales_trend_menu(update, context)
         elif data.startswith("sales_trend_period_"):
             await process_sales_trend_period(update, context)
-         elif data == "analytics_abc_suppliers":
+        elif data == "analytics_abc_suppliers":
             await show_abc_analysis_menu(update, context)
         elif data.startswith("abc_period_"):
             await process_abc_analysis(update, context)
