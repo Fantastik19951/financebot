@@ -1185,6 +1185,42 @@ def calculate_accrued_bonus(seller_name: str, all_reports=None, all_salaries=Non
     bonus_to_pay = max(0, round(bonus_to_pay, 2))
 
     return bonus_to_pay, bonus_days
+
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+async def show_planning_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню действий (править/удалить) для выбранного плана."""
+    query = update.callback_query
+    await query.answer()
+
+    # Формат callback_data: plan_select_НОМЕР_СТРОКИ
+    try:
+        row_index = int(query.data.split('_')[-1])
+    except (ValueError, IndexError):
+        return await query.message.edit_text("❌ Ошибка: неверный ID плана.")
+
+    # Получаем информацию о выбранной строке
+    ws = GSHEET.worksheet(SHEET_PLAN_FACT)
+    plan_row = ws.row_values(row_index)
+    
+    if not plan_row:
+        return await query.message.edit_text("❌ Ошибка: план не найден (возможно, уже удален).")
+
+    date_str, supplier, amount, pay_type = plan_row[:4]
+
+    # Создаем клавиатуру действий
+    kb = [
+        [InlineKeyboardButton("✏️ Править этот план", callback_data=f"edit_plan_{row_index}")],
+        [InlineKeyboardButton("❌ Удалить этот план", callback_data=f"plan_delete_{row_index}_{date_str}")],
+        # Кнопка "Назад" просто заново вызывает основное меню планирования
+        [InlineKeyboardButton("🔙 Назад к общему списку", callback_data=f"plan_nav_{date_str}")]
+    ]
+
+    await query.message.edit_text(
+        f"Выбрано: <b>{supplier} - {amount}₴ ({pay_type})</b>\n\nВыберите действие:",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+    
 async def staff_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает оптимизированное меню управления персоналом."""
     query = update.callback_query
@@ -2099,9 +2135,7 @@ async def repay_debt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 DAYS_OF_WEEK_RU = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 
 # 1. Нажатие на кнопку "Планирование"
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ НА ИСПРАВЛЕННУЮ ВЕРСИЮ ---
 async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, target_date: dt.date = None):
     """Показывает обновленное, чистое и компактное меню планирования."""
     query = update.callback_query
@@ -2126,14 +2160,13 @@ async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, tar
     unplanned_scheduled = [s for s in scheduled_today if s not in planned_names]
 
     # --- Строим сообщение и клавиатуру ---
-    # 1. Новый чистый заголовок
     header_text = f"🗓️  <b>ПЛАНИРОВАНИЕ НА {day_of_week_name.upper()}, {target_date_str}</b>"
 
     kb = []
-    # 2. Навигация
+    # Навигация
     nav_row = []
     prev_day = target_date - dt.timedelta(days=1)
-    if prev_day > today:
+    if prev_day >= today:
         nav_row.append(InlineKeyboardButton("◀️ Пред. день", callback_data=f"plan_nav_{sdate(prev_day)}"))
     
     next_day = target_date + dt.timedelta(days=1)
@@ -2143,20 +2176,24 @@ async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, tar
     if nav_row:
         kb.append(nav_row)
     
-    # 3. Обновленный блок "Уже запланировано" с компактными кнопками
+    # Блок "Уже запланировано"
     kb.append([InlineKeyboardButton("--- ✏️ Уже запланировано ---", callback_data="noop")])
     if not planned_data:
         kb.append([InlineKeyboardButton("(пусто)", callback_data="noop")])
     else:
         for item in planned_data:
-            # Текст кнопки стал короче, чтобы влезать в одну строку
-            btn_text = f"{item['supplier']} ({item['amount']}₴, {item['pay_type']})"
+            # --- ИЗМЕНЕНИЕ ТОЛЬКО ЗДЕСЬ ---
+            # Сокращаем тип оплаты до одной буквы для компактности
+            pay_type_short = item['pay_type'][0] if item['pay_type'] else '?'
+            btn_text = f"✏️ {item['supplier']} ({item['amount']}₴, {pay_type_short})"
+            # -----------------------------
+            
             kb.append([
                 InlineKeyboardButton(btn_text, callback_data=f"edit_plan_{item['row_index']}"),
                 InlineKeyboardButton("❌", callback_data=f"plan_delete_{item['row_index']}_{target_date_str}")
             ])
 
-    # 4. Блок "Добавить по графику" с новым эмодзи
+    # Блок "Добавить по графику" (остается без изменений)
     kb.append([InlineKeyboardButton("--- 🚚 Добавить по графику ---", callback_data="noop")])
     if not unplanned_scheduled:
         kb.append([InlineKeyboardButton("(все добавлены)", callback_data="noop")])
@@ -2173,7 +2210,6 @@ async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, tar
             reply_markup=InlineKeyboardMarkup(kb),
             parse_mode=ParseMode.HTML
         )
-# --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
 
 async def show_invoices_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
