@@ -5676,6 +5676,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         elif data.startswith("plan_sup_"): await handle_planning_supplier_choice(update, context)
         elif data.startswith("plan_pay_"): await handle_planning_pay_type(update, context)
+        elif data.startswith("plan_select_"):
+            await show_planning_actions(update, context)
         
         # --- 3. ЖУРНАЛ ПРИБЫТИЯ И РЕДАКТИРОВАНИЕ ПЛАНОВ ---
         elif data == "view_suppliers": await show_arrivals_journal(update, context)
