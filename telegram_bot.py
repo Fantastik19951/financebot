@@ -900,9 +900,19 @@ def build_debts_history_keyboard(rows, page=0, per_page=10):
 
 # --- ОСТАТОК МАГАЗИНА, ПЕРЕУЧЕТЫ И СЕЙФ ---
 def add_safe_operation(op_type, amount, comment, user):
-    ws = GSHEET.worksheet("Сейф")
-    ws.append_row([sdate(), op_type, amount, comment, user])
-
+    """Добавляет операцию в сейф и логирует, какая функция ее вызвала."""
+    try:
+        # Получаем имя функции, которая вызвала add_safe_operation
+        caller_function_name = inspect.stack()[1].function
+        logging.info(
+            f"!!! SAFE_OP_TRACE: Вызвана из '{caller_function_name}' с параметрами: "
+            f"Тип={op_type}, Сумма={amount}, Комментарий='{comment}', Пользователь='{user}'"
+        )
+        
+        ws = GSHEET.worksheet("Сейф")
+        ws.append_row([sdate(), op_type, amount, comment, user])
+    except Exception as e:
+        logging.error(f"Критическая ошибка при записи в сейф: {e}")
 # --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
 
 def get_sellers_comparison_data(context: ContextTypes.DEFAULT_TYPE, sellers_list: list, days_period: int = 30):
@@ -4503,8 +4513,6 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         paid_status = "Да"
         if pay_type == "Наличные":
-            add_safe_operation("Расход", sum_to_pay, f"Оплата поставщику: {supplier_data['name']}", who)
-            
             try:
                 comment_for_safe = f"Оплата поставщику: {supplier_data['name']} ({pay_type})"
                 add_safe_operation("Расход", sum_to_pay, comment_for_safe, who)
