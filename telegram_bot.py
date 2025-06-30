@@ -4928,10 +4928,21 @@ async def handle_card_payment_choice(update: Update, context: ContextTypes.DEFAU
     choice = query.data
 
     if choice == 'card_pay_actual':
-        # ... (переход к комментарию без изменений)
+        # Пользователь выбрал фактическую оплату картой.
+        # Устанавливаем тип и переходим к следующему шагу - комментарию.
+        context.user_data['supplier']['payment_type'] = 'Карта'
+        context.user_data['supplier']['step'] = 'comment'
+        await query.message.edit_text(
+            "📝 Добавьте комментарий (или нажмите 'Пропустить'):",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⏭ Пропустить", callback_data="skip_comment_supplier")],
+                [InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]
+            ])
+        )
+
     elif choice == 'card_pay_debt':
-        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-        # Вместо запроса текста показываем календарь
+        # Пользователь выбрал долг по карте.
+        # Устанавливаем тип и показываем календарь для выбора срока погашения.
         context.user_data['supplier']['payment_type'] = 'Долг (Карта)'
         context.user_data['supplier']['step'] = 'due_date'
         await query.message.edit_text(
