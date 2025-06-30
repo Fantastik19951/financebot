@@ -2781,47 +2781,44 @@ def admin_system_settings_kb():
     ])
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 def calculate_detailed_salary(context: ContextTypes.DEFAULT_TYPE, user_name: str) -> dict:
-    """Собирает и рассчитывает детальную информацию по ЗП, основываясь только на данных из листа 'Зарплаты'."""
+    """Собирает и рассчитывает детальную информацию по ЗП, разделяя ставку и премию."""
     start_period, end_period = get_current_payroll_period()
     
-    # --- НОВАЯ, БОЛЕЕ НАДЕЖНАЯ ЛОГИКА ---
-    # Мы больше не считаем смены, а берем все данные напрямую из финансового листа "Зарплаты"
-    
-    base_pay_accrued = 0.0
+    base_pay_earned = 0.0
     bonus_accrued = 0.0
-    total_paid_out = 0.0
-    shifts_with_base_pay = 0  # Будем считать смены по фактическим записям о выплате ставки
+    bonus_paid_out = 0.0
+    shifts_worked = 0
 
     salaries_rows = get_cached_sheet_data(context, SHEET_SALARIES, force_update=True) or []
     
     for row in salaries_rows:
-        # Проверяем, что строка полная, дата корректна, период совпадает и сотрудник тот же
         if len(row) > 3 and (d := pdate(row[0])) and start_period <= d <= end_period and row[1] == user_name:
             pay_type = row[2]
             amount = parse_float(row[3])
             
+            # --- ИСПРАВЛЕНИЕ ЛОГИКИ ---
             if pay_type == "Ставка":
-                base_pay_accrued += amount
-                shifts_with_base_pay += 1  # Считаем смену только если есть запись о ставке
+                base_pay_earned += amount
+                shifts_worked += 1
             elif pay_type == "Премия 2%":
                 bonus_accrued += amount
             elif pay_type == "Выплата бонуса":
-                total_paid_out += amount
+                # Учитываем только выплаты, относящиеся к бонусам
+                bonus_paid_out += amount
 
-    total_accrued = base_pay_accrued + bonus_accrued
-    to_be_paid = total_accrued - total_paid_out
+    # "К выплате" теперь считается ТОЛЬКО из бонусов
+    bonus_to_be_paid = bonus_accrued - bonus_paid_out
 
     return {
         "start": sdate(start_period), "end": sdate(end_period),
-        "shifts": shifts_with_base_pay, # Показываем кол-во смен, за которые выплачена/начислена ставка
-        "base_pay": base_pay_accrued,
-        "bonus_pay": bonus_accrued, 
-        "total_accrued": total_accrued,
-        "paid_out": total_paid_out, 
-        "to_be_paid": to_be_paid
+        "shifts": shifts_worked,
+        "base_pay": base_pay_earned,      # Ставка (информационно)
+        "bonus_pay": bonus_accrued,       # Начислено премий
+        "paid_out": bonus_paid_out,       # Выплачено премий
+        "to_be_paid": bonus_to_be_paid    # Остаток премии к выплате
     }
-    
 def suppliers_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Добавить накладную", callback_data="add_supplier")],
@@ -3221,8 +3218,9 @@ async def show_my_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=staff_settings_menu_kb())
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def show_my_salary(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает пользователю его персональную детализацию по ЗП."""
+    """Показывает пользователю его персональную детализацию по ЗП с корректными формулировками."""
     query = update.callback_query
     await query.message.edit_text("💰 Собираю данные по вашей зарплате...")
 
@@ -3234,21 +3232,22 @@ async def show_my_salary(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     salary_data = calculate_detailed_salary(context, user_name)
 
+    # --- ИЗМЕНЕНЫ ФОРМУЛИРОВКИ ДЛЯ ЯСНОСТИ ---
     msg = (
         f"<b>💰 Детализация зарплаты для {user_name}</b>\n"
         f"<i>Период: {salary_data['start']} - {salary_data['end']}</i>\n"
         "────────────────────────\n"
         f"▫️ Отработано смен: {salary_data['shifts']}\n"
-        f"▫️ Начислено (ставка): {salary_data['base_pay']:,.2f}₴\n"
+        f"▫️ <b>Получено (ставка): {salary_data['base_pay']:,.2f}₴</b>\n"
+        f"  (выплачивается ежедневно из кассы)\n\n"
+        
         f"▫️ Начислено (премии): {salary_data['bonus_pay']:,.2f}₴\n"
+        f"➖ Выплачено премий: {salary_data['paid_out']:,.2f}₴\n"
         "────────────────────────\n"
-        f"📈 <b>Итого начислено: {salary_data['total_accrued']:,.2f}₴</b>\n"
-        f"➖ Выплачено бонусов: {salary_data['paid_out']:,.2f}₴\n\n"
-        f"✅ <b>К выплате: {salary_data['to_be_paid']:,.2f}₴</b>"
+        f"✅ <b>Остаток ПРЕМИИ к выплате: {salary_data['to_be_paid']:,.2f}₴</b>"
     ).replace(',', ' ')
 
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=staff_settings_menu_kb())
-
 async def handle_admin_expense_pay_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает тип оплаты и сохраняет расход."""
     query = update.callback_query
