@@ -2575,6 +2575,7 @@ async def handle_supplier_search_input(update: Update, context: ContextTypes.DEF
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def add_new_supplier_to_directory(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Добавляет нового поставщика в справочник и переходит к вводу суммы."""
     query = update.callback_query
@@ -2614,19 +2615,6 @@ async def add_new_supplier_to_directory(update: Update, context: ContextTypes.DE
         f"💰 Теперь введите примерную сумму для него на {target_date_str}:",
         parse_mode=ParseMode.HTML
     )
-    
-async def handle_revision_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ввод фактического остатка и запрашивает комментарий."""
-    try:
-        actual_amount = float(update.message.text.replace(',', '.'))
-        context.user_data['revision']['actual'] = actual_amount
-        context.user_data['revision']['step'] = 'comment'
-        
-        await update.message.reply_text("📝 Теперь введите комментарий к переучету (например, 'Плановый переучет за июнь'):")
-
-    except (ValueError, KeyError):
-        await update.message.reply_text("❌ Ошибка. Пожалуйста, введите сумму числом.")
-        return
 
 
 async def save_revision(update: Update, context: ContextTypes.DEFAULT_TYPE):
