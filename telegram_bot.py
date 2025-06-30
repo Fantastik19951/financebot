@@ -2755,12 +2755,67 @@ def reports_menu_kb():
     ])
 
 def staff_menu_kb(is_admin=False):
-    kb = [[InlineKeyboardButton("🗓 График смен", callback_data="view_shifts")]]
+    kb = [
+        [InlineKeyboardButton("🗓 Общий график смен", callback_data="view_shifts")],
+        [InlineKeyboardButton("⚙️ Персональные настройки", callback_data="staff_settings_menu")]
+    ]
     if is_admin:
         kb.append([InlineKeyboardButton("✏️ Назначить/Изменить смену", callback_data="edit_shifts")])
         kb.append([InlineKeyboardButton("📊 Статистика продавцов", callback_data="seller_stats")])
+    
     kb.append([InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")])
     return InlineKeyboardMarkup(kb)
+
+def staff_settings_menu_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💰 Моя Зарплата", callback_data="staff_my_salary")],
+        [InlineKeyboardButton("🗓 Мой График", callback_data="staff_my_schedule")],
+        [InlineKeyboardButton("🔙 Назад в меню Персонал", callback_data="staff_menu")]
+    ])
+
+def admin_system_settings_kb():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("⚙️ Управление Пользователями", callback_data="settings_user_management")],
+        [InlineKeyboardButton("💰 Финансовые Параметры", callback_data="settings_financial_params")],
+        [InlineKeyboardButton("🔙 Назад в админ-панель", callback_data="admin_panel")]
+    ])
+
+def calculate_detailed_salary(context: ContextTypes.DEFAULT_TYPE, user_name: str) -> dict:
+    """Собирает и рассчитывает детальную информацию по ЗП для сотрудника за текущий период."""
+    start_period, end_period = get_current_payroll_period()
+    
+    shifts_worked = 0
+    base_pay_accrued = 0
+    bonus_accrued = 0
+    
+    # Считаем отработанные смены
+    shifts_rows = get_cached_sheet_data(context, SHEET_SHIFTS) or []
+    for row in shifts_rows:
+        if len(row) > 1 and (d := pdate(row[0])) and start_period <= d <= end_period:
+            if user_name in row[1:]:
+                shifts_worked += 1
+    
+    base_pay_accrued = shifts_worked * 700
+
+    # Считаем начисленные премии и сделанные выплаты
+    salaries_rows = get_cached_sheet_data(context, SHEET_SALARIES) or []
+    total_paid_out = 0
+    for row in salaries_rows:
+        if len(row) > 3 and (d := pdate(row[0])) and start_period <= d <= end_period and row[1] == user_name:
+            if row[2] == "Премия 2%":
+                bonus_accrued += parse_float(row[3])
+            elif row[2] == "Выплата бонуса":
+                total_paid_out += parse_float(row[3])
+
+    total_accrued = base_pay_accrued + bonus_accrued
+    to_be_paid = total_accrued - total_paid_out
+
+    return {
+        "start": sdate(start_period), "end": sdate(end_period),
+        "shifts": shifts_worked, "base_pay": base_pay_accrued,
+        "bonus_pay": bonus_accrued, "total_accrued": total_accrued,
+        "paid_out": total_paid_out, "to_be_paid": to_be_paid
+    }
 
 def suppliers_menu_kb():
     return InlineKeyboardMarkup([
@@ -3129,6 +3184,37 @@ async def show_expense_history(update: Update, context: ContextTypes.DEFAULT_TYP
         text += f"   • {comment} ({user})"
         
     await query.message.edit_text(text, parse_mode='HTML', reply_markup=admin_panel_kb())
+
+async def show_my_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает персональный график смен пользователя на 2 недели вперед."""
+    query = update.callback_query
+    await query.message.edit_text("🗓️ Ищу ваши смены в графике...")
+
+    user_id = str(query.from_user.id)
+    user_name = USER_ID_TO_NAME.get(user_id)
+
+    if not user_name:
+        return await query.message.edit_text("❌ Вашего ID нет в базе пользователей.", reply_markup=staff_settings_menu_kb())
+
+    shifts_rows = get_cached_sheet_data(context, SHEET_SHIFTS) or []
+    my_upcoming_shifts = []
+    today = dt.date.today()
+    
+    for row in shifts_rows:
+        if len(row) > 1 and (d := pdate(row[0])):
+            # Ищем смены в ближайшие 14 дней
+            if today <= d <= (today + dt.timedelta(days=14)):
+                if user_name in row[1:]:
+                    dow_name = DAYS_OF_WEEK_RU[d.weekday()]
+                    my_upcoming_shifts.append(f"  • {sdate(d)} ({dow_name.capitalize()})")
+
+    msg = f"<b>🗓 Мой график на ближайшие 2 недели для {user_name}</b>\n\n"
+    if my_upcoming_shifts:
+        msg += "\n".join(my_upcoming_shifts)
+    else:
+        msg += "<i>У вас нет назначенных смен в ближайшее время.</i>"
+
+    await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=staff_settings_menu_kb())
 
 async def handle_admin_expense_pay_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает тип оплаты и сохраняет расход."""
@@ -5501,6 +5587,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.edit_text("📦 Операции с остатком:", reply_markup=stock_menu_kb())
         elif data == "analytics_menu": 
              await query.message.edit_text("📈 Аналитика", reply_markup=analytics_menu_kb())
+        elif data == "staff_settings_menu":
+            await query.message.edit_text("⚙️ Персональные настройки:", reply_markup=staff_settings_menu_kb())
         
         
         
@@ -5766,6 +5854,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "staff_management": await staff_management_menu(update, context)
 
         # --- 12. ПРОЧЕЕ ---
+        elif data == "staff_my_salary":
+            await show_my_salary(update, context)
+        elif data == "staff_my_schedule":
+            await show_my_schedule(update, context)
+        elif data == "settings_system": # Для админских настроек
+            await query.message.edit_text("🔐 Системные настройки:", reply_markup=admin_system_settings_kb())
         elif data == "noop": pass
         else:
             await query.answer("Команда не реализована.", show_alert=True)
