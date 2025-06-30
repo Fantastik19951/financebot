@@ -4717,6 +4717,7 @@ async def inventory_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_add_supplier_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает выбор поставщика при добавлении накладной."""
     query = update.callback_query
@@ -4724,14 +4725,14 @@ async def handle_add_supplier_choice(update: Update, context: ContextTypes.DEFAU
     
     supplier_name = query.data.split('_', 2)[2]
     
-    # Если нажали "Другой"
+    # Если нажали "Другой", запускаем режим поиска
     if supplier_name == "other":
-        context.user_data['supplier'] = {'step': 'name'}
+        context.user_data['supplier'] = {'step': 'search'} # Новый шаг - поиск
         await query.message.edit_text(
-            "📦 Введите имя поставщика:",
+            "✍️ Введите имя или часть имени поставщика для поиска:",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]])
         )
-    # Если выбрали из списка
+    # Если выбрали из списка (этот блок сработает для кнопок из результатов поиска)
     else:
         context.user_data['supplier'] = {'name': supplier_name, 'step': 'amount_income'}
         await query.message.edit_text(
@@ -4740,6 +4741,70 @@ async def handle_add_supplier_choice(update: Update, context: ContextTypes.DEFAU
             parse_mode=ParseMode.HTML
         )
 
+# --- ДОБАВЬТЕ ЭТОТ БЛОК ИЗ ДВУХ ФУНКЦИЙ ---
+
+async def handle_add_invoice_supplier_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ищет поставщика для ДОБАВЛЕНИЯ НАКЛАДНОЙ и предлагает варианты."""
+    search_query = update.message.text.strip()
+    
+    all_suppliers = get_all_supplier_names(context)
+    matches = [name for name in all_suppliers if search_query.lower() in name.lower()]
+
+    if not matches:
+        # Если совпадений нет, предлагаем добавить нового
+        kb = [
+            # В callback передаем имя для добавления
+            [InlineKeyboardButton(f"✅ Да, добавить '{search_query}'", callback_data=f"dir_add_new_sup_{search_query}")],
+            [InlineKeyboardButton("❌ Нет, попробовать снова", callback_data="add_sup_other")]
+        ]
+        await update.message.reply_text(
+            f"🤷‍♂️ Поставщик '<b>{search_query}</b>' не найден в справочнике.\n\nХотите добавить его и продолжить?",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+        return
+
+    kb = []
+    for name in matches[:20]:
+        # При нажатии на кнопку вызывается существующий обработчик add_sup_{name}
+        kb.append([InlineKeyboardButton(name, callback_data=f"add_sup_{name}")])
+    
+    kb.append([InlineKeyboardButton("❌ Отмена", callback_data="suppliers_menu")])
+    
+    await update.message.reply_text(
+        "Вот что удалось найти. Выберите правильный вариант:",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
+async def add_new_supplier_and_start_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Добавляет поставщика в справочник и сразу переходит к созданию накладной."""
+    query = update.callback_query
+    await query.answer()
+
+    # Формат: dir_add_new_sup_ИмяНовогоПоставщика
+    try:
+        new_supplier_name = query.data.split('_', 3)[3]
+    except IndexError:
+        return await query.message.edit_text("❌ Ошибка: не удалось получить имя нового поставщика.")
+
+    try:
+        ws = GSHEET.worksheet("СправочникПоставщиков")
+        ws.append_row([new_supplier_name])
+        get_all_supplier_names(context, force_update=True)
+        logging.info(f"Новый поставщик '{new_supplier_name}' добавлен в справочник.")
+    except Exception as e:
+        return await query.message.edit_text(f"❌ Не удалось сохранить нового поставщика: {e}")
+
+    # Сразу переходим к вводу суммы для этого нового поставщика
+    context.user_data['supplier'] = {
+        'name': new_supplier_name,
+        'step': 'amount_income'
+    }
+    await query.message.edit_text(
+        f"✅ Поставщик '<b>{new_supplier_name}</b>' добавлен.\n\n"
+        f"💰 Теперь введите сумму прихода по накладной:",
+        parse_mode=ParseMode.HTML
+    )elif state_key == 'supplier'
 
 async def handle_supplier_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['supplier']['name'] = update.message.text
@@ -5684,6 +5749,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif state_key == 'supplier':
         step = user_data['supplier'].get('step')
+        # --- ДОБАВЬТЕ ЭТОТ БЛОК ---
+        if step == 'search':
+            return await handle_add_invoice_supplier_search(update, context)
+        # ------------------------
+        elif step == 'name': return await handle_supplier_name(update, context)
+        elif step == 'amount_income': return await handle_supplier_amount_income(update, context)
         if step == 'name': return await handle_supplier_name(update, context)
         elif step == 'amount_income': return await handle_supplier_amount_income(update, context)
         elif step == 'writeoff': return await handle_supplier_writeoff(update, context)
@@ -5833,8 +5904,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
              await query.message.edit_text("📈 Аналитика", reply_markup=analytics_menu_kb())
         elif data == "staff_settings_menu":
             await query.message.edit_text("⚙️ Персональные настройки:", reply_markup=staff_settings_menu_kb())
-
-        
+        elif data.startswith("dir_add_new_sup_"):
+            await add_new_supplier_and_start_invoice(update, context)
         
         
         # --- 2. ПЛАНИРОВАНИЕ ---
