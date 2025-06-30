@@ -5642,9 +5642,9 @@ async def export_to_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📥 Экспорт в Excel временно недоступен. Функция в разработке.")
 
 # --- ОБРАБОТЧИКИ ТЕКСТА ---
+# --- ЗАМЕНИТЕ ВСЮ ФУНКЦИЮ НА ЭТУ ВЕРСИЮ ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Ваша строка text.lower() здесь была убрана, т.к. в некоторых шагах нужен оригинальный регистр
-    text = update.message.text.strip() 
+    text = update.message.text.strip()
     
     if text.lower() == "/cancel":
         return await cancel(update, context)
@@ -5652,8 +5652,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data = context.user_data
     state_key = next((key for key in DIALOG_KEYS if key in user_data), None)
     
-
-    # Если никакого состояния нет, выходим
     if not state_key:
         return await update.message.reply_text(
             "ℹ️ Для взаимодействия с ботом, пожалуйста, используйте меню.",
@@ -5661,7 +5659,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     # --- Маршрутизация по активному состоянию ---
-    
     if state_key == 'report':
         step = user_data['report'].get('step')
         if step == 'cash': return await handle_report_cash(update, context)
@@ -5672,7 +5669,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif state_key == 'supplier':
         step = user_data['supplier'].get('step')
-        # --- ИСПРАВЛЕНИЕ: Добавлены все шаги для диалога добавления поставщика ---
         if step == 'name': return await handle_supplier_name(update, context)
         elif step == 'amount_income': return await handle_supplier_amount_income(update, context)
         elif step == 'writeoff': return await handle_supplier_writeoff(update, context)
@@ -5700,44 +5696,34 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if step == 'actual_amount': return await handle_revision_amount(update, context)
         elif step == 'comment': return await save_revision(update, context)
 
-        # ... (другие elif в handle_text)
-
     elif state_key == 'edit_invoice':
         edit_state = user_data['edit_invoice']
         fields_to_edit = edit_state.get('fields_to_edit_list', [])
         current_index = edit_state.get('current_field_index', 0)
-        
-        # Проверяем, есть ли еще вопросы, на которые мы ждем текстовый ответ
         if fields_to_edit and current_index < len(fields_to_edit):
             current_field = fields_to_edit[current_index]
-            
-            # Сохраняем текстовый ответ
             edit_state.setdefault('new_values', {})[current_field] = update.message.text
-            # Переходим к следующему вопросу
             edit_state['current_field_index'] += 1
-            # Снова вызываем "спрашивающую" функцию
             await ask_for_invoice_edit_value(update, context)
         else:
-            # Этого не должно происходить, но на всякий случай
             await update.message.reply_text("Пожалуйста, используйте кнопки.")
         return
 
     elif state_key == 'planning':
         step = user_data['planning'].get('step')
-        if step == 'amount': return await handle_planning_amount(update, context)
-        # --- ДОБАВЬТЕ ЭТОТ БЛОК ---
-    elif step == 'other_supplier_search':
+        if step == 'amount': 
+            return await handle_planning_amount(update, context)
+        elif step == 'other_supplier_search':
             return await handle_supplier_search_input(update, context)
-        # ------------------------
-    elif step == 'other_supplier_name': # Эта ветка может остаться для обратной совместимости
-        supplier_name = update.message.text
-        target_date_str = user_data['planning']['date']
-        user_data['planning'].update({'supplier': supplier_name, 'step': 'amount'})
-        await update.message.reply_text(
-            f"💰 Введите примерную сумму для <b>{supplier_name}</b> на {target_date_str} (в гривнах):",
-            parse_mode=ParseMode.HTML
-        )
-        return
+        elif step == 'other_supplier_name': 
+            supplier_name = update.message.text
+            target_date_str = user_data['planning']['date']
+            user_data['planning'].update({'supplier': supplier_name, 'step': 'amount'})
+            await update.message.reply_text(
+                f"💰 Введите примерную сумму для <b>{supplier_name}</b> на {target_date_str} (в гривнах):",
+                parse_mode=ParseMode.HTML
+            )
+            return
 
     elif state_key == 'edit_plan':
         if user_data['edit_plan'].get('field') == 'amount':
@@ -5775,6 +5761,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb.append([InlineKeyboardButton("🔙 Назад", callback_data="debts_menu")])
             await update.message.reply_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
         return
+        
 
     elif state_key == 'safe_op':
         if user_data['safe_op'].get('step') == 'amount': return await handle_safe_amount(update, context)
@@ -5788,12 +5775,12 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_data['repay'].get('step') == 'amount': return await repay_debt(update, context)
 
     elif state_key == 'shift':
-        if user_data['shift'].get('step') == 'date': await handle_shift_date(update, context)
+        if user_data['shift'].get('step') == 'date': return await handle_shift_date(update, context)
 
     elif state_key == 'report_period':
         step = user_data['report_period'].get('step')
         if step == 'start_date': return await handle_report_start_date(update, context)
-    elif step == 'end_date': return await handle_report_end_date(update, context)
+        elif step == 'end_date': return await handle_report_end_date(update, context)
 
 
             
@@ -5831,6 +5818,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
              await query.message.edit_text("📈 Аналитика", reply_markup=analytics_menu_kb())
         elif data == "staff_settings_menu":
             await query.message.edit_text("⚙️ Персональные настройки:", reply_markup=staff_settings_menu_kb())
+
         
         
         
