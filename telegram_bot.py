@@ -62,6 +62,25 @@ def push_nav(context, target):
     context.user_data['nav_stack'] = stack
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+def generate_due_date_buttons() -> InlineKeyboardMarkup:
+    """Создает клавиатуру с выбором даты на 2 недели вперед."""
+    kb = []
+    today = dt.date.today()
+    
+    # Создаем кнопки на 14 дней, начиная с завтра
+    for i in range(1, 15):
+        target_date = today + dt.timedelta(days=i)
+        date_str = sdate(target_date)
+        # Добавляем день недели для удобства
+        day_name = DAYS_OF_WEEK_RU[target_date.weekday()][:2].capitalize() # Пн, Вт, Ср...
+        
+        button_text = f"{day_name}, {date_str}"
+        kb.append([InlineKeyboardButton(button_text, callback_data=f"due_date_select_{date_str}")])
+        
+    kb.append([InlineKeyboardButton("❌ Отмена", callback_data="suppliers_menu")])
+    return InlineKeyboardMarkup(kb)
+
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 def generate_sales_trend_chart(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> io.BytesIO | None:
     """Собирает данные о продажах и рисует линейный график динамики."""
     from matplotlib.ticker import FuncFormatter
@@ -4883,10 +4902,12 @@ async def handle_supplier_pay_type(update: Update, context: ContextTypes.DEFAULT
         return
 
     elif pay_type == "Долг":
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+        # Вместо запроса текста показываем календарь
         context.user_data['supplier']['step'] = 'due_date'
         await query.message.edit_text(
-            "📅 Введите дату погашения долга (ДД.ММ.ГГГГ):",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]])
+            "📅 Выберите дату погашения долга:",
+            reply_markup=generate_due_date_buttons()
         )
     else: # Для наличных
         context.user_data['supplier']['step'] = 'comment'
@@ -4899,6 +4920,7 @@ async def handle_supplier_pay_type(update: Update, context: ContextTypes.DEFAULT
         )
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_card_payment_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает выбор между фактической оплатой картой и долгом по карте."""
     query = update.callback_query
@@ -4906,16 +4928,17 @@ async def handle_card_payment_choice(update: Update, context: ContextTypes.DEFAU
     choice = query.data
 
     if choice == 'card_pay_actual':
-        # Если это фактическая оплата, просто переходим к комментарию
-        context.user_data['supplier']['payment_type'] = 'Карта'
-        context.user_data['supplier']['step'] = 'comment'
+        # ... (переход к комментарию без изменений)
+    elif choice == 'card_pay_debt':
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+        # Вместо запроса текста показываем календарь
+        context.user_data['supplier']['payment_type'] = 'Долг (Карта)'
+        context.user_data['supplier']['step'] = 'due_date'
         await query.message.edit_text(
-            "📝 Добавьте комментарий (или нажмите 'Пропустить'):",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⏭ Пропустить", callback_data="skip_comment_supplier")],
-                [InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]
-            ])
+            "📅 Выберите дату погашения долга (Карта):",
+            reply_markup=generate_due_date_buttons()
         )
+    
     elif choice == 'card_pay_debt':
         # Если это долг, меняем тип оплаты и запрашиваем дату
         context.user_data['supplier']['payment_type'] = 'Долг (Карта)'
@@ -4924,6 +4947,26 @@ async def handle_card_payment_choice(update: Update, context: ContextTypes.DEFAU
             "📅 Введите дату погашения долга (ДД.ММ.ГГГГ):",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]])
         )
+
+async def handle_due_date_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохраняет выбранную из календаря дату долга и переходит к комментарию."""
+    query = update.callback_query
+    await query.answer()
+    
+    date_str = query.data.split('_')[-1]
+    # Сохраняем дату как объект datetime.date
+    context.user_data['supplier']['due_date'] = pdate(date_str)
+    context.user_data['supplier']['step'] = 'comment'
+    
+    await query.message.edit_text(
+        f"✅ Срок долга установлен на: {date_str}\n\n"
+        "📝 Теперь добавьте комментарий (или нажмите 'Пропустить'):",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⏭ Пропустить", callback_data="skip_comment_supplier")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]
+        ])
+    )
+
 
 async def handle_supplier_due_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -5906,6 +5949,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.edit_text("⚙️ Персональные настройки:", reply_markup=staff_settings_menu_kb())
         elif data.startswith("dir_add_new_sup_"):
             await add_new_supplier_and_start_invoice(update, context)
+        elif data.startswith("due_date_select_"):
+            await handle_due_date_selection(update, context)
         
         
         # --- 2. ПЛАНИРОВАНИЕ ---
