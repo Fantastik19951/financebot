@@ -4967,23 +4967,6 @@ async def handle_due_date_selection(update: Update, context: ContextTypes.DEFAUL
         ])
     )
 
-
-async def handle_supplier_due_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        due_date = pdate(update.message.text)
-        context.user_data['supplier']['due_date'] = due_date
-        context.user_data['supplier']['step'] = 'comment'
-        await update.message.reply_text(
-            "📝 Добавьте комментарий (или нажмите 'Пропустить'):",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⏭ Пропустить", callback_data="skip_comment_supplier")],
-                [InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]
-            ])
-        )
-    except ValueError:
-        await update.message.reply_text("❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ")
-
-
 async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сохраняет накладную и корректно проводит все финансовые операции."""
     
@@ -5802,7 +5785,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif step == 'amount_income': return await handle_supplier_amount_income(update, context)
         elif step == 'writeoff': return await handle_supplier_writeoff(update, context)
         elif step == 'invoice_total_markup': return await handle_supplier_invoice_total_markup(update, context)
-        elif step == 'due_date': return await handle_supplier_due_date(update, context)
         elif step == 'comment': return await save_supplier(update, context)
 
     elif state_key == 'expense':
