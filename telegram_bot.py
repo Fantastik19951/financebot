@@ -4888,57 +4888,69 @@ async def view_repayable_debts(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_index: int):
-    """Окончательно закрывает долг, НЕ трогая сейф при погашении долга по карте."""
-    query = update.callback_query
+    """
+    Окончательно закрывает долг с защитой от двойного нажатия 
+    и промежуточным сообщением о статусе.
+    """
+    # --- НАЧАЛО БЛОКА ЗАЩИТЫ ---
+    if context.user_data.get('is_processing_payment', False):
+        await update.callback_query.answer("⏳ Операция уже выполняется, пожалуйста, подождите...", show_alert=True)
+        return
+    context.user_data['is_processing_payment'] = True
     
+    query = update.callback_query
+    # Сразу отправляем пользователю обратную связь
+    await query.message.edit_text("⏳ Происходит погашение долга...")
+    # --- КОНЕЦ БЛОКА ЗАЩИТЫ ---
+
     try:
         ws_debts = GSHEET.worksheet(SHEET_DEBTS)
         debt_row = ws_debts.row_values(row_index)
         
+        # Проверяем, не был ли долг уже погашен другим запросом
+        if len(debt_row) > 6 and debt_row[6].strip().lower() == "да":
+            await query.answer("Этот долг уже погашен.", show_alert=True)
+            await view_repayable_debts(update, context)
+            return
+
         date_created = debt_row[0]
         supplier_name = debt_row[1]
-        total_to_pay = float(debt_row[4].replace(',', '.')) # Погашаем остаток
-        
-        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Проверяем тип оплаты долга ---
-        # Столбец H (индекс 7) в таблице "Долги" - Тип оплаты
+        total_to_pay = parse_float(debt_row[4])
         payment_method = debt_row[7] if len(debt_row) > 7 else "Наличные"
 
-        # 1. Списываем деньги из сейфа, ТОЛЬКО если это не карточный долг
         if payment_method != "Карта":
-            who = query.from_user.first_name
+            who = USER_ID_TO_NAME.get(str(query.from_user.id), query.from_user.first_name)
             comment = f"Оплата долга {supplier_name} за {date_created}"
             add_safe_operation("Расход", total_to_pay, comment, who)
         else:
             logging.info(f"Погашение карточного долга для {supplier_name}. Сейф не затронут.")
 
-        # 2. Закрываем долг в листе "Долги"
-        current_paid = float(debt_row[3].replace(',', '.'))
-        ws_debts.update_cell(row_index, 4, current_paid + total_to_pay) # Оплачено
-        ws_debts.update_cell(row_index, 5, 0) # Остаток
-        ws_debts.update_cell(row_index, 7, "Да") # Погашено
+        # Закрываем долг в листе "Долги"
+        current_paid = parse_float(debt_row[3])
+        ws_debts.update_cell(row_index, 4, current_paid + total_to_pay)
+        ws_debts.update_cell(row_index, 5, 0)
+        ws_debts.update_cell(row_index, 7, "Да")
         
-        # 3. Обновляем статус в листе "Поставщики"
+        # Обновляем статус в листе "Поставщики"
         ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
-        sup_rows = ws_sup.get_all_values()[1:]
+        sup_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []
         for i, sup_row in enumerate(sup_rows, start=2):
-            # Ищем накладную по дате и поставщику
             if len(sup_row) > 8 and sup_row[0] == date_created and sup_row[1] == supplier_name:
-                # Обновляем столбцы: Оплачено(H,8), Долг(I,9), Срок(J,10), История(M,13)
                 ws_sup.update_cell(i, 8, "Да")
                 ws_sup.update_cell(i, 9, 0)
-                ws_sup.update_cell(i, 10, "") # Очищаем срок долга
+                ws_sup.update_cell(i, 10, "")
                 history_comment = f"Погашен {sdate()}; "
                 old_history = ws_sup.cell(i, 13).value or ""
                 ws_sup.update_cell(i, 13, old_history + history_comment)
-                logging.info(f"Обновлен статус долга в Поставщиках для строки {i}")
                 break
 
-        # Сбрасываем кэши измененных таблиц
+        # Сбрасываем кэши
         if 'sheets_cache' in context.bot_data:
-            context.bot_data['sheets_cache'].pop(SHEET_DEBTS, None)
-            context.bot_data['sheets_cache'].pop(SHEET_SUPPLIERS, None)
-            context.bot_data['sheets_cache'].pop("Сейф", None)
+            context.bot_data.pop(SHEET_DEBTS, None)
+            context.bot_data.pop(SHEET_SUPPLIERS, None)
+            context.bot_data.pop("Сейф", None)
         
         await query.answer(f"✅ Долг для {supplier_name} успешно закрыт!", show_alert=True)
         # Показываем обновленный список долгов
@@ -4947,6 +4959,10 @@ async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_in
     except Exception as e:
         logging.error(f"Ошибка финального погашения долга: {e}", exc_info=True)
         await query.answer(f"❌ Ошибка обновления таблицы: {e}", show_alert=True)
+    
+    finally:
+        # --- Снимаем блокировку в любом случае ---
+        context.user_data.pop('is_processing_payment', None)
         
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def view_debts_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
