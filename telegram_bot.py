@@ -4804,7 +4804,7 @@ async def add_new_supplier_and_start_invoice(update: Update, context: ContextTyp
         f"✅ Поставщик '<b>{new_supplier_name}</b>' добавлен.\n\n"
         f"💰 Теперь введите сумму прихода по накладной:",
         parse_mode=ParseMode.HTML
-    )elif state_key == 'supplier'
+    )
 
 async def handle_supplier_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['supplier']['name'] = update.message.text
