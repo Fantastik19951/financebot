@@ -424,11 +424,19 @@ def week_range(date=None):
     end = start + dt.timedelta(days=6)
     return start, end
 
-def get_all_supplier_names(context: ContextTypes.DEFAULT_TYPE) -> list[str]:
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+def get_all_supplier_names(context: ContextTypes.DEFAULT_TYPE, force_update: bool = False) -> list[str]:
     """Читает и кэширует полный список поставщиков из справочника."""
     sheet_name = "СправочникПоставщиков"
-    # Используем кэш, но с большим сроком жизни (например, 1 час), т.к. справочник меняется редко.
-    cached_data = get_cached_sheet_data(context, sheet_name, cache_duration_seconds=3600)
+    
+    # ИСПРАВЛЕНИЕ: Передаем аргумент force_update дальше в основную функцию кэширования
+    cached_data = get_cached_sheet_data(
+        context, 
+        sheet_name, 
+        cache_duration_seconds=3600, 
+        force_update=force_update
+    )
+    
     if cached_data:
         # Извлекаем только первое значение из каждой строки (название)
         return [row[0] for row in cached_data if row and row[0]]
