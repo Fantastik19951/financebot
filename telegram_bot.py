@@ -5723,7 +5723,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                  f"💰 Введите примерную сумму для <b>{supplier_name}</b> на {target_date_str} (в гривнах):",
                  parse_mode=ParseMode.HTML
              )
-            return
+             return
 
     elif state_key == 'edit_plan':
         if user_data['edit_plan'].get('field') == 'amount':
