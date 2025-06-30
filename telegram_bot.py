@@ -424,6 +424,17 @@ def week_range(date=None):
     end = start + dt.timedelta(days=6)
     return start, end
 
+def get_all_supplier_names(context: ContextTypes.DEFAULT_TYPE) -> list[str]:
+    """Читает и кэширует полный список поставщиков из справочника."""
+    sheet_name = "СправочникПоставщиков"
+    # Используем кэш, но с большим сроком жизни (например, 1 час), т.к. справочник меняется редко.
+    cached_data = get_cached_sheet_data(context, sheet_name, cache_duration_seconds=3600)
+    if cached_data:
+        # Извлекаем только первое значение из каждой строки (название)
+        return [row[0] for row in cached_data if row and row[0]]
+    return []
+
+
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 def clear_conversation_state(context: ContextTypes.DEFAULT_TYPE):
     """Очищает все возможные ключи состояния диалога из user_data, используя глобальный список."""
@@ -2417,33 +2428,32 @@ async def show_single_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
     
 # 2. Выбор поставщика из списка или ввод нового
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_planning_supplier_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    # Новый формат: plan_sup_ДАТА_ИмяПоставщика или plan_sup_ДАТА_other
     parts = query.data.split('_', 3)
     target_date_str = parts[2]
     supplier_name = parts[3]
     
-    # Сохраняем дату в состояние планирования
-    context.user_data['planning'] = {
-        'date': target_date_str
-    }
+    context.user_data['planning'] = {'date': target_date_str}
     
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
     if supplier_name == "other":
-        context.user_data['planning']['step'] = 'other_supplier_name'
+        # Запускаем режим поиска
+        context.user_data['planning']['step'] = 'other_supplier_search'
         await query.message.edit_text(
-            f"✍️ Введите имя внепланового поставщика на {target_date_str}:",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="planning")]])
+            "✍️ Начните вводить имя или часть имени поставщика для поиска:",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data=f"plan_nav_{target_date_str}")]])
         )
     else:
-        # Сохраняем выбранного поставщика и переходим к вводу суммы
+        # Этот блок для кнопок из результатов поиска и кнопок по графику
         context.user_data['planning']['supplier'] = supplier_name
         context.user_data['planning']['step'] = 'amount'
         await query.message.edit_text(
             f"💰 Введите примерную сумму для <b>{supplier_name}</b> на {target_date_str} (в гривнах):",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="planning")]]),
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data=f"plan_nav_{target_date_str}")]]),
             parse_mode=ParseMode.HTML
         )
         
@@ -2520,7 +2530,86 @@ async def start_revision(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML)
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+async def handle_supplier_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Принимает поисковый запрос, ищет совпадения и предлагает их в виде кнопок или добавления нового."""
+    search_query = update.message.text.strip()
+    planning_data = context.user_data.get('planning', {})
+    target_date_str = planning_data.get('date')
 
+    if not target_date_str:
+        await update.message.reply_text("❌ Ошибка: утеряна дата планирования. Начните заново.")
+        clear_conversation_state(context)
+        return
+
+    all_suppliers = get_all_supplier_names(context)
+    matches = [name for name in all_suppliers if search_query.lower() in name.lower()]
+
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+    if not matches:
+        # Если совпадений нет, предлагаем добавить нового
+        kb = [
+            [InlineKeyboardButton(f"✅ Да, добавить '{search_query}'", callback_data=f"add_new_supplier_{target_date_str}_{search_query}")],
+            [InlineKeyboardButton("❌ Нет, попробовать снова", callback_data=f"plan_sup_{target_date_str}_other")]
+        ]
+        await update.message.reply_text(
+            f"🤷‍♂️ Поставщик с названием '<b>{search_query}</b>' не найден.\n\nХотите добавить его в справочник и продолжить?",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+        return
+    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
+    kb = []
+    for name in matches[:20]:
+        kb.append([InlineKeyboardButton(name, callback_data=f"plan_sup_{target_date_str}_{name}")])
+    
+    kb.append([InlineKeyboardButton("❌ Отмена", callback_data="planning")])
+    
+    await update.message.reply_text(
+        "Вот что удалось найти. Выберите правильный вариант:",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
+
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+async def add_new_supplier_to_directory(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Добавляет нового поставщика в справочник и переходит к вводу суммы."""
+    query = update.callback_query
+    await query.answer()
+
+    # Формат: add_new_supplier_ДАТА_ИмяНовогоПоставщика
+    try:
+        parts = query.data.split('_', 3)
+        target_date_str = parts[3]
+        new_supplier_name = parts[4]
+    except IndexError:
+        return await query.message.edit_text("❌ Ошибка: не удалось получить имя нового поставщика.")
+
+    # Добавляем в таблицу
+    try:
+        ws = GSHEET.worksheet("СправочникПоставщиков")
+        ws.append_row([new_supplier_name])
+        # Принудительно обновляем кэш со списком поставщиков
+        get_all_supplier_names(context, force_update=True)
+        logging.info(f"Новый поставщик '{new_supplier_name}' добавлен в справочник.")
+    except Exception as e:
+        logging.error(f"Ошибка добавления нового поставщика в справочник: {e}")
+        return await query.message.edit_text(f"❌ Не удалось сохранить нового поставщика: {e}")
+
+    # Продолжаем диалог добавления накладной
+    context.user_data['planning'] = {
+        'date': target_date_str,
+        'supplier': new_supplier_name,
+        'step': 'amount'
+    }
+    await query.message.edit_text(
+        f"✅ Поставщик '<b>{new_supplier_name}</b>' добавлен в справочник.\n\n"
+        f"💰 Теперь введите примерную сумму для него на {target_date_str}:",
+        parse_mode=ParseMode.HTML
+    )
+    
 async def handle_revision_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает ввод фактического остатка и запрашивает комментарий."""
     try:
@@ -4788,74 +4877,66 @@ async def handle_supplier_due_date(update: Update, context: ContextTypes.DEFAULT
 
 async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сохраняет накладную и корректно проводит все финансовые операции."""
-
-    # --- НАЧАЛО БЛОКА ИЗМЕНЕНИЙ ---
-    # 1. Определяем, откуда пришел запрос (кнопка или текст)
     query = update.callback_query
     message = query.message if query else update.message
-
-    # 2. Отправляем или редактируем сообщение, чтобы показать статус
-    processing_message = None
+    
     if query:
         await query.answer()
-        await query.message.edit_text("⏳ Накладная в процессе создания...")
-        processing_message = query.message
+    
+    if 'supplier' not in context.user_data:
+        await message.edit_text(
+            "❌ Ошибка: сессия добавления накладной утеряна. Пожалуйста, начните заново.", 
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")]])
+        )
+        return
+
+    supplier_data = context.user_data['supplier']
+
+    if query and query.data == "skip_comment_supplier":
+        supplier_data['comment'] = ""
+    elif not query:
+        supplier_data['comment'] = update.message.text
+
+    required_keys = ['name', 'amount_income', 'writeoff', 'invoice_total_markup', 'payment_type']
+    if not all(key in supplier_data for key in required_keys):
+        await message.reply_text("❌ Ошибка: не все данные накладной были введены. Пожалуйста, начните заново.", reply_markup=suppliers_menu_kb())
+        context.user_data.pop('supplier', None)
+        return
+
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+    # Получаем и объект user, и его имя из нашего справочника
+    user = update.effective_user
+    who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
+    # -----------------------
+    
+    pay_type = supplier_data['payment_type']
+    amount_income = parse_float(supplier_data['amount_income'])
+    amount_writeoff = parse_float(supplier_data.get('writeoff', 0))
+    invoice_total_markup = parse_float(supplier_data['invoice_total_markup'])
+    sum_to_pay = amount_income - amount_writeoff
+    
+    paid_status = "Нет"
+    debt_amount = 0
+    due_date = ""
+
+    if pay_type.startswith("Долг"):
+        debt_amount = sum_to_pay
+        due_date_obj = supplier_data.get('due_date')
+        due_date = sdate(due_date_obj) if due_date_obj else ""
     else:
-        processing_message = await update.message.reply_text("⏳ Накладная в процессе создания...")
-    # --- КОНЕЦ БЛОКА ИЗМЕНЕНИЙ ---
-
-    # Вся ваша остальная логика остается внутри блока try
+        paid_status = "Да"
+        if pay_type == "Наличные":
+            comment_for_safe = f"Оплата поставщику: {supplier_data['name']}"
+            # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Передаем полный объект user ---
+            add_safe_operation(user, "Расход", sum_to_pay, comment_for_safe)
+            
+    row_to_save = [
+        sdate(), supplier_data['name'], amount_income, amount_writeoff, sum_to_pay,
+        invoice_total_markup, pay_type, paid_status, debt_amount, due_date, 
+        supplier_data.get('comment', ''), who, ""
+    ]
+    
     try:
-        if 'supplier' not in context.user_data:
-            await processing_message.edit_text( # Используем processing_message
-                "❌ Ошибка: сессия добавления накладной утеряна. Пожалуйста, начните заново.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")]])
-            )
-            return
-
-        supplier_data = context.user_data['supplier']
-
-        if query and query.data == "skip_comment_supplier":
-            supplier_data['comment'] = ""
-        elif not query:
-            supplier_data['comment'] = update.message.text
-
-        required_keys = ['name', 'amount_income', 'writeoff', 'invoice_total_markup', 'payment_type']
-        if not all(key in supplier_data for key in required_keys):
-            await processing_message.edit_text( # Используем processing_message
-                "❌ Ошибка: не все данные накладной были введены. Пожалуйста, начните заново.", 
-                reply_markup=suppliers_menu_kb()
-            )
-            context.user_data.pop('supplier', None)
-            return
-
-        # --- НАЧАЛО ВАШЕЙ РАБОЧЕЙ ЛОГИКИ (БЕЗ ИЗМЕНЕНИЙ) ---
-        pay_type = supplier_data['payment_type']
-        who = USER_ID_TO_NAME.get(str(update.effective_user.id), update.effective_user.first_name) # Используем ID
-
-        amount_income = parse_float(supplier_data['amount_income'])
-        amount_writeoff = parse_float(supplier_data.get('writeoff', 0))
-        invoice_total_markup = parse_float(supplier_data['invoice_total_markup'])
-        sum_to_pay = amount_income - amount_writeoff
-        
-        paid_status, debt_amount, due_date = "Нет", 0, ""
-
-        if pay_type.startswith("Долг"):
-            debt_amount = sum_to_pay
-            due_date_obj = supplier_data.get('due_date')
-            due_date = sdate(due_date_obj) if due_date_obj else ""
-        else:
-            paid_status = "Да"
-            if pay_type == "Наличные":
-                comment_for_safe = f"Оплата поставщику: {supplier_data['name']} ({pay_type})"
-                add_safe_operation("Расход", sum_to_pay, comment_for_safe, who)
-        
-        row_to_save = [
-            sdate(), supplier_data['name'], amount_income, amount_writeoff, sum_to_pay,
-            invoice_total_markup, pay_type, paid_status, debt_amount, due_date, 
-            supplier_data.get('comment', ''), who, ""
-        ]
-        
         ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
         ws_sup.append_row(row_to_save)
 
@@ -5640,22 +5721,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Этого не должно происходить, но на всякий случай
             await update.message.reply_text("Пожалуйста, используйте кнопки.")
         return
-        
-    # ... (остальные elif в handle_text)
-
 
     elif state_key == 'planning':
         step = user_data['planning'].get('step')
         if step == 'amount': return await handle_planning_amount(update, context)
-        elif step == 'other_supplier_name':
-            supplier_name = update.message.text
-            target_date_str = user_data['planning']['date']
-            user_data['planning'].update({'supplier': supplier_name, 'step': 'amount'})
-            await update.message.reply_text(
-                f"💰 Введите примерную сумму для <b>{supplier_name}</b> на {target_date_str} (в гривнах):",
-                parse_mode=ParseMode.HTML
-            )
-            return
+        # --- ДОБАВЬТЕ ЭТОТ БЛОК ---
+        elif step == 'other_supplier_search':
+            return await handle_supplier_search_input(update, context)
+        # ------------------------
+        elif step == 'other_supplier_name': # Эта ветка может остаться для обратной совместимости
+            # ...
 
     elif state_key == 'edit_plan':
         if user_data['edit_plan'].get('field') == 'amount':
@@ -5765,6 +5840,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.answer("❌ Ошибка удаления", show_alert=True)
             # Обновляем меню планирования для того же дня
             await start_planning(update, context, target_date=pdate(date_str))
+
+        elif data.startswith("add_new_supplier_"):
+            await add_new_supplier_to_directory(update, context)
         
         elif data.startswith("plan_sup_"): await handle_planning_supplier_choice(update, context)
         elif data.startswith("plan_pay_"): await handle_planning_pay_type(update, context)
