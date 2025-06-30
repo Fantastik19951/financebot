@@ -2177,7 +2177,7 @@ async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, tar
     else:
         # --- НОВАЯ ЛОГИКА: ОДНА КНОПКА НА ОДНОГО ПОСТАВЩИКА ---
         for item in planned_data:
-            details = f"{item['supplier']} - {item['amount']}₴ ({item['pay_type']})"
+            details = f"✏️{item['supplier']} - {item['amount']}₴ ({item['pay_type']})"
             # Эта кнопка теперь ведет в меню действий
             kb.append([InlineKeyboardButton(details, callback_data=f"plan_select_{item['row_index']}")])
 
