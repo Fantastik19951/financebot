@@ -5799,7 +5799,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif state_key == 'report_period':
         step = user_data['report_period'].get('step')
         if step == 'start_date': return await handle_report_start_date(update, context)
-        elif step == 'end_date': return await handle_report_end_date(update, context)
+    elif step == 'end_date': return await handle_report_end_date(update, context)
 
 
             
