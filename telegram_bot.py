@@ -62,8 +62,9 @@ def push_nav(context, target):
     context.user_data['nav_stack'] = stack
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 def generate_due_date_buttons() -> InlineKeyboardMarkup:
-    """Создает клавиатуру с выбором даты на 2 недели вперед."""
+    """Создает клавиатуру с выбором даты на 2 недели вперед с полными названиями дней."""
     kb = []
     today = dt.date.today()
     
@@ -71,15 +72,15 @@ def generate_due_date_buttons() -> InlineKeyboardMarkup:
     for i in range(1, 15):
         target_date = today + dt.timedelta(days=i)
         date_str = sdate(target_date)
-        # Добавляем день недели для удобства
-        day_name = DAYS_OF_WEEK_RU[target_date.weekday()][:2].capitalize() # Пн, Вт, Ср...
+        
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Убираем сокращение [:2] ---
+        day_name = DAYS_OF_WEEK_RU[target_date.weekday()].capitalize()
         
         button_text = f"{day_name}, {date_str}"
         kb.append([InlineKeyboardButton(button_text, callback_data=f"due_date_select_{date_str}")])
         
     kb.append([InlineKeyboardButton("❌ Отмена", callback_data="suppliers_menu")])
     return InlineKeyboardMarkup(kb)
-
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 def generate_sales_trend_chart(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> io.BytesIO | None:
     """Собирает данные о продажах и рисует линейный график динамики."""
