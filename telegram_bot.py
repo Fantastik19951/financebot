@@ -129,6 +129,16 @@ def sales_trend_period_kb():
         [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
     ])
 
+def abc_analysis_period_kb():
+    """Клавиатура для выбора периода для ABC-анализа."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("30 дней", callback_data="abc_period_30"),
+            InlineKeyboardButton("90 дней", callback_data="abc_period_90"),
+            InlineKeyboardButton("Год", callback_data="abc_period_365")
+        ],
+        [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
+    ])
 
 # --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
 
@@ -280,11 +290,52 @@ def generate_expense_pie_chart(context: ContextTypes.DEFAULT_TYPE, start_date: d
     plt.close(fig)
     return buf
 
-# --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+def perform_abc_analysis(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> dict | None:
+    """Проводит ABC-анализ поставщиков по сумме закупок за период."""
+    suppliers_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+    if not suppliers_rows:
+        return None
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+    # 1. Суммируем закупки по каждому поставщику за период
+    supplier_totals = defaultdict(float)
+    for row in suppliers_rows:
+        try:
+            sup_date = pdate(row[0])
+            if sup_date and start_date <= sup_date <= end_date:
+                supplier_name = row[1].strip()
+                amount_to_pay = parse_float(row[4])
+                supplier_totals[supplier_name] += amount_to_pay
+        except (ValueError, IndexError):
+            continue
+
+    if not supplier_totals:
+        return None
+
+    # 2. Сортируем поставщиков по убыванию суммы закупок
+    sorted_suppliers = sorted(supplier_totals.items(), key=lambda item: item[1], reverse=True)
+    
+    grand_total = sum(supplier_totals.values())
+
+    # 3. Разделяем на группы A, B, C
+    group_a, group_b, group_c = [], [], []
+    cumulative_percentage = 0.0
+
+    for name, total in sorted_suppliers:
+        percentage = (total / grand_total) * 100
+        cumulative_percentage += percentage
+        
+        supplier_info = f"<b>{name}</b>: {total:,.2f}₴ ({percentage:.1f}%)".replace(',', ' ')
+        
+        if cumulative_percentage <= 75: # Группа A - ~75% оборота
+            group_a.append(supplier_info)
+        elif cumulative_percentage <= 95: # Группа B - следующие ~20%
+            group_b.append(supplier_info)
+        else: # Группа C - оставшиеся
+            group_c.append(supplier_info)
+            
+    return {'A': group_a, 'B': group_b, 'C': group_c, 'total': grand_total}
+    
 async def show_expense_pie_chart_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает меню выбора периода для отчета по расходам."""
     query = update.callback_query
@@ -1512,7 +1563,47 @@ async def handle_analytics_start_date(update: Update, context: ContextTypes.DEFA
         await update.message.reply_text(f"Начальная дата: {sdate(start_date)}\n\nТеперь введите конечную дату (ДД.ММ.ГГГГ):")
     except (ValueError, TypeError):
         await update.message.reply_text("❌ Неверный формат даты. Введите ДД.ММ.ГГГГ")
+async def show_abc_analysis_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню выбора периода для ABC-анализа."""
+    query = update.callback_query
+    await query.message.edit_text(
+        "📦 Пожалуйста, выберите период для проведения ABC-анализа поставщиков:",
+        reply_markup=abc_analysis_period_kb()
+    )
 
+async def process_abc_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запускает ABC-анализ и отправляет отформатированный результат."""
+    query = update.callback_query
+    await query.message.edit_text("⏳ Провожу анализ, это может занять минуту...")
+
+    days = int(query.data.split('_')[-1])
+    end_date = dt.date.today()
+    start_date = end_date - dt.timedelta(days=days - 1)
+
+    analysis_result = perform_abc_analysis(context, start_date, end_date)
+
+    if not analysis_result:
+        await query.message.edit_text("😔 Недостаточно данных для проведения анализа за этот период.", reply_markup=abc_analysis_period_kb())
+        return
+
+    msg = f"<b>📦 ABC-анализ Поставщиков</b>\n<i>за период {sdate(start_date)} - {sdate(end_date)}</i>\n\n"
+    msg += f"Общая сумма закупок: <b>{analysis_result['total']:,.2f}₴</b>\n".replace(',', ' ')
+    
+    msg += "\n🅰️ <b>Группа А (Ключевые поставщики)</b>\n"
+    msg += "\n".join(f"  • {item}" for item in analysis_result['A']) or "  (нет)"
+    
+    msg += "\n\n🅱️ <b>Группа B (Важные поставщики)</b>\n"
+    msg += "\n".join(f"  • {item}" for item in analysis_result['B']) or "  (нет)"
+    
+    msg += "\n\n🅾️ <b>Группа C (Второстепенные поставщики)</b>\n"
+    msg += "\n".join(f"  • {item}" for item in analysis_result['C']) or "  (нет)"
+
+    await query.message.edit_text(
+        msg, 
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_abc_suppliers")]])
+    )
+    
 async def handle_analytics_end_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает конечную дату и запускает генерацию нужного отчета."""
     try:
@@ -5583,6 +5674,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_sales_trend_menu(update, context)
         elif data.startswith("sales_trend_period_"):
             await process_sales_trend_period(update, context)
+         elif data == "analytics_abc_suppliers":
+            await show_abc_analysis_menu(update, context)
+        elif data.startswith("abc_period_"):
+            await process_abc_analysis(update, context)
         
         # --- 9. ДОЛГИ ---
         elif data.startswith("current_debts_"):
