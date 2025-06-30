@@ -5732,7 +5732,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif step == 'other_supplier_name': # Эта ветка может остаться для обратной совместимости
             # ...
 
-    elif state_key == 'edit_plan':
+     elif state_key == 'edit_plan':
         if user_data['edit_plan'].get('field') == 'amount':
             try:
                 await edit_plan_save_value(update, context, new_value=parse_float(text))
