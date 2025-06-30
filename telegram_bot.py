@@ -3216,6 +3216,34 @@ async def show_my_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=staff_settings_menu_kb())
 
+async def show_my_salary(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает пользователю его персональную детализацию по ЗП."""
+    query = update.callback_query
+    await query.message.edit_text("💰 Собираю данные по вашей зарплате...")
+
+    user_id = str(query.from_user.id)
+    user_name = USER_ID_TO_NAME.get(user_id)
+    
+    if not user_name:
+        return await query.message.edit_text("❌ Вашего ID нет в базе пользователей.", reply_markup=staff_settings_menu_kb())
+
+    salary_data = calculate_detailed_salary(context, user_name)
+
+    msg = (
+        f"<b>💰 Детализация зарплаты для {user_name}</b>\n"
+        f"<i>Период: {salary_data['start']} - {salary_data['end']}</i>\n"
+        "────────────────────────\n"
+        f"▫️ Отработано смен: {salary_data['shifts']}\n"
+        f"▫️ Начислено (ставка): {salary_data['base_pay']:,.2f}₴\n"
+        f"▫️ Начислено (премии): {salary_data['bonus_pay']:,.2f}₴\n"
+        "────────────────────────\n"
+        f"📈 <b>Итого начислено: {salary_data['total_accrued']:,.2f}₴</b>\n"
+        f"➖ Выплачено бонусов: {salary_data['paid_out']:,.2f}₴\n\n"
+        f"✅ <b>К выплате: {salary_data['to_be_paid']:,.2f}₴</b>"
+    ).replace(',', ' ')
+
+    await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=staff_settings_menu_kb())
+
 async def handle_admin_expense_pay_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает тип оплаты и сохраняет расход."""
     query = update.callback_query
