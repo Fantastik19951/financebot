@@ -2137,7 +2137,7 @@ DAYS_OF_WEEK_RU = ["понедельник", "вторник", "среда", "ч
 # 1. Нажатие на кнопку "Планирование"
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ НА ИСПРАВЛЕННУЮ ВЕРСИЮ ---
 async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, target_date: dt.date = None):
-    """Показывает обновленное, чистое и компактное меню планирования."""
+    """Показывает чистое, одноуровневое меню планирования."""
     query = update.callback_query
     if query:
         await query.message.edit_text("⏳ Загружаю список поставщиков...")
@@ -2146,33 +2146,27 @@ async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, tar
     if target_date is None:
         target_date = today + dt.timedelta(days=1)
 
+    # ... (вся логика получения дат и данных остается прежней) ...
     target_date_str = sdate(target_date)
     day_of_week_name = DAYS_OF_WEEK_RU[target_date.weekday()]
-    
-    # Расширенный период планирования
     days_until_next_sunday = (6 - today.weekday()) + 7
     end_of_planning_period = today + dt.timedelta(days=days_until_next_sunday)
-    
-    # --- Получение данных ---
     scheduled_today = get_suppliers_for_day(day_of_week_name)
     planned_data = get_planned_suppliers(target_date_str)
     planned_names = {item['supplier'] for item in planned_data}
     unplanned_scheduled = [s for s in scheduled_today if s not in planned_names]
 
-    # --- Строим сообщение и клавиатуру ---
     header_text = f"🗓️  <b>ПЛАНИРОВАНИЕ НА {day_of_week_name.upper()}, {target_date_str}</b>"
-
     kb = []
+    
     # Навигация
     nav_row = []
     prev_day = target_date - dt.timedelta(days=1)
-    if prev_day >= today:
+    if prev_day >= today: # Можно смотреть/планировать на сегодня
         nav_row.append(InlineKeyboardButton("◀️ Пред. день", callback_data=f"plan_nav_{sdate(prev_day)}"))
-    
     next_day = target_date + dt.timedelta(days=1)
     if next_day <= end_of_planning_period:
         nav_row.append(InlineKeyboardButton("След. день ▶️", callback_data=f"plan_nav_{sdate(next_day)}"))
-    
     if nav_row:
         kb.append(nav_row)
     
@@ -2181,17 +2175,11 @@ async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, tar
     if not planned_data:
         kb.append([InlineKeyboardButton("(пусто)", callback_data="noop")])
     else:
+        # --- НОВАЯ ЛОГИКА: ОДНА КНОПКА НА ОДНОГО ПОСТАВЩИКА ---
         for item in planned_data:
-            # --- ИЗМЕНЕНИЕ ТОЛЬКО ЗДЕСЬ ---
-            # Сокращаем тип оплаты до одной буквы для компактности
-            pay_type_short = item['pay_type'][0] if item['pay_type'] else '?'
-            btn_text = f"✏️ {item['supplier']} ({item['amount']}₴, {pay_type_short})"
-            # -----------------------------
-            
-            kb.append([
-                InlineKeyboardButton(btn_text, callback_data=f"edit_plan_{item['row_index']}"),
-                InlineKeyboardButton("❌", callback_data=f"plan_delete_{item['row_index']}_{target_date_str}")
-            ])
+            details = f"{item['supplier']} - {item['amount']}₴ ({item['pay_type']})"
+            # Эта кнопка теперь ведет в меню действий
+            kb.append([InlineKeyboardButton(details, callback_data=f"plan_select_{item['row_index']}")])
 
     # Блок "Добавить по графику" (остается без изменений)
     kb.append([InlineKeyboardButton("--- 🚚 Добавить по графику ---", callback_data="noop")])
