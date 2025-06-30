@@ -4877,66 +4877,80 @@ async def handle_supplier_due_date(update: Update, context: ContextTypes.DEFAULT
 
 async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сохраняет накладную и корректно проводит все финансовые операции."""
+    
+    # --- НАЧАЛО БЛОКА: ЗАЩИТА И СТАТУС ---
+    if context.user_data.get('is_processing_supplier', False):
+        if update.callback_query:
+            await update.callback_query.answer("⏳ Операция уже выполняется...", show_alert=True)
+        return
+    context.user_data['is_processing_supplier'] = True
+
     query = update.callback_query
     message = query.message if query else update.message
+    processing_message = None
+    # --- КОНЕЦ БЛОКА ЗАЩИТЫ ---
     
-    if query:
-        await query.answer()
-    
-    if 'supplier' not in context.user_data:
-        await message.edit_text(
-            "❌ Ошибка: сессия добавления накладной утеряна. Пожалуйста, начните заново.", 
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")]])
-        )
-        return
-
-    supplier_data = context.user_data['supplier']
-
-    if query and query.data == "skip_comment_supplier":
-        supplier_data['comment'] = ""
-    elif not query:
-        supplier_data['comment'] = update.message.text
-
-    required_keys = ['name', 'amount_income', 'writeoff', 'invoice_total_markup', 'payment_type']
-    if not all(key in supplier_data for key in required_keys):
-        await message.reply_text("❌ Ошибка: не все данные накладной были введены. Пожалуйста, начните заново.", reply_markup=suppliers_menu_kb())
-        context.user_data.pop('supplier', None)
-        return
-
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-    # Получаем и объект user, и его имя из нашего справочника
-    user = update.effective_user
-    who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
-    # -----------------------
-    
-    pay_type = supplier_data['payment_type']
-    amount_income = parse_float(supplier_data['amount_income'])
-    amount_writeoff = parse_float(supplier_data.get('writeoff', 0))
-    invoice_total_markup = parse_float(supplier_data['invoice_total_markup'])
-    sum_to_pay = amount_income - amount_writeoff
-    
-    paid_status = "Нет"
-    debt_amount = 0
-    due_date = ""
-
-    if pay_type.startswith("Долг"):
-        debt_amount = sum_to_pay
-        due_date_obj = supplier_data.get('due_date')
-        due_date = sdate(due_date_obj) if due_date_obj else ""
-    else:
-        paid_status = "Да"
-        if pay_type == "Наличные":
-            comment_for_safe = f"Оплата поставщику: {supplier_data['name']}"
-            # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Передаем полный объект user ---
-            add_safe_operation(user, "Расход", sum_to_pay, comment_for_safe)
-            
-    row_to_save = [
-        sdate(), supplier_data['name'], amount_income, amount_writeoff, sum_to_pay,
-        invoice_total_markup, pay_type, paid_status, debt_amount, due_date, 
-        supplier_data.get('comment', ''), who, ""
-    ]
-    
+    # Оборачиваем всю вашу логику в try...finally
     try:
+        # --- НАЧАЛО БЛОКА: СООБЩЕНИЕ О ЗАГРУЗКЕ ---
+        if query:
+            await query.answer()
+            await query.message.edit_text("⏳ Накладная в процессе создания...")
+            processing_message = query.message
+        else:
+            processing_message = await update.message.reply_text("⏳ Накладная в процессе создания...")
+        # --- КОНЕЦ БЛОКА СООБЩЕНИЯ ---
+
+        if 'supplier' not in context.user_data:
+            await processing_message.edit_text(
+                "❌ Ошибка: сессия добавления накладной утеряна. Пожалуйста, начните заново.", 
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")]])
+            )
+            return
+
+        supplier_data = context.user_data['supplier']
+
+        if query and query.data == "skip_comment_supplier":
+            supplier_data['comment'] = ""
+        elif not query:
+            supplier_data['comment'] = update.message.text
+
+        required_keys = ['name', 'amount_income', 'writeoff', 'invoice_total_markup', 'payment_type']
+        if not all(key in supplier_data for key in required_keys):
+            await processing_message.edit_text( # Используем processing_message
+                "❌ Ошибка: не все данные накладной были введены. Пожалуйста, начните заново.",
+                reply_markup=suppliers_menu_kb()
+            )
+            return
+
+        # --- ВАША СУЩЕСТВУЮЩАЯ ЛОГИКА (БЕЗ ИЗМЕНЕНИЙ) ---
+        user = update.effective_user
+        who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
+        
+        pay_type = supplier_data['payment_type']
+        amount_income = parse_float(supplier_data['amount_income'])
+        amount_writeoff = parse_float(supplier_data.get('writeoff', 0))
+        invoice_total_markup = parse_float(supplier_data['invoice_total_markup'])
+        sum_to_pay = amount_income - amount_writeoff
+        
+        paid_status, debt_amount, due_date = "Нет", 0, ""
+
+        if pay_type.startswith("Долг"):
+            debt_amount = sum_to_pay
+            due_date_obj = supplier_data.get('due_date')
+            due_date = sdate(due_date_obj) if due_date_obj else ""
+        else:
+            paid_status = "Да"
+            if pay_type == "Наличные":
+                comment_for_safe = f"Оплата поставщику: {supplier_data['name']}"
+                add_safe_operation(user, "Расход", sum_to_pay, comment_for_safe)
+        
+        row_to_save = [
+            sdate(), supplier_data['name'], amount_income, amount_writeoff, sum_to_pay,
+            invoice_total_markup, pay_type, paid_status, debt_amount, due_date, 
+            supplier_data.get('comment', ''), who, ""
+        ]
+        
         ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
         ws_sup.append_row(row_to_save)
 
@@ -4975,17 +4989,17 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         kb = [[InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")]]
         
-        # Редактируем сообщение с результатом
         await processing_message.edit_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
         
-        context.user_data.pop('supplier', None)
-
     except Exception as e:
         error_msg = f"❌ Ошибка сохранения поставщика: {str(e)}"
-        await processing_message.edit_text(error_msg)
+        if processing_message:
+            await processing_message.edit_text(error_msg)
         logging.error(error_msg, exc_info=True)
+    
     finally:
-        # Очищаем состояние в любом случае
+        # --- Снимаем блокировку и очищаем состояние ---
+        context.user_data.pop('is_processing_supplier', None)
         context.user_data.pop('supplier', None)
             
 async def add_shift(update: Update, context: ContextTypes.DEFAULT_TYPE):
