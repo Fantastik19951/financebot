@@ -5729,10 +5729,23 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif step == 'other_supplier_search':
             return await handle_supplier_search_input(update, context)
         # ------------------------
-        elif step == 'other_supplier_name': # Эта ветка может остаться для обратной совместимости
-            # ...
+    elif step == 'other_supplier_name': # Эта ветка может остаться для обратной совместимости
+        supplier_name = update.message.text
+        target_date_str = user_data['planning']['date']
 
-     elif state_key == 'edit_plan':
+        user_data['planning'].update({'supplier': supplier_name, 'step': 'amount'})
+
+        await update.message.reply_text(
+
+            f"💰 Введите примерную сумму для <b>{supplier_name}</b> на {target_date_str} (в гривнах):",
+
+            parse_mode=ParseMode.HTML
+
+        )
+
+        return
+
+    elif state_key == 'edit_plan':
         if user_data['edit_plan'].get('field') == 'amount':
             try:
                 await edit_plan_save_value(update, context, new_value=parse_float(text))
