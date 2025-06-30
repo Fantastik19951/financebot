@@ -959,11 +959,22 @@ def build_debts_history_keyboard(rows, page=0, per_page=10):
 
 
 # --- ОСТАТОК МАГАЗИНА, ПЕРЕУЧЕТЫ И СЕЙФ ---
-def add_safe_operation(op_type, amount, comment, user):
-    ws = GSHEET.worksheet("Сейф")
-    ws.append_row([sdate(), op_type, amount, comment, user])
+def add_safe_operation(user: Update.effective_user, op_type: str, amount: float, comment: str):
+    """Добавляет операцию в сейф и немедленно логирует это действие."""
+    user_name = USER_ID_TO_NAME.get(str(user.id), user.first_name)
     
-       
+    # Сначала выполняем основное действие
+    ws = GSHEET.worksheet("Сейф")
+    ws.append_row([sdate(), op_type, amount, comment, user_name])
+    
+    # --- ДОБАВЛЕНА ЛОГИКА ---
+    # Сразу после этого логируем то, что сделали
+    log_action(
+        user=user,
+        category="Сейф",
+        action=op_type,
+        comment=f"Сумма: {amount:.2f}₴. ({comment})"
+    )
 def get_sellers_comparison_data(context: ContextTypes.DEFAULT_TYPE, sellers_list: list, days_period: int = 30):
     """Собирает данные для сравнения средних продаж продавцов по дням недели."""
     today = dt.date.today()
@@ -1411,7 +1422,9 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
             op_type = "Расход"
             comment = f"{comment_prefix} (оплата из кассы)"
         
-        add_safe_operation(op_type, abs(safe_adjustment), comment, who)
+        add_safe_operation(query.from_user, op_type, abs(safe_adjustment), comment)
+
+
         
     # 5. Обновляем лист "Долги"
     ws_debts = GSHEET.worksheet(SHEET_DEBTS)
@@ -3008,9 +3021,24 @@ async def handle_inventory_expense(update: Update, context: ContextTypes.DEFAULT
 async def save_inventory_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     comment = update.message.text
     amount = context.user_data['inventory_expense']['amount']
-    user = update.effective_user.first_name
-    add_inventory_operation("Списание", amount, comment, user)
-    await update.message.reply_text(f"✅ Списание {amount:.2f}₴ добавлено!\nКомментарий: {comment}")
+    user = update.effective_user
+    user_name = USER_ID_TO_NAME.get(str(user.id), user.first_name)
+    
+    # Основное действие
+    add_inventory_operation("Списание", amount, comment, user_name)
+    
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Добавляем клавиатуру с кнопкой "Назад" ---
+    kb = [[InlineKeyboardButton("🔙 Назад в меню 'Остаток'", callback_data="stock_menu")]]
+    markup = InlineKeyboardMarkup(kb)
+    
+    await update.message.reply_text(
+        f"✅ Списание {amount:.2f}₴ добавлено!\nКомментарий: {comment}",
+        reply_markup=markup
+    )
+    
+    # Логируем это действие в категорию "Остаток"
+    log_action(user, "Остаток", "Списание", f"Сумма: {amount:.2f}₴. ({comment})")
+    
     context.user_data.pop('inventory_expense', None)
 
 
@@ -4212,7 +4240,7 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # 4. Проводим операции с сейфом
     balance_before_shift = get_safe_balance(context)
     cash_balance = cash - expenses_total
-    add_safe_operation("Пополнение", cash_balance, "Остаток кассы за день", seller)
+    add_safe_operation(update.effective_user, "Пополнение", cash_balance, "Остаток кассы за день")
     add_inventory_operation("Продажа", total_sales, "Продажа товаров за смену", seller)
     
     # Начисляем бонус
@@ -5233,7 +5261,7 @@ async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_in
         if payment_method != "Карта":
             who = USER_ID_TO_NAME.get(str(query.from_user.id), query.from_user.first_name)
             comment = f"Оплата долга {supplier_name} за {date_created}"
-            add_safe_operation("Расход", total_to_pay, comment, who)
+            add_safe_operation(query.from_user, "Расход", total_to_pay, comment)
         else:
             logging.info(f"Погашение карточного долга для {supplier_name}. Сейф не затронут.")
 
@@ -5373,7 +5401,7 @@ async def withdraw_daily_salary(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     # Если проверка пройдена, выплачиваем
-    add_safe_operation("Зарплата", 700, f"Ставка за смену для {seller_name}", seller_name)
+    add_safe_operation(query.from_user, "Зарплата", 700, f"Ставка за смену для {seller_name}")
     add_salary_record(seller_name, "Ставка", 700, "Выплачено из сейфа")
     
     await query.message.edit_text(f"✅ <b>{seller_name}</b>, ваша ставка (700₴) за смену успешно выплачена из сейфа.", parse_mode=ParseMode.HTML, reply_markup=stock_safe_menu_kb())
