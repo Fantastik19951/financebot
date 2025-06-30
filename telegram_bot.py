@@ -2574,6 +2574,7 @@ async def handle_supplier_search_input(update: Update, context: ContextTypes.DEF
 
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def add_new_supplier_to_directory(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Добавляет нового поставщика в справочник и переходит к вводу суммы."""
     query = update.callback_query
@@ -2581,10 +2582,14 @@ async def add_new_supplier_to_directory(update: Update, context: ContextTypes.DE
 
     # Формат: add_new_supplier_ДАТА_ИмяНовогоПоставщика
     try:
-        parts = query.data.split('_', 3)
+        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Правильно разделяем строку ---
+        # Мы ожидаем 5 частей, поэтому лимит для split должен быть 4
+        parts = query.data.split('_', 4)
         target_date_str = parts[3]
         new_supplier_name = parts[4]
+        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
     except IndexError:
+        logging.error(f"Ошибка парсинга callback_data в add_new_supplier_to_directory: {query.data}")
         return await query.message.edit_text("❌ Ошибка: не удалось получить имя нового поставщика.")
 
     # Добавляем в таблицу
