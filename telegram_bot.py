@@ -402,7 +402,9 @@ async def process_financial_dashboard_period(update: Update, context: ContextTyp
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_financial_dashboard")]])
     )
     
-def now(): return dt.datetime.now().strftime("%d.%m.%Y %H:%M")
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+def now(): 
+    return dt.datetime.now().strftime("%d.%m.%Y %H:%M:%S")
 def sdate(d=None): 
     d = d or dt.date.today()
     return d.strftime(DATE_FMT)
@@ -641,12 +643,19 @@ def get_gsheet():
 
 GSHEET = get_gsheet()
 
-def log_action(user, name, action, comment=""):
+def log_action(user: Update.effective_user, category: str, action: str, comment: str = ""):
+    """Записывает действие пользователя в лог с указанием категории."""
     try:
+        user_id = str(user.id)
+        # Получаем настоящее имя пользователя из нашего словаря
+        user_name = USER_ID_TO_NAME.get(user_id, user.first_name)
+        
         ws = GSHEET.worksheet(SHEET_LOG)
-        ws.append_row([now(), str(user.id), name, action, comment])
+        # Новый формат: Время, ID, Имя, Категория, Действие, Комментарий
+        ws.append_row([now(), user_id, user_name, category, action, comment])
     except Exception as e:
         logging.error(f"Ошибка логирования: {e}")
+        
 
 def get_suppliers_for_day(day_of_week: str):
     """Получает список всех поставщиков на заданный день недели из таблицы 'длинного' формата."""
@@ -1639,7 +1648,70 @@ async def process_abc_analysis(update: Update, context: ContextTypes.DEFAULT_TYP
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_abc_suppliers")]])
     )
+
+# --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
+
+async def show_log_categories_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню с категориями логов."""
+    query = update.callback_query
+    kb = [
+        [InlineKeyboardButton("🧾 Накладные", callback_data="log_view_Накладные_0")],
+        [InlineKeyboardButton("🗑️ Списания и Переучеты", callback_data="log_view_Остаток_0")],
+        [InlineKeyboardButton("💵 Операции с сейфом", callback_data="log_view_Сейф_0")],
+        [InlineKeyboardButton("💰 Зарплаты и Бонусы", callback_data="log_view_Зарплаты_0")],
+        [InlineKeyboardButton("🤖 Действия системы", callback_data="log_view_Система_0")],
+        [InlineKeyboardButton("🔙 Назад в админ-панель", callback_data="admin_panel")]
+    ]
+    await query.message.edit_text("🗂️ Выберите категорию для просмотра журнала действий:", reply_markup=InlineKeyboardMarkup(kb))
+
+async def show_log_for_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает страничный лог для выбранной категории."""
+    query = update.callback_query
     
+    # Формат: log_view_ИмяКатегории_страница
+    try:
+        _, _, category, page_str = query.data.split('_')
+        page = int(page_str)
+    except ValueError:
+        return await query.answer("Ошибка в данных пагинации.", show_alert=True)
+    
+    await query.message.edit_text(f"📖 Загружаю логи для категории '{category}'...")
+    
+    all_logs = get_cached_sheet_data(context, SHEET_LOG, force_update=True) or []
+    # Фильтруем логи по нужной категории
+    filtered_logs = [row for row in all_logs if len(row) > 3 and row[3] == category]
+    filtered_logs.reverse() # Новые сверху
+
+    if not filtered_logs:
+        return await query.message.edit_text(f"В категории '{category}' пока нет записей.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 К категориям", callback_data="action_log")]]))
+
+    per_page = 10
+    total_records = len(filtered_logs)
+    total_pages = math.ceil(total_records / per_page)
+    
+    start_index = page * per_page
+    page_records = filtered_logs[start_index : start_index + per_page]
+
+    msg = f"<b>Журнал: {category}</b> (Стр. {page + 1}/{total_pages})\n"
+    msg += "─" * 20 + "\n"
+    for row in page_records:
+        time, _, name, _, action, comment = (row + [""] * 6)[:6]
+        msg += f"<code>{time}</code>\n<b>{name}</b>: {action}\n"
+        if comment:
+            msg += f"   <i>Детали: {comment}</i>\n"
+
+    # Кнопки пагинации
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("◀️", callback_data=f"log_view_{category}_{page-1}"))
+    if (page + 1) < total_pages:
+        nav_row.append(InlineKeyboardButton("▶️", callback_data=f"log_view_{category}_{page+1}"))
+    
+    kb = [nav_row] if nav_row else []
+    kb.append([InlineKeyboardButton("🔙 К категориям", callback_data="action_log")])
+    
+    await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
 async def handle_analytics_end_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает конечную дату и запускает генерацию нужного отчета."""
     try:
@@ -2463,6 +2535,7 @@ async def save_revision(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Произошла ошибка, данные утеряны. Начните заново.")
         context.user_data.pop('revision', None)
         return
+    log_action(update.effective_user, "Остаток", "Переучет", f"Расчет: {calculated}, Факт: {actual}, Разница: {actual - calculated}")
 
     # Используем вашу существующую функцию для записи данных
     add_revision(calculated, actual, comment, user)
@@ -2911,7 +2984,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Выберите раздел меню:",
         reply_markup=main_kb(is_admin)
     )
-    log_action(user, user.first_name, "Старт")
+    log_action(user, "Система", "Старт бота")
 
 async def start_inventory_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['inventory_expense'] = {'step': 'amount'}
@@ -5200,6 +5273,9 @@ async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_in
     finally:
         # --- Снимаем блокировку в любом случае ---
         context.user_data.pop('is_processing_payment', None)
+
+    log_action(query.from_user, "Долги", "Погашение долга", f"Поставщик: {supplier_name}, Сумма: {total_to_pay}")
+        
         
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def view_debts_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
@@ -5918,6 +5994,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_my_schedule(update, context)
         elif data == "settings_system": # Для админских настроек
             await query.message.edit_text("🔐 Системные настройки:", reply_markup=admin_system_settings_kb())
+        elif data == "action_log": await show_log_categories_menu(update, context)
+        elif data.startswith("log_view_"): await show_log_for_category(update, context)
+
+        elif data == "admin_revision": await start_revision(update, context)
         elif data == "noop": pass
         else:
             await query.answer("Команда не реализована.", show_alert=True)
