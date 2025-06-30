@@ -2780,43 +2780,48 @@ def admin_system_settings_kb():
         [InlineKeyboardButton("🔙 Назад в админ-панель", callback_data="admin_panel")]
     ])
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 def calculate_detailed_salary(context: ContextTypes.DEFAULT_TYPE, user_name: str) -> dict:
-    """Собирает и рассчитывает детальную информацию по ЗП для сотрудника за текущий период."""
+    """Собирает и рассчитывает детальную информацию по ЗП, основываясь только на данных из листа 'Зарплаты'."""
     start_period, end_period = get_current_payroll_period()
     
-    shifts_worked = 0
-    base_pay_accrued = 0
-    bonus_accrued = 0
+    # --- НОВАЯ, БОЛЕЕ НАДЕЖНАЯ ЛОГИКА ---
+    # Мы больше не считаем смены, а берем все данные напрямую из финансового листа "Зарплаты"
     
-    # Считаем отработанные смены
-    shifts_rows = get_cached_sheet_data(context, SHEET_SHIFTS) or []
-    for row in shifts_rows:
-        if len(row) > 1 and (d := pdate(row[0])) and start_period <= d <= end_period:
-            if user_name in row[1:]:
-                shifts_worked += 1
-    
-    base_pay_accrued = shifts_worked * 700
+    base_pay_accrued = 0.0
+    bonus_accrued = 0.0
+    total_paid_out = 0.0
+    shifts_with_base_pay = 0  # Будем считать смены по фактическим записям о выплате ставки
 
-    # Считаем начисленные премии и сделанные выплаты
-    salaries_rows = get_cached_sheet_data(context, SHEET_SALARIES) or []
-    total_paid_out = 0
+    salaries_rows = get_cached_sheet_data(context, SHEET_SALARIES, force_update=True) or []
+    
     for row in salaries_rows:
+        # Проверяем, что строка полная, дата корректна, период совпадает и сотрудник тот же
         if len(row) > 3 and (d := pdate(row[0])) and start_period <= d <= end_period and row[1] == user_name:
-            if row[2] == "Премия 2%":
-                bonus_accrued += parse_float(row[3])
-            elif row[2] == "Выплата бонуса":
-                total_paid_out += parse_float(row[3])
+            pay_type = row[2]
+            amount = parse_float(row[3])
+            
+            if pay_type == "Ставка":
+                base_pay_accrued += amount
+                shifts_with_base_pay += 1  # Считаем смену только если есть запись о ставке
+            elif pay_type == "Премия 2%":
+                bonus_accrued += amount
+            elif pay_type == "Выплата бонуса":
+                total_paid_out += amount
 
     total_accrued = base_pay_accrued + bonus_accrued
     to_be_paid = total_accrued - total_paid_out
 
     return {
         "start": sdate(start_period), "end": sdate(end_period),
-        "shifts": shifts_worked, "base_pay": base_pay_accrued,
-        "bonus_pay": bonus_accrued, "total_accrued": total_accrued,
-        "paid_out": total_paid_out, "to_be_paid": to_be_paid
+        "shifts": shifts_with_base_pay, # Показываем кол-во смен, за которые выплачена/начислена ставка
+        "base_pay": base_pay_accrued,
+        "bonus_pay": bonus_accrued, 
+        "total_accrued": total_accrued,
+        "paid_out": total_paid_out, 
+        "to_be_paid": to_be_paid
     }
-
+    
 def suppliers_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Добавить накладную", callback_data="add_supplier")],
