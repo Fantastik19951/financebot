@@ -5856,19 +5856,19 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif state_key == 'planning':
         step = user_data['planning'].get('step')
-        if step == 'amount': 
-            return await handle_planning_amount(update, context)
+        if step == 'amount': return await handle_planning_amount(update, context)
+        # ИСПРАВЛЕНИЕ ЗДЕСЬ: Вызываем новую универсальную функцию поиска
         elif step == 'other_supplier_search':
-            return await handle_supplier_search_input(update, context)
-        elif step == 'other_supplier_name': 
-             supplier_name = update.message.text
-             target_date_str = user_data['planning']['date']
-             user_data['planning'].update({'supplier': supplier_name, 'step': 'amount'})
-             await update.message.reply_text(
-                 f"💰 Введите примерную сумму для <b>{supplier_name}</b> на {target_date_str} (в гривнах):",
-                 parse_mode=ParseMode.HTML
-             )
-             return
+            return await handle_supplier_search(update, context)
+        elif step == 'other_supplier_name':
+            supplier_name = update.message.text
+            target_date_str = user_data['planning']['date']
+            user_data['planning'].update({'supplier': supplier_name, 'step': 'amount'})
+            await update.message.reply_text(
+                f"💰 Введите примерную сумму для <b>{supplier_name}</b> на {target_date_str} (в гривнах):",
+                parse_mode=ParseMode.HTML
+            )
+            return
 
     elif state_key == 'edit_plan':
         if user_data['edit_plan'].get('field') == 'amount':
