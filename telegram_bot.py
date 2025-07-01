@@ -4853,30 +4853,49 @@ async def handle_supplier_search(update: Update, context: ContextTypes.DEFAULT_T
     kb.append([InlineKeyboardButton("❌ Отмена", callback_data=cancel_callback)])
     await update.message.reply_text("Вот что удалось найти:", reply_markup=InlineKeyboardMarkup(kb))
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def add_new_supplier_directory_and_continue(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Добавляет поставщика в справочник и продолжает нужный диалог."""
+    """Добавляет поставщика в справочник и сразу переходит к созданию накладной/плана."""
     query = update.callback_query
     await query.answer()
 
+    # Извлекаем имя нового поставщика из callback_data
     prefix = "dir_add_new_sup_"
     new_supplier_name = query.data[len(prefix):]
 
+    # 1. Добавляем в таблицу "СправочникПоставщиков"
     try:
         ws = GSHEET.worksheet("СправочникПоставщиков")
         ws.append_row([new_supplier_name])
         get_all_supplier_names(context, force_update=True)
+        logging.info(f"Новый поставщик '{new_supplier_name}' добавлен в справочник.")
     except Exception as e:
         return await query.message.edit_text(f"❌ Не удалось сохранить нового поставщика: {e}")
 
+    # 2. Определяем, в каком мы диалоге, и переходим к следующему шагу
     if 'planning' in context.user_data:
-        await query.message.edit_text(f"✅ Поставщик '<b>{new_supplier_name}</b>' добавлен. Теперь укажите план для него.", parse_mode=ParseMode.HTML)
-        # Имитируем нажатие на кнопку с новым поставщиком
-        query.data = f"plan_sup_{context.user_data['planning']['date']}_{new_supplier_name}"
-        await handle_planning_supplier_choice(update, context)
+        # Продолжаем диалог ПЛАНИРОВАНИЯ
+        target_date_str = context.user_data['planning']['date']
+        context.user_data['planning'].update({
+            'supplier': new_supplier_name,
+            'step': 'amount'
+        })
+        await query.message.edit_text(
+            f"✅ Поставщик '<b>{new_supplier_name}</b>' добавлен.\n\n"
+            f"💰 Теперь введите примерную сумму для него на {target_date_str}:",
+            parse_mode=ParseMode.HTML
+        )
     elif 'supplier' in context.user_data:
-        await query.message.edit_text(f"✅ Поставщик '<b>{new_supplier_name}</b>' добавлен. Теперь введите данные накладной.", parse_mode=ParseMode.HTML)
-        query.data = f"add_sup_{new_supplier_name}"
-        await handle_add_supplier_choice(update, context)
+        # Продолжаем диалог ДОБАВЛЕНИЯ НАКЛАДНОЙ
+        context.user_data['supplier'] = {
+            'name': new_supplier_name,
+            'step': 'amount_income'
+        }
+        await query.message.edit_text(
+            f"✅ Поставщик '<b>{new_supplier_name}</b>' добавлен.\n\n"
+            f"💰 Теперь введите сумму прихода по накладной:",
+            parse_mode=ParseMode.HTML
+        )
         
 async def handle_supplier_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['supplier']['name'] = update.message.text
@@ -5824,7 +5843,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         step = user_data['planning'].get('step')
         if step == 'amount': 
             return await handle_planning_amount(update, context)
-        elif step == 'other_supplier_search':
+        elif step == 'search':
             return await handle_supplier_search(update, context)
         elif step == 'other_supplier_name': 
             supplier_name = update.message.text
@@ -5835,8 +5854,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode=ParseMode.HTML
             )
 
-
-    
     elif state_key == 'report':
         step = user_data['report'].get('step')
         if step == 'cash': return await handle_report_cash(update, context)
