@@ -5834,11 +5834,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"💰 Введите примерную сумму для <b>{supplier_name}</b> на {target_date_str} (в гривнах):",
                 parse_mode=ParseMode.HTML
             )
-        return
 
 
     
-    if state_key == 'report':
+    elif state_key == 'report':
         step = user_data['report'].get('step')
         if step == 'cash': return await handle_report_cash(update, context)
         elif step == 'terminal': return await handle_report_terminal(update, context)
@@ -5992,8 +5991,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
              await query.message.edit_text("📈 Аналитика", reply_markup=analytics_menu_kb())
         elif data == "staff_settings_menu":
             await query.message.edit_text("⚙️ Персональные настройки:", reply_markup=staff_settings_menu_kb())
-        elif data.startswith("dir_add_new_sup_"):
-            await add_new_supplier_and_start_invoice(update, context)
         elif data.startswith("due_date_select_"):
             await handle_due_date_selection(update, context)
 
