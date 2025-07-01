@@ -61,15 +61,15 @@ def push_nav(context, target):
     stack.append(target)
     context.user_data['nav_stack'] = stack
 
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+
 def normalize_text(text: str) -> str:
     """Приводит текст к нижнему регистру и заменяет похожие буквы для 'умного' поиска."""
     text = text.lower()
-    replacements = str.maketrans("еэиы", "эеыи") # Меняем е<=>э, и<=>ы
-    return text.translate(replacements)
-
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+    # Всегда приводим к одному варианту (например, 'е' и 'и')
+    text = text.replace('э', 'е')
+    text = text.replace('ы', 'и')
+    return text
+    
 def generate_due_date_buttons() -> InlineKeyboardMarkup:
     """Создает клавиатуру с выбором даты на 2 недели вперед с полными названиями дней."""
     kb = []
@@ -2465,25 +2465,28 @@ async def show_single_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
 # 2. Выбор поставщика из списка или ввод нового
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_planning_supplier_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор поставщика при планировании."""
     query = update.callback_query
     await query.answer()
     
+    # --- ИСПРАВЛЕНИЕ: Новая, более надежная логика разбора ---
     parts = query.data.split('_', 3)
+    # parts[0] = "plan", parts[1] = "sup"
+    
+    if len(parts) < 3: return # Защита от неверного формата
+
     target_date_str = parts[2]
     supplier_name = parts[3]
     
     context.user_data['planning'] = {'date': target_date_str}
     
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
     if supplier_name == "other":
-        # Запускаем режим поиска
-        context.user_data['planning']['step'] = 'other_supplier_search'
+        context.user_data['planning']['step'] = 'search'
         await query.message.edit_text(
-            "✍️ Начните вводить имя или часть имени поставщика для поиска:",
+            "✍️ Введите имя или часть имени поставщика для поиска:",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data=f"plan_nav_{target_date_str}")]])
         )
     else:
-        # Этот блок для кнопок из результатов поиска и кнопок по графику
         context.user_data['planning']['supplier'] = supplier_name
         context.user_data['planning']['step'] = 'amount'
         await query.message.edit_text(
@@ -2491,6 +2494,7 @@ async def handle_planning_supplier_choice(update: Update, context: ContextTypes.
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data=f"plan_nav_{target_date_str}")]]),
             parse_mode=ParseMode.HTML
         )
+        
         
 async def handle_planning_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -4808,13 +4812,19 @@ async def handle_add_invoice_supplier_search(update: Update, context: ContextTyp
 # --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
 
 async def handle_supplier_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Умный поиск поставщика по справочнику с возможностью добавления нового."""
+    """Универсальный умный поиск поставщика по справочнику."""
     search_query = update.message.text.strip()
     
     if 'planning' in context.user_data:
-        state_data, callback_prefix, cancel_callback = context.user_data['planning'], "plan_sup", f"plan_nav_{context.user_data['planning'].get('date')}"
+        state_data = context.user_data['planning']
+        callback_prefix = "plan_sup"
+        target_date_str = state_data.get('date')
+        cancel_callback = f"plan_nav_{target_date_str}"
     elif 'supplier' in context.user_data:
-        state_data, callback_prefix, cancel_callback = context.user_data['supplier'], "add_sup", "add_supplier"
+        state_data = context.user_data['supplier']
+        callback_prefix = "add_sup"
+        target_date_str = None # В этом потоке дата не нужна в кнопке
+        cancel_callback = "add_supplier"
     else:
         return
 
@@ -4830,9 +4840,17 @@ async def handle_supplier_search(update: Update, context: ContextTypes.DEFAULT_T
             parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
         return
 
-    kb = [[InlineKeyboardButton(name, callback_data=f"{callback_prefix}_{name}")] for name in matches[:20]]
+    kb = []
+    for name in matches[:20]:
+        # --- ИСПРАВЛЕНИЕ: Добавляем дату в callback для потока планирования ---
+        if callback_prefix == "plan_sup":
+            callback_data = f"{callback_prefix}_{target_date_str}_{name}"
+        else:
+            callback_data = f"{callback_prefix}_{name}"
+        kb.append([InlineKeyboardButton(name, callback_data=callback_data)])
+    
     kb.append([InlineKeyboardButton("❌ Отмена", callback_data=cancel_callback)])
-    await update.message.reply_text("Вот что удалось найти. Выберите правильный вариант:", reply_markup=InlineKeyboardMarkup(kb))
+    await update.message.reply_text("Вот что удалось найти:", reply_markup=InlineKeyboardMarkup(kb))
 
 async def add_new_supplier_directory_and_continue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Добавляет поставщика в справочник и продолжает нужный диалог."""
