@@ -47,7 +47,7 @@ SHEET_INVENTORY = "Остаток магазина"
 DIALOG_KEYS = [
     'report', 'supplier', 'planning', 'edit_plan', 'edit_invoice',
     'revision', 'search_debt', 'safe_op', 'inventory_expense', 
-    'repay', 'shift', 'report_period', 'admin_expense', 'custom_analytics_period'
+    'repay', 'shift', 'report_period', 'admin_expense', 'custom_analytics_period', 'supplier_edit'
 ]
 
 
@@ -60,6 +60,13 @@ def push_nav(context, target):
     stack = context.user_data.get('nav_stack', [])
     stack.append(target)
     context.user_data['nav_stack'] = stack
+
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+def normalize_text(text: str) -> str:
+    """Приводит текст к нижнему регистру и заменяет похожие буквы для 'умного' поиска."""
+    text = text.lower()
+    replacements = str.maketrans("еэиы", "эеыи") # Меняем е<=>э, и<=>ы
+    return text.translate(replacements)
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
@@ -2560,50 +2567,7 @@ async def start_revision(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-async def handle_supplier_search_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Принимает поисковый запрос, ищет совпадения и предлагает их в виде кнопок или добавления нового."""
-    search_query = update.message.text.strip()
-    planning_data = context.user_data.get('planning', {})
-    target_date_str = planning_data.get('date')
 
-    if not target_date_str:
-        await update.message.reply_text("❌ Ошибка: утеряна дата планирования. Начните заново.")
-        clear_conversation_state(context)
-        return
-
-    all_suppliers = get_all_supplier_names(context)
-    matches = [name for name in all_suppliers if search_query.lower() in name.lower()]
-
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-    if not matches:
-        # Если совпадений нет, предлагаем добавить нового
-        kb = [
-            [InlineKeyboardButton(f"✅ Да, добавить '{search_query}'", callback_data=f"add_new_supplier_{target_date_str}_{search_query}")],
-            [InlineKeyboardButton("❌ Нет, попробовать снова", callback_data=f"plan_sup_{target_date_str}_other")]
-        ]
-        await update.message.reply_text(
-            f"🤷‍♂️ Поставщик с названием '<b>{search_query}</b>' не найден.\n\nХотите добавить его в справочник и продолжить?",
-            parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
-        return
-    # --- КОНЕЦ ИЗМЕНЕНИЯ ---
-
-    kb = []
-    for name in matches[:20]:
-        kb.append([InlineKeyboardButton(name, callback_data=f"plan_sup_{target_date_str}_{name}")])
-    
-    kb.append([InlineKeyboardButton("❌ Отмена", callback_data="planning")])
-    
-    await update.message.reply_text(
-        "Вот что удалось найти. Выберите правильный вариант:",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
-
-
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def add_new_supplier_to_directory(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Добавляет нового поставщика в справочник и переходит к вводу суммы."""
     query = update.callback_query
@@ -3044,7 +3008,7 @@ def suppliers_menu_kb():
         [InlineKeyboardButton("➕ Добавить накладную", callback_data="add_supplier")],
         [InlineKeyboardButton("🚚 Журнал прибытия товаров", callback_data="view_suppliers")],
         [InlineKeyboardButton("📄 Накладные за сегодня", callback_data="view_today_invoices")],
-        # --- ВОЗВРАЩАЕМ КНОПКУ НА МЕСТО ---
+        [InlineKeyboardButton("📖 Справочник Поставщиков", callback_data="supplier_directory_menu")],
         [InlineKeyboardButton("📅 Планирование", callback_data="planning")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
@@ -3553,7 +3517,52 @@ async def finance_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.edit_text(
         "💰 Управление финансами\nВыберите действие:",
         reply_markup=finance_menu_kb())
+
+# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
+
+async def show_supplier_directory_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню управления справочником поставщиков."""
+    query = update.callback_query
+    context.user_data['supplier_edit'] = {'step': 'search'}
+    await query.message.edit_text(
+        "📖 Справочник Поставщиков.\n\n"
+        "Здесь вы можете исправить опечатки или переименовать поставщика. "
+        "Введите имя или часть имени для поиска и редактирования:",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="suppliers_menu")]])
+    )
+
+async def save_edited_supplier_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохраняет новое имя поставщика, обновляя его во ВСЕХ таблицах."""
+    new_name = update.message.text.strip()
+    edit_data = context.user_data.get('supplier_edit', {})
+    old_name = edit_data.get('old_name')
+
+    if not new_name or not old_name:
+        return await update.message.reply_text("❌ Ошибка. Сессия редактирования утеряна.")
+
+    processing_message = await update.message.reply_text(f"⏳ Переименовываю '<b>{old_name}</b>' в '<b>{new_name}</b>' во всех таблицах... Это может занять время.", parse_mode=ParseMode.HTML)
     
+    # Список всех листов, где может встречаться имя поставщика
+    sheets_to_update = [SHEET_SUPPLIERS, SHEET_DEBTS, SHEET_PLAN_FACT, "СправочникПоставщиков"]
+    
+    try:
+        for sheet_name in sheets_to_update:
+            ws = GSHEET.worksheet(sheet_name)
+            # Ищем все ячейки со старым именем
+            cells_to_update = ws.findall(old_name)
+            for cell in cells_to_update:
+                ws.update_cell(cell.row, cell.col, new_name)
+            logging.info(f"В листе '{sheet_name}' обновлено {len(cells_to_update)} записей.")
+        
+        await processing_message.edit_text(f"✅ Готово! Поставщик '<b>{old_name}</b>' был успешно переименован в '<b>{new_name}</b>' везде.", parse_mode=ParseMode.HTML)
+
+    except Exception as e:
+        await processing_message.edit_text(f"❌ Произошла ошибка при обновлении таблиц: {e}")
+    finally:
+        context.user_data.pop('supplier_edit', None)
+
+# ... и другие новые функции для этого шага, которые будут ниже
+
 async def staff_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     is_admin = str(query.from_user.id) in ADMINS
@@ -4796,37 +4805,60 @@ async def handle_add_invoice_supplier_search(update: Update, context: ContextTyp
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-async def add_new_supplier_and_start_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Добавляет поставщика в справочник и сразу переходит к созданию накладной."""
+# --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
+
+async def handle_supplier_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Умный поиск поставщика по справочнику с возможностью добавления нового."""
+    search_query = update.message.text.strip()
+    
+    if 'planning' in context.user_data:
+        state_data, callback_prefix, cancel_callback = context.user_data['planning'], "plan_sup", f"plan_nav_{context.user_data['planning'].get('date')}"
+    elif 'supplier' in context.user_data:
+        state_data, callback_prefix, cancel_callback = context.user_data['supplier'], "add_sup", "add_supplier"
+    else:
+        return
+
+    normalized_query = normalize_text(search_query)
+    all_suppliers = get_all_supplier_names(context)
+    matches = [name for name in all_suppliers if normalized_query in normalize_text(name)]
+
+    if not matches:
+        kb = [[InlineKeyboardButton(f"✅ Да, добавить '{search_query}'", callback_data=f"dir_add_new_sup_{search_query}")],
+              [InlineKeyboardButton("❌ Нет, попробовать снова", callback_data=f"{callback_prefix}_{state_data.get('date', '')}_other")]]
+        await update.message.reply_text(
+            f"🤷‍♂️ Поставщик '<b>{search_query}</b>' не найден.\n\nХотите добавить его в справочник и продолжить?",
+            parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+        return
+
+    kb = [[InlineKeyboardButton(name, callback_data=f"{callback_prefix}_{name}")] for name in matches[:20]]
+    kb.append([InlineKeyboardButton("❌ Отмена", callback_data=cancel_callback)])
+    await update.message.reply_text("Вот что удалось найти. Выберите правильный вариант:", reply_markup=InlineKeyboardMarkup(kb))
+
+async def add_new_supplier_directory_and_continue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Добавляет поставщика в справочник и продолжает нужный диалог."""
     query = update.callback_query
     await query.answer()
 
     prefix = "dir_add_new_sup_"
-    if not query.data.startswith(prefix):
-        logging.error(f"Неверный формат callback_data в add_new_supplier_and_start_invoice: {query.data}")
-        return await query.message.edit_text("❌ Произошла внутренняя ошибка.")
-        
     new_supplier_name = query.data[len(prefix):]
 
     try:
         ws = GSHEET.worksheet("СправочникПоставщиков")
         ws.append_row([new_supplier_name])
         get_all_supplier_names(context, force_update=True)
-        logging.info(f"Новый поставщик '{new_supplier_name}' добавлен в справочник.")
     except Exception as e:
         return await query.message.edit_text(f"❌ Не удалось сохранить нового поставщика: {e}")
 
-    # Сразу переходим к вводу суммы для этого нового поставщика
-    context.user_data['supplier'] = {
-        'name': new_supplier_name,
-        'step': 'amount_income'
-    }
-    await query.message.edit_text(
-        f"✅ Поставщик '<b>{new_supplier_name}</b>' добавлен.\n\n"
-        f"💰 Теперь введите сумму прихода по накладной:",
-        parse_mode=ParseMode.HTML
-    )
-
+    if 'planning' in context.user_data:
+        await query.message.edit_text(f"✅ Поставщик '<b>{new_supplier_name}</b>' добавлен. Теперь укажите план для него.", parse_mode=ParseMode.HTML)
+        # Имитируем нажатие на кнопку с новым поставщиком
+        query.data = f"plan_sup_{context.user_data['planning']['date']}_{new_supplier_name}"
+        await handle_planning_supplier_choice(update, context)
+    elif 'supplier' in context.user_data:
+        await query.message.edit_text(f"✅ Поставщик '<b>{new_supplier_name}</b>' добавлен. Теперь введите данные накладной.", parse_mode=ParseMode.HTML)
+        query.data = f"add_sup_{new_supplier_name}"
+        await handle_add_supplier_choice(update, context)
+        
 async def handle_supplier_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['supplier']['name'] = update.message.text
     context.user_data['supplier']['step'] = 'amount_income'
@@ -5892,6 +5924,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif state_key == 'shift':
         if user_data['shift'].get('step') == 'date': return await handle_shift_date(update, context)
 
+    elif state_key == 'supplier_edit':
+        step = user_data['supplier_edit'].get('step')
+        if step == 'search':
+            # Эта функция будет искать и показывать кнопки с найденными поставщиками
+            return await list_suppliers_for_editing(update, context) 
+        elif step == 'new_name':
+            return await save_edited_supplier_name(update, context)
+
     elif state_key == 'report_period':
         step = user_data['report_period'].get('step')
         if step == 'start_date': return await handle_report_start_date(update, context)
@@ -5937,6 +5977,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await add_new_supplier_and_start_invoice(update, context)
         elif data.startswith("due_date_select_"):
             await handle_due_date_selection(update, context)
+
+        elif data == "supplier_directory_menu":
+            await show_supplier_directory_menu(update, context)
+        elif data.startswith("edit_supplier_name_"):
+            await prompt_for_new_supplier_name(update, context)
+        elif data.startswith("dir_add_new_sup_"):
+            await add_new_supplier_directory_and_continue(update, context)
+        
         
         
         # --- 2. ПЛАНИРОВАНИЕ ---
