@@ -4801,11 +4801,12 @@ async def add_new_supplier_and_start_invoice(update: Update, context: ContextTyp
     query = update.callback_query
     await query.answer()
 
-    # Формат: dir_add_new_sup_ИмяНовогоПоставщика
-    try:
-        new_supplier_name = query.data.split('_', 3)[3]
-    except IndexError:
-        return await query.message.edit_text("❌ Ошибка: не удалось получить имя нового поставщика.")
+    prefix = "dir_add_new_sup_"
+    if not query.data.startswith(prefix):
+        logging.error(f"Неверный формат callback_data в add_new_supplier_and_start_invoice: {query.data}")
+        return await query.message.edit_text("❌ Произошла внутренняя ошибка.")
+        
+    new_supplier_name = query.data[len(prefix):]
 
     try:
         ws = GSHEET.worksheet("СправочникПоставщиков")
