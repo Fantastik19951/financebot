@@ -797,15 +797,20 @@ def get_planned_suppliers(date_str: str):
         logging.error(f"Ошибка получения спланированных поставщиков на '{date_str}': {e}")
         return []
         
-def save_plan_fact(date_str, supplier, amount, pay_type, user_name):
-    """Сохраняет одну запись о плане на завтра со статусом 'Ожидается'."""
-    if not GSHEET: return
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+def save_plan_fact(context: ContextTypes.DEFAULT_TYPE, date_str: str, supplier: str, amount, pay_type, user_name):
+    """Сохраняет план и вызывает модуль самообучения для обновления еженедельного графика."""
+    # 1. Основное действие: сохраняем план на конкретный день
     try:
-        ws = GSHEET.worksheet(SHEET_PLAN_FACT)
-        ws.append_row([date_str, supplier, amount, pay_type, user_name, "Ожидается"])
+        ws_plan_fact = GSHEET.worksheet(SHEET_PLAN_FACT)
+        ws_plan_fact.append_row([date_str, supplier, amount, pay_type, user_name, "Ожидается"])
         logging.info(f"План на {date_str} для '{supplier}' сохранен.")
     except Exception as e:
-        logging.error(f"Ошибка сохранения ПланФакт: {e}")
+        logging.error(f"Критическая ошибка сохранения ПланФакт: {e}")
+        return
+
+    # 2. Вызываем модуль самообучения
+    update_supplier_schedule(context, date_str, supplier)
         
 def get_tomorrow_planning_details():
     """Собирает данные из ПланФакт для отчета и возвращает форматированную строку."""
@@ -2500,7 +2505,41 @@ async def handle_planning_supplier_choice(update: Update, context: ContextTypes.
             parse_mode=ParseMode.HTML
         )
         
+
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+def update_supplier_schedule(context: ContextTypes.DEFAULT_TYPE, date_str: str, supplier_name: str):
+    """
+    Проверяет, есть ли поставщик в графике на этот день недели. 
+    Если нет - добавляет его.
+    """
+    try:
+        plan_date = pdate(date_str)
+        if not plan_date:
+            logging.warning(f"Не удалось определить дату для обучения графика: {date_str}")
+            return
+
+        day_of_week = DAYS_OF_WEEK_RU[plan_date.weekday()]
         
+        # Проверяем, есть ли уже такая запись в графике, чтобы избежать дублей
+        schedule_rows = get_cached_sheet_data(context, SHEET_PLANNING_SCHEDULE) or []
+        
+        entry_exists = any(
+            len(row) > 1 and row[0].strip().lower() == day_of_week and row[1].strip() == supplier_name
+            for row in schedule_rows
+        )
+        
+        if not entry_exists:
+            ws_schedule = GSHEET.worksheet(SHEET_PLANNING_SCHEDULE)
+            ws_schedule.append_row([day_of_week, supplier_name])
+            logging.info(f"Самообучение: Поставщик '{supplier_name}' добавлен в график на '{day_of_week}'.")
+            # Сбрасываем кэш для этого листа, чтобы изменения сразу были видны
+            get_cached_sheet_data(context, SHEET_PLANNING_SCHEDULE, force_update=True)
+        else:
+            logging.info(f"Поставщик '{supplier_name}' уже в графике на '{day_of_week}'. Обучение не требуется.")
+
+    except Exception as e:
+        logging.error(f"Ошибка в модуле самообучения графика поставщиков: {e}")
+
 async def handle_planning_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         amount = float(update.message.text.replace(',', '.'))
@@ -2538,7 +2577,7 @@ async def handle_planning_pay_type(update: Update, context: ContextTypes.DEFAULT
     target_date_str = planning_data['date']
     
     # Сохраняем в таблицу
-    save_plan_fact(target_date_str, supplier, amount, pay_type, user_name)
+    save_plan_fact(context, target_date_str, supplier, amount, pay_type, user_name)
     
     await query.message.edit_text(
         f"✅ План для <b>{supplier}</b> на <b>{target_date_str}</b> на сумму <b>{amount:.2f}₴</b> ({pay_type}) сохранен!\n\n"
@@ -5141,6 +5180,7 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
         ws_sup.append_row(row_to_save)
+        
 
         if pay_type.startswith("Долг"):
             debt_pay_type = "Карта" if "(Карта)" in pay_type else "Наличные"
@@ -5148,6 +5188,8 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ws_debts.append_row([sdate(), supplier_data['name'], sum_to_pay, 0, sum_to_pay, due_date, "Нет", debt_pay_type])
 
         add_inventory_operation("Приход", invoice_total_markup, f"Поставщик: {supplier_data['name']}", who)
+
+        update_supplier_schedule(context, sdate(), supplier_data['name'])
 
         try:
             today_str = sdate()
@@ -5160,6 +5202,7 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         ws_plan.update_cell(i, 6, "Прибыл")
                         logging.info(f"Автоматически обновлен статус на 'Прибыл' для '{supplier_name_to_check}'")
                         break
+
         except Exception as e:
             logging.error(f"Ошибка автоматической отметки статуса в журнале: {e}")
 
