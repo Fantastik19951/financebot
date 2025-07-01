@@ -3,6 +3,7 @@ from collections import defaultdict
 from dotenv import load_dotenv
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
+from thefuzz import fuzz
 from telegram.error import TelegramError
 from telegram import (
     InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update, InputFile
@@ -62,12 +63,16 @@ def push_nav(context, target):
     context.user_data['nav_stack'] = stack
 
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 def normalize_text(text: str) -> str:
     """Приводит текст к нижнему регистру и заменяет похожие буквы для 'умного' поиска."""
     text = text.lower()
-    # Всегда приводим к одному варианту (например, 'е' и 'и')
+    # Приводим похожие буквы к одному "эталонному" виду
     text = text.replace('э', 'е')
     text = text.replace('ы', 'и')
+    text = text.replace('і', 'и') # Добавлено: і -> и
+    text = text.replace('є', 'е') # Добавлено: є -> е
+    text = text.replace('ґ', 'г') # Добавлено: ґ -> г
     return text
     
 def generate_due_date_buttons() -> InlineKeyboardMarkup:
@@ -4831,7 +4836,16 @@ async def handle_supplier_search(update: Update, context: ContextTypes.DEFAULT_T
 
     normalized_query = normalize_text(search_query)
     all_suppliers = get_all_supplier_names(context)
-    matches = [name for name in all_suppliers if normalized_query in normalize_text(name)]
+    
+    matches = []
+    for name in all_suppliers:
+        # Нормализуем имя из справочника
+        normalized_name = normalize_text(name)
+        # Считаем "рейтинг похожести" двух строк
+        ratio = fuzz.partial_ratio(normalized_query, normalized_name)
+        # Если строки похожи более чем на 75% - считаем это совпадением
+        if ratio > 75:
+            matches.append(name)
 
     if not matches:
         kb = [[InlineKeyboardButton(f"✅ Да, добавить '{search_query}'", callback_data=f"dir_add_new_sup_{search_query}")],
