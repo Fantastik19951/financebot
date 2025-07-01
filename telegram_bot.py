@@ -3590,6 +3590,7 @@ async def suppliers_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("➕ Добавить накладную", callback_data="add_supplier")],
         [InlineKeyboardButton("🚚 Журнал прибытия товаров", callback_data="view_suppliers")],
         [InlineKeyboardButton("📄 Накладные за сегодня", callback_data=f"invoices_list_{today_str}")],
+        [InlineKeyboardButton("📖 Справочник Поставщиков", callback_data="supplier_directory_menu")],
         [InlineKeyboardButton("📅 Планирование", callback_data="planning")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ]
@@ -5819,6 +5820,24 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
     # --- Маршрутизация по активному состоянию ---
+    if state_key == 'planning':
+        step = user_data['planning'].get('step')
+        if step == 'amount': 
+            return await handle_planning_amount(update, context)
+        elif step == 'other_supplier_search':
+            return await handle_supplier_search(update, context)
+        elif step == 'other_supplier_name': 
+            supplier_name = update.message.text
+            target_date_str = user_data['planning']['date']
+            user_data['planning'].update({'supplier': supplier_name, 'step': 'amount'})
+            await update.message.reply_text(
+                f"💰 Введите примерную сумму для <b>{supplier_name}</b> на {target_date_str} (в гривнах):",
+                parse_mode=ParseMode.HTML
+            )
+        return
+
+
+    
     if state_key == 'report':
         step = user_data['report'].get('step')
         if step == 'cash': return await handle_report_cash(update, context)
@@ -5871,22 +5890,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("Пожалуйста, используйте кнопки.")
         return
-
-    elif state_key == 'planning':
-        step = user_data['planning'].get('step')
-        if step == 'amount': return await handle_planning_amount(update, context)
-        # ИСПРАВЛЕНИЕ ЗДЕСЬ: Вызываем новую универсальную функцию поиска
-        elif step == 'other_supplier_search':
-            return await handle_supplier_search(update, context)
-        elif step == 'other_supplier_name':
-            supplier_name = update.message.text
-            target_date_str = user_data['planning']['date']
-            user_data['planning'].update({'supplier': supplier_name, 'step': 'amount'})
-            await update.message.reply_text(
-                f"💰 Введите примерную сумму для <b>{supplier_name}</b> на {target_date_str} (в гривнах):",
-                parse_mode=ParseMode.HTML
-            )
-            return
 
     elif state_key == 'edit_plan':
         if user_data['edit_plan'].get('field') == 'amount':
