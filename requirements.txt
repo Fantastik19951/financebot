@@ -36,3 +36,5 @@ sniffio==1.3.1
 typing_extensions==4.14.0
 tzlocal==5.3.1
 urllib3==2.4.0
+thefuzz
+python-Levenshtein
