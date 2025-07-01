@@ -5811,17 +5811,15 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif state_key == 'supplier':
         step = user_data['supplier'].get('step')
-        # --- ДОБАВЬТЕ ЭТОТ БЛОК ---
-        if step == 'search':
-            return await handle_add_invoice_supplier_search(update, context)
-        # ------------------------
+        # ИСПРАВЛЕНИЕ ЗДЕСЬ: Вызываем новую универсальную функцию поиска
+        if step == 'search': return await handle_supplier_search(update, context)
         elif step == 'name': return await handle_supplier_name(update, context)
-        elif step == 'amount_income': return await handle_supplier_amount_income(update, context)
-        if step == 'name': return await handle_supplier_name(update, context)
         elif step == 'amount_income': return await handle_supplier_amount_income(update, context)
         elif step == 'writeoff': return await handle_supplier_writeoff(update, context)
         elif step == 'invoice_total_markup': return await handle_supplier_invoice_total_markup(update, context)
+        elif step == 'due_date': return await handle_due_date_selection(update, context) # Должно обрабатываться кнопкой, но на всякий случай
         elif step == 'comment': return await save_supplier(update, context)
+
 
     elif state_key == 'expense':
         step = user_data['expense'].get('step')
