@@ -5964,7 +5964,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     resetting_callbacks = [
         "main_menu", "finance_menu", "suppliers_menu", "debts_menu",
         "staff_menu", "admin_panel", "stock_safe_menu", "analytics_menu",
-        "settings_menu", "cancel_report", "back" 
+        "settings_menu", "cancel_report", "back", "add_supplier", "planning"
     ]
     if data in resetting_callbacks:
         if clear_conversation_state(context):
@@ -6140,7 +6140,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await execute_invoice_edit(update, context)
 
         # --- 5. ДОБАВЛЕНИЕ НАКЛАДНОЙ ---
-        elif data == "add_supplier": await start_supplier(update, context)
+        elif data == "add_supplier": await start_supplier(update, context) # Кнопка "Назад" теперь будет работать правильно
         elif data.startswith("add_sup_"): await handle_add_supplier_choice(update, context)
         elif data.startswith("pay_"): await handle_supplier_pay_type(update, context)
         elif data == "card_pay_actual": await handle_card_payment_choice(update, context)
