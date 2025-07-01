@@ -4757,21 +4757,22 @@ async def inventory_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_add_supplier_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает выбор поставщика при добавлении накладной."""
     query = update.callback_query
     await query.answer()
     
-    supplier_name = query.data.split('_', 2)[2]
-    
-    # Если нажали "Другой", запускаем режим поиска
+    # ИСПРАВЛЕНИЕ: Более надежный способ получить имя
+    prefix = "add_sup_"
+    supplier_name = query.data[len(prefix):]
+
     if supplier_name == "other":
-        context.user_data['supplier'] = {'step': 'search'} # Новый шаг - поиск
+        context.user_data['supplier'] = {'step': 'search'}
         await query.message.edit_text(
             "✍️ Введите имя или часть имени поставщика для поиска:",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]])
         )
-    # Если выбрали из списка (этот блок сработает для кнопок из результатов поиска)
     else:
         context.user_data['supplier'] = {'name': supplier_name, 'step': 'amount_income'}
         await query.message.edit_text(
@@ -4817,47 +4818,44 @@ async def handle_add_invoice_supplier_search(update: Update, context: ContextTyp
 
 # --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_supplier_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Универсальный умный поиск поставщика по справочнику."""
     search_query = update.message.text.strip()
     
+    callback_prefix, cancel_callback, target_date_str = "", "", ""
     if 'planning' in context.user_data:
         state_data = context.user_data['planning']
         callback_prefix = "plan_sup"
         target_date_str = state_data.get('date')
         cancel_callback = f"plan_nav_{target_date_str}"
     elif 'supplier' in context.user_data:
-        state_data = context.user_data['supplier']
         callback_prefix = "add_sup"
-        target_date_str = None # В этом потоке дата не нужна в кнопке
         cancel_callback = "add_supplier"
-    else:
-        return
 
     normalized_query = normalize_text(search_query)
     all_suppliers = get_all_supplier_names(context)
-    
-    matches = []
-    for name in all_suppliers:
-        # Нормализуем имя из справочника
-        normalized_name = normalize_text(name)
-        # Считаем "рейтинг похожести" двух строк
-        ratio = fuzz.partial_ratio(normalized_query, normalized_name)
-        # Если строки похожи более чем на 75% - считаем это совпадением
-        if ratio > 75:
-            matches.append(name)
+    matches = [name for name in all_suppliers if normalized_query in normalize_text(name)]
 
     if not matches:
-        kb = [[InlineKeyboardButton(f"✅ Да, добавить '{search_query}'", callback_data=f"dir_add_new_sup_{search_query}")],
-              [InlineKeyboardButton("❌ Нет, попробовать снова", callback_data=f"{callback_prefix}_{state_data.get('date', '')}_other")]]
+        # ИСПРАВЛЕНИЕ: Формируем правильную callback-кнопку для каждого потока
+        if callback_prefix == "plan_sup":
+            try_again_callback = f"plan_sup_{target_date_str}_other"
+        else: # для 'add_sup'
+            try_again_callback = "add_sup_other"
+            
+        kb = [
+            [InlineKeyboardButton(f"✅ Да, добавить '{search_query}'", callback_data=f"dir_add_new_sup_{search_query}")],
+            [InlineKeyboardButton("❌ Нет, попробовать снова", callback_data=try_again_callback)]
+        ]
         await update.message.reply_text(
             f"🤷‍♂️ Поставщик '<b>{search_query}</b>' не найден.\n\nХотите добавить его в справочник и продолжить?",
-            parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+            parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb)
+        )
         return
 
     kb = []
     for name in matches[:20]:
-        # --- ИСПРАВЛЕНИЕ: Добавляем дату в callback для потока планирования ---
         if callback_prefix == "plan_sup":
             callback_data = f"{callback_prefix}_{target_date_str}_{name}"
         else:
