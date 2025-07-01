@@ -4835,7 +4835,17 @@ async def handle_supplier_search(update: Update, context: ContextTypes.DEFAULT_T
 
     normalized_query = normalize_text(search_query)
     all_suppliers = get_all_supplier_names(context)
-    matches = [name for name in all_suppliers if normalized_query in normalize_text(name)]
+    
+    matches = []
+    for name in all_suppliers:
+        # Нормализуем имя из справочника
+        normalized_name = normalize_text(name)
+        # Считаем "рейтинг похожести" двух строк
+        ratio = fuzz.partial_ratio(normalized_query, normalized_name)
+        # Если строки похожи более чем на 75% - считаем это совпадением
+        if ratio > 75:
+            matches.append(name)
+
 
     if not matches:
         # ИСПРАВЛЕНИЕ: Формируем правильную callback-кнопку для каждого потока
