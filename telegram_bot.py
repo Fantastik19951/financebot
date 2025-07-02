@@ -1952,7 +1952,7 @@ async def search_debts_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # --- ДОБАВЬТЕ ЭТУ ФУНКЦИЮ В ВАШ КОД ---
 async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE, start_date, end_date):
     """Показывает отчет за период, используя кэшированные данные."""
-    # Определяем, откуда пришел вызов, чтобы правильно ответить
+    # Определяем, откуда пришел вызов, чтобы правильно ответить 1
     if hasattr(update, "callback_query") and update.callback_query:
         query = update.callback_query
         await query.answer("Загружаю отчет...")
