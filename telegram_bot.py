@@ -5544,8 +5544,8 @@ async def view_repayable_debts(update: Update, context: ContextTypes.DEFAULT_TYP
     msg = "<b>💸 Погашение долга</b>\n\nВыберите из списка долг, который хотите погасить полностью:"
     kb = []
     for debt in unpaid_debts:
-        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-        pay_type = debt[7] if len(row) > 7 else "Наличные"
+        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+        pay_type = debt[7] if len(debt) > 7 else "Наличные" # Заменили 'row' на 'debt'
         pay_type_short = "(К)" if pay_type == "Карта" else "(Н)"
         
         row_index, date_str, supplier = debt[-1], debt[0], debt[1]
