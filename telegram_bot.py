@@ -5710,7 +5710,7 @@ async def withdraw_daily_salary(update: Update, context: ContextTypes.DEFAULT_TY
     seller_name = USER_ID_TO_NAME.get(user_id)
 
     # Разрешаем операцию только определенным продавцам и админам
-    if seller_name not in ["Мария", "Людмила", "Евгений", "Наталия"]:
+    if seller_name not in ["Мария", "Людмила"]:
         return await query.message.edit_text("🚫 У вас нет прав на выполнение этой операции.", reply_markup=stock_safe_menu_kb())
 
     today_str = sdate()
@@ -5798,9 +5798,9 @@ async def handle_safe_amount(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         # 1. Выполняем операцию записи в таблицу
         if op_type == 'deposit':
-            add_safe_operation("Пополнение", amount, "Внесение наличных", user.first_name)
+            add_safe_operation(user, "Пополнение", amount, "Внесение наличных")
         elif op_type == 'withdraw':
-            add_safe_operation("Снятие", amount, "Снятие администратором", user.first_name)
+            add_safe_operation(user, "Снятие", amount, "Снятие администратором")
 
         # 2. ГЛАВНОЕ ИСПРАВЛЕНИЕ: Принудительно сбрасываем кэш для листа "Сейф"
         if 'sheets_cache' in context.bot_data and "Сейф" in context.bot_data['sheets_cache']:
