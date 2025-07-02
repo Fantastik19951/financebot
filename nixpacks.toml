@@ -1,14 +1,22 @@
 # nixpacks.toml
 
 [phases.setup]
-# Указываем, что нам нужен Python и Poetry (менеджер пакетов)
+# Устанавливаем Python и Poetry
 nixPkgs = ["pkgs.python3", "pkgs.poetry"]
 
 [phases.install]
-# Указываем Railway, что для установки нужно использовать команду 'poetry install'
-# Poetry очень хорошо кэширует зависимости, что ускоряет сборку1
-cmds = ["poetry install"]
+# Даем четкие пошаговые инструкции для установки
+cmds = [
+  # 1. Создаем стандартное виртуальное окружение Python
+  "python3 -m venv /opt/venv",
+  # 2. Активируем его
+  ". /opt/venv/bin/activate",
+  # 3. Используем Poetry, чтобы сгенерировать requirements.txt из вашего pyproject.toml
+  "poetry export -f requirements.txt --output requirements.txt --without-hashes",
+  # 4. Устанавливаем все пакеты в наше активное окружение с помощью надежного pip
+  "pip install --no-cache-dir -r requirements.txt"
+]
 
 [start]
-# Указываем, как запускать бота через Poetry
-cmd = "poetry run python3 telegram_bot.py"
+# Перед запуском скрипта мы снова активируем то же самое окружение
+cmd = ". /opt/venv/bin/activate && python3 telegram_bot.py"
