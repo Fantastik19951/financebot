@@ -6015,7 +6015,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 msg += f"\n──────────────────\n"
                 msg += f"{status_icon} <b>{supplier}</b> | {pay_type}\n" # Добавили тип оплаты
-                msg += f"  Сумма: {total:.2f}₴ |
+                msg += f"  Сумма: {total:.2f}₴"
                 msg += f"  Срок: {due_date}"
                 
                 if status.lower() != 'да':
