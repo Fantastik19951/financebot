@@ -20,7 +20,7 @@ import math
 import numpy as np
 from matplotlib.ticker import MaxNLocator
 
-# --- КОНФИГ ---
+# --- КОНФИГ ----
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DATE_FMT = "%d.%m.%Y"
