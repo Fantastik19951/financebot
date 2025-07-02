@@ -4798,7 +4798,6 @@ async def start_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def inventory_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
-    """Показывает страничную историю операций с остатком магазина."""
     query = update.callback_query
     await query.message.edit_text("📦 Загружаю историю остатка...")
     
@@ -4806,12 +4805,11 @@ async def inventory_history(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     if not rows:
         return await query.message.edit_text("История операций с остатком пуста.", reply_markup=stock_menu_kb())
 
-    # --- ЛОГИКА ПАГИНАЦИИ ---
-    rows.reverse()
+    # --- ИЗМЕНЕНИЕ: Убрали rows.reverse() ---
 
     per_page = 10
     total_records = len(rows)
-    total_pages = math.ceil(total_records / per_page)
+    total_pages = math.ceil(total_records / per_page) if total_records > 0 else 1
     page = max(0, min(page, total_pages - 1))
 
     start_index = page * per_page
@@ -5807,12 +5805,11 @@ async def safe_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page:
     if not rows:
         return await query.message.edit_text("История операций с сейфом пуста.", reply_markup=safe_menu_kb())
 
-    # --- ЛОГИКА ПАГИНАЦИИ ---
-    rows.reverse() # Новые записи в начало
-
+    # --- ИЗМЕНЕНИЕ: Убрали rows.reverse() ---
+    
     per_page = 10
     total_records = len(rows)
-    total_pages = math.ceil(total_records / per_page)
+    total_pages = math.ceil(total_records / per_page) if total_records > 0 else 1
     page = max(0, min(page, total_pages - 1))
 
     start_index = page * per_page
@@ -6436,18 +6433,33 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "inventory_balance": await inventory_balance(update, context)
         elif data == "safe_balance": await safe_balance(update, context)
         elif data.startswith("safe_history"):
-            try:
-                page = int(data.split('_')[-1])
-            except (ValueError, IndexError):
-                page = 0
+            page = 0
+            # Если это самый первый вызов (без номера страницы), то вычисляем последнюю страницу
+            if data == "safe_history":
+                rows = get_cached_sheet_data(context, "Сейф") or []
+                total_pages = math.ceil(len(rows) / 10)
+                page = max(0, total_pages - 1)
+            else: # Если это навигация по страницам, берем номер из кнопки
+                try:
+                    page = int(data.split('_')[-1])
+                except (ValueError, IndexError):
+                    page = 0
             await safe_history(update, context, page=page)
             
         elif data.startswith("inventory_history"):
-            try:
-                page = int(data.split('_')[-1])
-            except (ValueError, IndexError):
-                page = 0
+            page = 0
+            # Аналогичная логика для истории остатка
+            if data == "inventory_history":
+                rows = get_cached_sheet_data(context, SHEET_INVENTORY) or []
+                total_pages = math.ceil(len(rows) / 10)
+                page = max(0, total_pages - 1)
+            else:
+                try:
+                    page = int(data.split('_')[-1])
+                except (ValueError, IndexError):
+                    page = 0
             await inventory_history(update, context, page=page)
+
         elif data == "safe_deposit": await start_safe_deposit(update, context)
         elif data == "safe_withdraw": await start_safe_withdraw(update, context)
         elif data == "add_inventory_expense": await start_inventory_expense(update, context)
