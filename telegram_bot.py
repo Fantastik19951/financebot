@@ -1984,8 +1984,12 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE, start_
     for row in exp_rows:
         try:
             exp_date = pdate(row[0])
-            if exp_date and start_date <= exp_date <= end_date and len(row) > 1 and row[1]:
-                expenses_by_day[sdate(exp_date)] += float(row[1].replace(',', '.'))
+            # Проверяем дату и наличие всех 6 колонок
+            if exp_date and start_date <= exp_date <= end_date and len(row) >= 6:
+                data_type = row[5]
+                # Суммируем, только если это расход со смены
+                if "Закрытие смены" in data_type:
+                    expenses_by_day[sdate(exp_date)] += parse_float(row[1])
         except (ValueError, IndexError):
             continue
 
@@ -3495,29 +3499,38 @@ async def show_my_salary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ).replace(',', ' ')
 
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=staff_settings_menu_kb())
+
 async def handle_admin_expense_pay_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает тип оплаты и сохраняет расход."""
+    """Обрабатывает тип оплаты и сохраняет расход, добавленный админом."""
     query = update.callback_query
-    pay_type = query.data.split('_')[-1]
+    await query.message.edit_text("⏳ Сохраняю расход...")
+
+    pay_type = query.data.split('_')[-1] # "Наличные" или "Карта"
     
     expense_data = context.user_data['admin_expense']
     amount = expense_data['amount']
     comment = expense_data['comment']
-    who = USER_ID_TO_NAME.get(str(query.from_user.id), "Админ")
+    user = query.from_user
+    who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
     
-    # Списываем из сейфа, если оплата наличными
+    # Списываем из сейфа, ТОЛЬКО если оплата наличными
     if pay_type == "Наличные":
-        add_safe_operation("Расход", amount, f"Админ. расход: {comment}", who)
+        add_safe_operation(user, "Расход", amount, f"Админ. расход: {comment}")
 
-    # Записываем в таблицу расходов
-    ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
-    ws_exp.append_row([sdate(), amount, comment, who])
-
-    await query.message.edit_text(
-        f"✅ Расход '{comment}' на сумму {amount:.2f}₴ ({pay_type}) успешно добавлен.",
-        reply_markup=admin_panel_kb()
-    )
-    context.user_data.pop('admin_expense', None)
+    # Записываем в таблицу расходов с новыми данными
+    try:
+        ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
+        # Новый формат записи с 6 колонками
+        ws_exp.append_row([sdate(), amount, comment, who, pay_type, "Админ. расход"])
+        
+        await query.message.edit_text(
+            f"✅ Расход '{comment}' на сумму {amount:.2f}₴ ({pay_type}) успешно добавлен.",
+            reply_markup=admin_panel_kb()
+        )
+    except Exception as e:
+        await query.message.edit_text(f"❌ Ошибка записи расхода: {e}")
+    finally:
+        context.user_data.pop('admin_expense', None)
 
 
 async def edit_plan_save_value(update: Update, context: ContextTypes.DEFAULT_TYPE, new_value=None):
@@ -4403,7 +4416,14 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'expenses' in report_data and report_data['expenses']:
         ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
         for exp in report_data['expenses']:
-            ws_exp.append_row([today_str, exp['amount'], exp.get('comment', ''), seller])
+            ws_exp.append_row([
+                    today_str, 
+                    exp['amount'], 
+                    exp.get('comment', ''), 
+                    seller,
+                    "Наличные (касса)",
+                    f"Закрытие смены за {today_str}"
+                ])
 
     # 4. Проводим операции с сейфом
     balance_before_shift = get_safe_balance(context)
@@ -5256,15 +5276,21 @@ async def show_expenses_detail(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
-    rows = ws_exp.get_all_values()[1:]
-    exp_list = [row for row in rows if len(row) >= 2 and pdate(row[0].strip()) == report_date]
+    rows = get_cached_sheet_data(context, SHEET_EXPENSES) or []
+    exp_list = []
+    for row in rows:
+        # Убеждаемся, что в строке есть все 6 колонок
+        if len(row) >= 6 and pdate(row[0].strip()) == report_date:
+            # Проверяем, что это расход, связанный со сдачей смены
+            if "Закрытие смены" in row[5]:
+                exp_list.append(row)
 
     if not exp_list:
         msg = "💸 За этот день расходов не найдено."
     else:
-        msg = f"<b>💸 Расходы за {report_date_str}:</b>\n\n"
+        msg = f"<b>💸 Расходы по кассе за {report_date_str}:</b>\n\n"
         for row in exp_list:
-            amount = float(row[1].replace(',', '.'))
+            amount = parse_float(row[1])
             comment = row[2] if len(row) > 2 else ''
             seller = row[3] if len(row) > 3 else ''
             msg += f"<b>{amount:.2f}₴</b>"
