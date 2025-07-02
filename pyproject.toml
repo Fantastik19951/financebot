@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "telegram-finance-bot"
+version = "0.1.0"
+description = "Telegram bot for managing shop finances"
+authors = ["Eugene"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11" # Или ваша версия Python
+python-telegram-bot = "*"
+python-dotenv = "*"
+gspread = "*"
+oauth2client = "*"
+matplotlib = "*"
+numpy = "*"
+thefuzz = "*"
+python-Levenshtein = "*"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
