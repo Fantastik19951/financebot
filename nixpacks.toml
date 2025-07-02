@@ -6,7 +6,7 @@ nixPkgs = ["pkgs.python3", "pkgs.poetry"]
 
 [phases.install]
 # Указываем Railway, что для установки нужно использовать команду 'poetry install'
-# Poetry очень хорошо кэширует зависимости, что ускоряет сборку
+# Poetry очень хорошо кэширует зависимости, что ускоряет сборк
 cmds = ["poetry install"]
 
 [start]
