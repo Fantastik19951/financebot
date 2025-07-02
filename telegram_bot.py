@@ -5988,30 +5988,39 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif state_key == 'search_debt':
-        # Эта логика остается полностью вашей, я ее не трогал
-        search_query = text.strip()
+        search_query = update.message.text.strip().lower()
         context.user_data.pop('search_debt', None)
         rows = get_cached_sheet_data(context, SHEET_DEBTS)
         if rows is None:
-             await update.message.reply_text(f"❌ Ошибка чтения таблицы долгов.")
-             return
+            await update.message.reply_text(f"❌ Ошибка чтения таблицы долгов.")
+            return
+
         matches = []
         for i, row in enumerate(rows):
             if len(row) < 7: continue
-            date_str, name_str, amount_str = row[0].strip(), row[1].strip().lower(), row[2].replace(',', '.')
-            if (search_query == date_str or search_query.lower() in name_str or (search_query.replace(',', '.').isdigit() and search_query == amount_str)):
+            date_str, name_str = row[0].strip(), row[1].strip().lower()
+            if (search_query in date_str or search_query in name_str):
                 matches.append(row + [i+2])
+        
         if not matches:
             await update.message.reply_text("🚫 Ничего не найдено.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="debts_menu")]]))
         else:
             msg = f"<b>🔎 Результаты поиска по '{search_query}':</b>\n"
             kb = []
             for debt in matches:
+                # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
                 supplier, total, to_pay, due_date, status, row_index = debt[1], parse_float(debt[2]), parse_float(debt[4]), debt[5], debt[6], debt[-1]
-                status_icon = "✅" if status.lower() == 'да' else "❌"
-                msg += f"\n──────────────────\n{status_icon} <b>{supplier}</b>\n  <b>Сумма:</b> {total:.2f}₴ | <b>Тип оплаты : {pay_type}\n  <b>Срок:</b> {due_date}"
+                pay_type = debt[7] if len(debt) > 7 else "Наличные"
+                status_icon = "✅" if status.lower() == 'да' else "🟠"
+                
+                msg += f"\n──────────────────\n"
+                msg += f"{status_icon} <b>{supplier}</b> | {pay_type}\n" # Добавили тип оплаты
+                msg += f"  Сумма: {total:.2f}₴ |
+                msg += f"  Срок: {due_date}"
+                
                 if status.lower() != 'да':
                     kb.append([InlineKeyboardButton(f"✅ Погасить для {supplier} ({to_pay:.2f}₴)", callback_data=f"repay_confirm_{row_index}")])
+            
             kb.append([InlineKeyboardButton("🔙 Назад", callback_data="debts_menu")])
             await update.message.reply_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
         return
