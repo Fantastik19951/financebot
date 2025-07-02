@@ -6486,17 +6486,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.edit_text("🔐 Системные настройки:", reply_markup=admin_system_settings_kb())
         elif data == "action_log": await show_log_categories_menu(update, context)
         elif data.startswith("log_view_"):
-            try:
-                parts = data.split('_')
-                category = parts[2]
-                page = int(parts[3])
-            except (ValueError, IndexError):
-                # Если это первый вызов (без номера страницы)
-                category = data.split('_')[2]
+            parts = data.split('_')
+            category = parts[2]
+            page = 0 # Значение по умолчанию
+
+            # Если в callback_data нет номера страницы (это первый клик)
+            if len(parts) < 4:
+                # Вычисляем номер последней страницы
                 all_logs = get_cached_sheet_data(context, SHEET_LOG) or []
                 filtered_logs = [row for row in all_logs if len(row) > 3 and row[3] == category]
                 total_pages = math.ceil(len(filtered_logs) / 10)
                 page = max(0, total_pages - 1)
+            else:
+                # Если это навигация, берем номер страницы из кнопки
+                page = int(parts[3])
             
             await show_log_for_category(update, context, category=category, page=page)
 
