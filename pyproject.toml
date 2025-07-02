@@ -6,7 +6,7 @@ authors = ["Eugene"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.11" # Или ваша версия Python
+python = "^3.11" # Или ваша версия Python1
 python-telegram-bot = "*"
 python-dotenv = "*"
 gspread = "*"
