@@ -3417,26 +3417,50 @@ async def handle_admin_expense_comment(update: Update, context: ContextTypes.DEF
     await update.message.reply_text("Выберите тип оплаты:", reply_markup=InlineKeyboardMarkup(kb))
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-async def show_expense_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает последние 15 записей о расходах."""
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+async def show_expense_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
+    """Показывает страничный просмотр истории расходов с полной детализацией."""
     query = update.callback_query
-    await query.answer()
+    await query.message.edit_text("🧾 Загружаю историю расходов...")
 
-    rows = get_cached_sheet_data(context, SHEET_EXPENSES)
+    rows = get_cached_sheet_data(context, SHEET_EXPENSES, force_update=True) or []
     if not rows:
         return await query.message.edit_text("История расходов пуста.", reply_markup=admin_panel_kb())
 
-    last_ops = rows[-15:]
-    last_ops.reverse()
+    # --- НОВАЯ ЛОГИКА ПАГИНАЦИИ ---
+    rows.reverse() # Новые записи в начало списка
+
+    per_page = 10
+    total_records = len(rows)
+    total_pages = math.ceil(total_records / per_page)
+    page = max(0, min(page, total_pages - 1)) # Защита от неверного номера страницы
+
+    start_index = page * per_page
+    page_records = rows[start_index : start_index + per_page]
     
-    text = "<b>🧾 Последние 15 расходов:</b>\n"
-    for row in last_ops:
-        date, amount, comment, user = (row + ["", "", "", ""])[:4]
-        text += "\n──────────────────\n"
-        text += f"🗓 <b>{date}</b> - <b>{amount}₴</b>\n"
-        text += f"   • {comment} ({user})"
+    msg = f"<b>🧾 История расходов (Стр. {page + 1}/{total_pages}):</b>\n"
+    
+    for row in page_records:
+        date, amount, comment, user, pay_type, data_type = (row + [""] * 6)[:6]
         
-    await query.message.edit_text(text, parse_mode='HTML', reply_markup=admin_panel_kb())
+        msg += "\n──────────────────\n"
+        msg += f"🗓 <b>{date}</b> - <b>{amount}₴</b>\n"
+        msg += f"   • {comment} (<i>{user}</i>)\n"
+        msg += f"   • Тип: {pay_type or 'Наличные'}, Источник: {data_type or 'Не указан'}"
+    
+    # --- НОВЫЕ КНОПКИ НАВИГАЦИИ ---
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("◀️ Назад", callback_data=f"expense_history_{page - 1}"))
+    if (page + 1) < total_pages:
+        nav_row.append(InlineKeyboardButton("Вперед ▶️", callback_data=f"expense_history_{page + 1}"))
+    
+    kb = [nav_row] if nav_row else []
+    kb.append([InlineKeyboardButton("🔙 В админ-панель", callback_data="admin_panel")])
+    
+    await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+
 
 async def show_my_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает персональный график смен пользователя на 2 недели вперед."""
@@ -6393,7 +6417,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "admin_revision": await start_revision(update, context)
 
         elif data == "add_admin_expense": await start_admin_expense(update, context)
-        elif data == "expense_history": await show_expense_history(update, context)
+        elif data.startswith("expense_history"):
+            try:
+                # Пытаемся извлечь номер страницы из 'expense_history_2'
+                page = int(data.split('_')[-1])
+            except (ValueError, IndexError):
+                # Если это первый вызов ('expense_history'), начинаем с нулевой страницы
+                page = 0
+            await show_expense_history(update, context, page=page)
         elif data.startswith("exp_pay_type_"): await handle_admin_expense_pay_type(update, context)
         
         elif data == "staff_management": await staff_management_menu(update, context)
