@@ -1724,11 +1724,11 @@ async def show_log_categories_menu(update: Update, context: ContextTypes.DEFAULT
     """Показывает меню с категориями логов."""
     query = update.callback_query
     kb = [
-        [InlineKeyboardButton("🧾 Накладные", callback_data="log_view_Накладные_0")],
-        [InlineKeyboardButton("🗑️ Списания и Переучеты", callback_data="log_view_Остаток_0")],
-        [InlineKeyboardButton("💵 Операции с сейфом", callback_data="log_view_Сейф_0")],
-        [InlineKeyboardButton("💰 Зарплаты и Бонусы", callback_data="log_view_Зарплаты_0")],
-        [InlineKeyboardButton("🤖 Действия системы", callback_data="log_view_Система_0")],
+        [InlineKeyboardButton("🧾 Накладные", callback_data="log_view_Накладные")],
+        [InlineKeyboardButton("🗑️ Списания и Переучеты", callback_data="log_view_Остаток")],
+        [InlineKeyboardButton("💵 Операции с сейфом", callback_data="log_view_Сейф")],
+        [InlineKeyboardButton("💰 Зарплаты и Бонусы", callback_data="log_view_Зарплаты")],
+        [InlineKeyboardButton("🤖 Действия системы", callback_data="log_view_Система")],
         [InlineKeyboardButton("🔙 Назад в админ-панель", callback_data="admin_panel")]
     ]
     await query.message.edit_text("🗂️ Выберите категорию для просмотра журнала действий:", reply_markup=InlineKeyboardMarkup(kb))
@@ -6488,15 +6488,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("log_view_"):
             parts = data.split('_')
             category = parts[2]
-            page = 0 # Значение по умолчанию
+            page = 0
 
-            # Если в callback_data нет номера страницы (это первый клик)
+            # Если в данных кнопки нет номера страницы (len < 4), значит это первый клик
             if len(parts) < 4:
                 # Вычисляем номер последней страницы
                 all_logs = get_cached_sheet_data(context, SHEET_LOG) or []
                 filtered_logs = [row for row in all_logs if len(row) > 3 and row[3] == category]
                 total_pages = math.ceil(len(filtered_logs) / 10)
-                page = max(0, total_pages - 1)
+                page = max(0, total_pages - 1) # Устанавливаем последнюю страницу
             else:
                 # Если это навигация, берем номер страницы из кнопки
                 page = int(parts[3])
