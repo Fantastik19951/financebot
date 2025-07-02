@@ -1733,48 +1733,44 @@ async def show_log_categories_menu(update: Update, context: ContextTypes.DEFAULT
     ]
     await query.message.edit_text("🗂️ Выберите категорию для просмотра журнала действий:", reply_markup=InlineKeyboardMarkup(kb))
 
-async def show_log_for_category(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает страничный лог для выбранной категории."""
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+async def show_log_for_category(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str, page: int = 0):
+    """Показывает страничный лог для выбранной категории с улучшенным форматированием."""
     query = update.callback_query
-    
-    # Формат: log_view_ИмяКатегории_страница
-    try:
-        _, _, category, page_str = query.data.split('_')
-        page = int(page_str)
-    except ValueError:
-        return await query.answer("Ошибка в данных пагинации.", show_alert=True)
-    
     await query.message.edit_text(f"📖 Загружаю логи для категории '{category}'...")
     
     all_logs = get_cached_sheet_data(context, SHEET_LOG, force_update=True) or []
-    # Фильтруем логи по нужной категории
     filtered_logs = [row for row in all_logs if len(row) > 3 and row[3] == category]
-    filtered_logs.reverse() # Новые сверху
 
     if not filtered_logs:
         return await query.message.edit_text(f"В категории '{category}' пока нет записей.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 К категориям", callback_data="action_log")]]))
 
+    # --- ИЗМЕНЕНИЕ: Убираем .reverse() для правильного порядка ---
     per_page = 10
     total_records = len(filtered_logs)
-    total_pages = math.ceil(total_records / per_page)
-    
+    total_pages = math.ceil(total_records / per_page) if total_records > 0 else 1
+    page = max(0, min(page, total_pages - 1))
+
     start_index = page * per_page
     page_records = filtered_logs[start_index : start_index + per_page]
 
     msg = f"<b>Журнал: {category}</b> (Стр. {page + 1}/{total_pages})\n"
-    msg += "─" * 20 + "\n"
+    
     for row in page_records:
         time, _, name, _, action, comment = (row + [""] * 6)[:6]
-        msg += f"<code>{time}</code>\n<b>{name}</b>: {action}\n"
+        # --- НОВОЕ КРАСИВОЕ ФОРМАТИРОВАНИЕ ---
+        msg += "──────────────────\n"
+        msg += f"👤 <b>{name}</b>: {action}\n"
+        msg += f"   • <code>{time}</code>\n"
         if comment:
-            msg += f"   <i>Детали: {comment}</i>\n"
+            msg += f"   • <i>Детали: {comment}</i>\n"
 
     # Кнопки пагинации
     nav_row = []
     if page > 0:
-        nav_row.append(InlineKeyboardButton("◀️", callback_data=f"log_view_{category}_{page-1}"))
+        nav_row.append(InlineKeyboardButton("◀️ Назад", callback_data=f"log_view_{category}_{page-1}"))
     if (page + 1) < total_pages:
-        nav_row.append(InlineKeyboardButton("▶️", callback_data=f"log_view_{category}_{page+1}"))
+        nav_row.append(InlineKeyboardButton("Вперед ▶️", callback_data=f"log_view_{category}_{page+1}"))
     
     kb = [nav_row] if nav_row else []
     kb.append([InlineKeyboardButton("🔙 К категориям", callback_data="action_log")])
@@ -1825,6 +1821,7 @@ async def execute_payout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         ws = GSHEET.worksheet(SHEET_SALARIES)
         ws.append_row([sdate(), seller_name, "Выплата бонуса", amount, period_str])
+        log_action(query.from_user, "Зарплаты", "Выплата бонуса", f"Сумма: {amount:.2f}₴")
         
         # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
         msg = f"✅ Бонус в размере {amount:.2f}₴ для {seller_name} успешно выплачен и записан в историю."
@@ -5231,6 +5228,7 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
         ws_sup.append_row(row_to_save)
+        log_action(user, "Накладные", "Создание накладной", f"Поставщик: {supplier_data['name']}, Приход: {amount_income:.2f}₴")
         
 
         if pay_type.startswith("Долг"):
@@ -5793,6 +5791,7 @@ async def withdraw_daily_salary(update: Update, context: ContextTypes.DEFAULT_TY
     # Если проверка пройдена, выплачиваем
     add_safe_operation(query.from_user, "Зарплата", 700, f"Ставка за смену для {seller_name}")
     add_salary_record(seller_name, "Ставка", 700, "Выплачено из сейфа")
+    log_action(query.from_user, "Зарплаты", "Выплата ставки", f"Сумма: 700₴")
     
     await query.message.edit_text(f"✅ <b>{seller_name}</b>, ваша ставка (700₴) за смену успешно выплачена из сейфа.", parse_mode=ParseMode.HTML, reply_markup=stock_safe_menu_kb())
 
@@ -6486,7 +6485,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "settings_system": # Для админских настроек
             await query.message.edit_text("🔐 Системные настройки:", reply_markup=admin_system_settings_kb())
         elif data == "action_log": await show_log_categories_menu(update, context)
-        elif data.startswith("log_view_"): await show_log_for_category(update, context)
+        elif data.startswith("log_view_"):
+            try:
+                parts = data.split('_')
+                category = parts[2]
+                page = int(parts[3])
+            except (ValueError, IndexError):
+                # Если это первый вызов (без номера страницы)
+                category = data.split('_')[2]
+                all_logs = get_cached_sheet_data(context, SHEET_LOG) or []
+                filtered_logs = [row for row in all_logs if len(row) > 3 and row[3] == category]
+                total_pages = math.ceil(len(filtered_logs) / 10)
+                page = max(0, total_pages - 1)
+            
+            await show_log_for_category(update, context, category=category, page=page)
 
         elif data == "admin_revision": await start_revision(update, context)
         elif data == "noop": pass
