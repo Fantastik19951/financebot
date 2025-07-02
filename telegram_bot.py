@@ -4796,45 +4796,54 @@ async def start_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-async def inventory_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает последние 15 операций с остатком магазина."""
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+async def inventory_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
+    """Показывает страничную историю операций с остатком магазина."""
     query = update.callback_query
-    await query.answer()
+    await query.message.edit_text("📦 Загружаю историю остатка...")
     
-    rows = get_cached_sheet_data(context, "Остаток магазина")
-    if rows is None:
-        await query.message.edit_text("❌ Ошибка чтения истории остатка магазина.")
-        return
+    rows = get_cached_sheet_data(context, SHEET_INVENTORY, force_update=True) or []
+    if not rows:
+        return await query.message.edit_text("История операций с остатком пуста.", reply_markup=stock_menu_kb())
 
-    # Берем последние 15 операций
-    last_ops = rows[-15:]
-    last_ops.reverse() # Новые сверху
+    # --- ЛОГИКА ПАГИНАЦИИ ---
+    rows.reverse()
+
+    per_page = 10
+    total_records = len(rows)
+    total_pages = math.ceil(total_records / per_page)
+    page = max(0, min(page, total_pages - 1))
+
+    start_index = page * per_page
+    page_records = rows[start_index : start_index + per_page]
     
-    text = "📦 <b>Последние 15 операций с остатком магазина:</b>\n"
-    if not last_ops:
-        text += "\n<i>Операций еще не было.</i>"
-    else:
-        for row in last_ops:
-            # Безопасно извлекаем данные
-            date, op_type, amount, comment, user = (row + ["", "", "", "", ""])[:5]
-            
-            # Подбираем иконку в зависимости от типа операции
-            icon = "⚙️" # Иконка по умолчанию
-            if op_type == "Приход":
-                icon = "🟢"
-            elif op_type in ["Продажа", "Списание"]:
-                icon = "🔴"
-            elif op_type == "Переучет":
-                icon = "🔵"
-            
-            # Для переучета сумма может быть в другом месте или отсутствовать, делаем красиво
-            amount_text = f"{amount}₴" if amount else ""
-
-            text += "\n──────────────────\n"
-            text += f"{icon} <b>{op_type}: {amount_text}</b> ({user})\n"
-            text += f"   <i>{date} - {comment}</i>"
+    text = f"<b>📦 История остатка магазина (Стр. {page + 1}/{total_pages}):</b>\n"
+    
+    for row in page_records:
+        date, op_type, amount, comment, user = (row + [""] * 5)[:5]
         
-    await query.message.edit_text(text, parse_mode='HTML', reply_markup=stock_menu_kb())
+        icon = "⚙️"
+        if op_type == "Приход": icon = "🟢"
+        elif op_type in ["Продажа", "Списание"]: icon = "🔴"
+        elif op_type == "Переучет": icon = "🔵"
+        elif op_type == "Корректировка": icon = "🟠"
+        
+        amount_text = f"{amount}₴" if amount else ""
+        text += "\n──────────────────\n"
+        text += f"{icon} <b>{op_type}: {amount_text}</b> ({user})\n"
+        text += f"   <i>{date} - {comment}</i>"
+        
+    # --- КНОПКИ НАВИГАЦИИ ---
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("◀️ Назад", callback_data=f"inventory_history_{page - 1}"))
+    if (page + 1) < total_pages:
+        nav_row.append(InlineKeyboardButton("Вперед ▶️", callback_data=f"inventory_history_{page + 1}"))
+    
+    kb = [nav_row] if nav_row else []
+    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="stock_menu")])
+    
+    await query.message.edit_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 
     
@@ -5789,30 +5798,47 @@ async def withdraw_daily_salary(update: Update, context: ContextTypes.DEFAULT_TY
     
     await query.message.edit_text(f"✅ <b>{seller_name}</b>, ваша ставка (700₴) за смену успешно выплачена из сейфа.", parse_mode=ParseMode.HTML, reply_markup=stock_safe_menu_kb())
 
-async def safe_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+async def safe_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     query = update.callback_query
-    await query.answer()
-    
-    rows = get_cached_sheet_data(context, "Сейф")
-    if rows is None:
-        await query.message.edit_text("❌ Ошибка чтения истории сейфа.")
-        return
+    await query.message.edit_text("🧾 Загружаю историю сейфа...")
 
-    last_ops = rows[-15:]
-    last_ops.reverse()
+    rows = get_cached_sheet_data(context, "Сейф", force_update=True) or []
+    if not rows:
+        return await query.message.edit_text("История операций с сейфом пуста.", reply_markup=safe_menu_kb())
+
+    # --- ЛОГИКА ПАГИНАЦИИ ---
+    rows.reverse() # Новые записи в начало
+
+    per_page = 10
+    total_records = len(rows)
+    total_pages = math.ceil(total_records / per_page)
+    page = max(0, min(page, total_pages - 1))
+
+    start_index = page * per_page
+    page_records = rows[start_index : start_index + per_page]
     
-    text = "🧾 <b>Последние 15 операций с сейфом:</b>\n"
-    if not last_ops:
-        text += "\n<i>Операций еще не было.</i>"
-    else:
-        for row in last_ops:
-            date, op_type, amount, comment, user = (row + ["", "", "", "", ""])[:5]
-            icon = "🟢" if op_type == "Пополнение" else "🔴"
-            text += "\n──────────────────\n"
-            text += f"{icon} <b>{op_type}: {amount}₴</b> ({user})\n"
-            text += f"   <i>{date} - {comment}</i>"
-        
-    await query.message.edit_text(text, parse_mode='HTML', reply_markup=safe_menu_kb())
+    text = f"<b>🧾 История операций с сейфом (Стр. {page + 1}/{total_pages}):</b>\n"
+    
+    for row in page_records:
+        date, op_type, amount, comment, user = (row + [""] * 5)[:5]
+        icon = "🟢" if op_type == "Пополнение" else "🔴"
+        text += "\n──────────────────\n"
+        text += f"{icon} <b>{op_type}: {amount}₴</b> ({user})\n"
+        text += f"   <i>{date} - {comment}</i>"
+    
+    # --- КНОПКИ НАВИГАЦИИ ---
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("◀️ Назад", callback_data=f"safe_history_{page - 1}"))
+    if (page + 1) < total_pages:
+        nav_row.append(InlineKeyboardButton("Вперед ▶️", callback_data=f"safe_history_{page + 1}"))
+    
+    kb = [nav_row] if nav_row else []
+    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="safe_menu")])
+    
+    await query.message.edit_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
+    
 
 
 
@@ -6409,8 +6435,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --- 11. СЕЙФ И ОСТАТОК ---
         elif data == "inventory_balance": await inventory_balance(update, context)
         elif data == "safe_balance": await safe_balance(update, context)
-        elif data == "safe_history": await safe_history(update, context)
-        elif data == "inventory_history": await inventory_history(update, context)
+        elif data.startswith("safe_history"):
+            try:
+                page = int(data.split('_')[-1])
+            except (ValueError, IndexError):
+                page = 0
+            await safe_history(update, context, page=page)
+            
+        elif data.startswith("inventory_history"):
+            try:
+                page = int(data.split('_')[-1])
+            except (ValueError, IndexError):
+                page = 0
+            await inventory_history(update, context, page=page)
         elif data == "safe_deposit": await start_safe_deposit(update, context)
         elif data == "safe_withdraw": await start_safe_withdraw(update, context)
         elif data == "add_inventory_expense": await start_inventory_expense(update, context)
