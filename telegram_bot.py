@@ -5367,8 +5367,8 @@ async def save_shift(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text(f"❌ Ошибка сохранения смены: {str(e)}")
 
 # --- ДОЛГИ ---
-async def show_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
-    """Показывает страничный список АКТУАЛЬНЫХ долгов с остатком > 0."""
+async def show_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0, filter_by: str = None):
+    """Показывает страничный список АКТУАЛЬНЫХ долгов с возможностью фильтрации."""
     query = update.callback_query
     if query:
         await query.answer()
@@ -5378,19 +5378,17 @@ async def show_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE,
         rows = ws.get_all_values()[1:]
         
         unpaid_debts = []
-        # --- ГЛАВНОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-        # Добавляем проверку, что остаток (столбец E, индекс 4) больше нуля.
         for row in rows:
             try:
-                # Проверяем, что в строке есть все нужные столбцы
                 if len(row) >= 7:
                     status_paid = row[6].strip().lower()
                     balance_str = row[4].strip()
-                    # Убеждаемся, что строка с остатком не пустая, прежде чем преобразовывать в число
                     if balance_str and float(balance_str.replace(',', '.')) > 0 and status_paid != "да":
-                        unpaid_debts.append(row)
+                        # --- ЛОГИКА ФИЛЬТРАЦИИ ---
+                        pay_type = row[7] if len(row) > 7 else "Наличные"
+                        if filter_by is None or filter_by == pay_type:
+                            unpaid_debts.append(row)
             except (IndexError, ValueError):
-                # Игнорируем строки с неверным форматом данных
                 continue
 
         unpaid_debts.sort(key=lambda x: pdate(x[5]) or dt.date.max)
@@ -5409,6 +5407,8 @@ async def show_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE,
     page_debts = unpaid_debts[start_index:end_index]
 
     msg = f"<b>📋 Текущие долги (Стр. {page + 1}/{total_pages}):</b>\n"
+    if filter_by:
+        msg = f"<b>📋 Долги (Фильтр: {filter_by} | Стр. {page + 1}/{total_pages}):</b>\n"
 
     if not page_debts:
         msg = "✅ <b>Отлично! Текущих долгов нет.</b>"
@@ -5425,11 +5425,23 @@ async def show_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE,
             msg += f"    💳 <b>Тип оплаты:</b> {pay_type}\n"
     
     kb = []
+    
+    # Кнопки фильтрации
+    filter_row = [
+        InlineKeyboardButton("Фильтр: Наличные", callback_data=f"current_debts_filter_Наличные_0"),
+        InlineKeyboardButton("Фильтр: Карта", callback_data=f"current_debts_filter_Карта_0")
+    ]
+    if filter_by:
+        filter_row.append(InlineKeyboardButton("❌ Сбросить", callback_data="current_debts_0"))
+    kb.append(filter_row)
+
+    # Кнопки пагинации (вперед/назад)
     kb_nav = []
+    nav_prefix = f"current_debts_filter_{filter_by}_" if filter_by else "current_debts_"
     if page > 0:
-        kb_nav.append(InlineKeyboardButton("◀️ Назад", callback_data=f"current_debts_{page - 1}"))
+        kb_nav.append(InlineKeyboardButton("◀️ Назад", callback_data=f"{nav_prefix}{page - 1}"))
     if (page + 1) < total_pages:
-        kb_nav.append(InlineKeyboardButton("Вперед ▶️", callback_data=f"current_debts_{page + 1}"))
+        kb_nav.append(InlineKeyboardButton("Вперед ▶️", callback_data=f"{nav_prefix}{page + 1}"))
     if kb_nav:
         kb.append(kb_nav)
 
@@ -5538,13 +5550,15 @@ async def view_repayable_debts(update: Update, context: ContextTypes.DEFAULT_TYP
     msg = "<b>💸 Погашение долга</b>\n\nВыберите из списка долг, который хотите погасить полностью:"
     kb = []
     for debt in unpaid_debts:
+        pay_type = debt[7] if len(row) > 7 else "Наличные"
+        pay_type_short = "(К)" if pay_type == "Карта" else "(Н)"
         row_index = debt[-1]
         date_str = debt[0] if len(debt) > 0 else ""
         supplier = debt[1] if len(debt) > 1 else ""
         total_str = debt[2] if len(debt) > 2 else "0"
         due_date_str = debt[5] if len(debt) > 5 else ""
-        total_amount = float(total_str.replace(',', '.'))
-        btn_text = f"{date_str} - {supplier} - {total_amount:.2f}₴"
+        total_amount = parse_float(total_str.replace(',', '.'))
+        btn_text = f"{date_str} - {supplier} - {total_amount:.2f}₴ {pay_type_short}"
         kb.append([InlineKeyboardButton(btn_text, callback_data=f"repay_confirm_{row_index}")])
     
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="debts_menu")])
@@ -6002,7 +6016,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for debt in matches:
                 supplier, total, to_pay, due_date, status, row_index = debt[1], parse_float(debt[2]), parse_float(debt[4]), debt[5], debt[6], debt[-1]
                 status_icon = "✅" if status.lower() == 'да' else "❌"
-                msg += f"\n──────────────────\n{status_icon} <b>{supplier}</b>\n  <b>Сумма:</b> {total:.2f}₴ | <b>Остаток:</b> {to_pay:.2f}₴\n  <b>Срок:</b> {due_date}"
+                msg += f"\n──────────────────\n{status_icon} <b>{supplier}</b>\n  <b>Сумма:</b> {total:.2f}₴ | <b>Тип оплаты : {pay_type}\n  <b>Срок:</b> {due_date}"
                 if status.lower() != 'да':
                     kb.append([InlineKeyboardButton(f"✅ Погасить для {supplier} ({to_pay:.2f}₴)", callback_data=f"repay_confirm_{row_index}")])
             kb.append([InlineKeyboardButton("🔙 Назад", callback_data="debts_menu")])
@@ -6082,6 +6096,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await prompt_for_new_supplier_name(update, context)
         elif data.startswith("dir_add_new_sup_"):
             await add_new_supplier_directory_and_continue(update, context)
+
+        elif data.startswith("current_debts_filter_"):
+            parts = data.split('_')
+            filter_by, page = parts[3], int(parts[4])
+            await show_current_debts(update, context, page=page, filter_by=filter_by)
         
         
         
