@@ -5527,19 +5527,13 @@ async def repay_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, row_
         logging.error(f"Ошибка в repay_confirm для строки {row_index}: {e}")
         await query.message.edit_text(f"❌ Не удалось найти данные о долге. Возможно, он был удален.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="debts_menu")]]))
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def view_repayable_debts(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает список долгов для погашения, используя кэш."""
+    """Показывает список долгов для погашения с указанием типа оплаты на кнопке."""
     query = update.callback_query
-    await query.answer()
+    await query.message.edit_text("⏳ Загружаю список долгов для погашения...")
 
-    # ИСПОЛЬЗУЕМ КЭШ
-    ws = GSHEET.worksheet(SHEET_DEBTS)
-    rows = ws.get_all_values()[1:]
-    if rows is None:
-        await query.message.edit_text("❌ Ошибка чтения таблицы долгов. Попробуйте позже.")
-        return
-
-    # Проверяем столбец G (индекс 6) и добавляем реальный индекс строки
+    rows = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
     unpaid_debts = [row + [i+2] for i, row in enumerate(rows) if len(row) >= 7 and row[6].strip().lower() != "да"]
     unpaid_debts.sort(key=lambda x: pdate(x[5]) or dt.date.max)
 
@@ -5550,14 +5544,13 @@ async def view_repayable_debts(update: Update, context: ContextTypes.DEFAULT_TYP
     msg = "<b>💸 Погашение долга</b>\n\nВыберите из списка долг, который хотите погасить полностью:"
     kb = []
     for debt in unpaid_debts:
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
         pay_type = debt[7] if len(row) > 7 else "Наличные"
         pay_type_short = "(К)" if pay_type == "Карта" else "(Н)"
-        row_index = debt[-1]
-        date_str = debt[0] if len(debt) > 0 else ""
-        supplier = debt[1] if len(debt) > 1 else ""
-        total_str = debt[2] if len(debt) > 2 else "0"
-        due_date_str = debt[5] if len(debt) > 5 else ""
-        total_amount = parse_float(total_str.replace(',', '.'))
+        
+        row_index, date_str, supplier = debt[-1], debt[0], debt[1]
+        total_amount = parse_float(debt[4]) # Остаток к оплате
+        
         btn_text = f"{date_str} - {supplier} - {total_amount:.2f}₴ {pay_type_short}"
         kb.append([InlineKeyboardButton(btn_text, callback_data=f"repay_confirm_{row_index}")])
     
