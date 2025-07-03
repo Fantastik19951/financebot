@@ -3400,6 +3400,7 @@ async def start_admin_expense(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def start_expense_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Запускает правильный диалог добавления расхода в зависимости от роли пользователя.
@@ -3418,6 +3419,7 @@ async def start_expense_flow(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Если это продавец, запускаем упрощенный сценарий
     else:
         context.user_data['seller_expense'] = {'step': 'amount'}
+        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Добавлен недостающий вызов edit_text ---
         await query.message.edit_text(
             "💸 Введите сумму расхода (наличные из сейфа):",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="safe_menu")]])
