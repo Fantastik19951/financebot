@@ -6232,7 +6232,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "stock_safe_menu": await stock_safe_menu(update, context)
         elif data == "staff_menu": await staff_menu(update, context)
         elif data == "safe_menu":
-            await query.message.edit_text("🗄️ Операции с сейфом:", reply_markup=safe_menu_kb())
+            is_admin = str(query.from_user.id) in ADMINS
+            await query.message.edit_text("🗄️ Операции с сейфом:", reply_markup=safe_menu_kb(is_admin=is_admin))
         elif data == "stock_menu":
             await query.message.edit_text("📦 Операции с остатком:", reply_markup=stock_menu_kb())
         elif data == "analytics_menu": 
