@@ -2905,20 +2905,19 @@ def analytics_menu_kb():
     ])
     
 def safe_menu_kb(is_admin=False):
-    """Меню для операций с сейфом с правами доступа."""
+    """Меню для операций с сейфом с разделением прав."""
     kb = [
         [InlineKeyboardButton("💵 Остаток в сейфе", callback_data="safe_balance")],
         [InlineKeyboardButton("🧾 История сейфа", callback_data="safe_history")],
         [InlineKeyboardButton("➕ Положить в сейф", callback_data="safe_deposit")]
     ]
     
-    # --- ИЗМЕНЕНИЕ: Упрощаем callback_data ---
     if is_admin:
         kb.append([InlineKeyboardButton("➖ Снять из сейфа", callback_data="safe_withdraw")])
-        # Для админа оставляем старый, многошаговый процесс
-        kb.append([InlineKeyboardButton("💸 Добавить расход (Админ)", callback_data="add_admin_expense")])
+        # Для админа кнопка будет вызывать админский сценарий
+        kb.append([InlineKeyboardButton("💸 Добавить расход", callback_data="add_admin_expense")])
     else:
-        # Для продавца - новый, простой процесс
+        # Для продавца кнопка будет вызывать сценарий продавца
         kb.append([InlineKeyboardButton("💸 Добавить расход", callback_data="add_seller_expense")])
 
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")])
@@ -3359,59 +3358,6 @@ async def toggle_arrival_status(update: Update, context: ContextTypes.DEFAULT_TY
 
 # --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
 
-async def start_seller_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запрашивает у продавца сумму и комментарий в одном сообщении."""
-    query = update.callback_query
-    await query.answer()
-    
-    # Устанавливаем состояние, чтобы handle_text мог поймать ответ
-    context.user_data['seller_expense'] = {'step': 'amount_and_comment'}
-    
-    await query.message.edit_text(
-        "💸 Введите расход в формате: **Сумма Комментарий**\n\n"
-        "Например: `150 Такси`",
-        parse_mode=ParseMode.MARKDOWN,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="safe_menu")]])
-    )
-
-async def process_seller_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает сообщение от продавца, парсит его и сохраняет расход."""
-    user = update.effective_user
-    text = update.message.text
-    
-    try:
-        # Пытаемся разделить сообщение на сумму и комментарий
-        parts = text.split(maxsplit=1)
-        amount = parse_float(parts[0])
-        comment = parts[1] if len(parts) > 1 else "Расход продавца"
-
-        if amount <= 0:
-            raise ValueError("Сумма должна быть больше нуля.")
-
-    except (ValueError, IndexError):
-        await update.message.reply_text(
-            "❌ **Неверный формат!**\n\n"
-            "Пожалуйста, введите расход в формате: **Сумма Комментарий**\n"
-            "Например: `150 Такси`",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        return
-
-    # Если все в порядке, сохраняем расход
-    who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
-    
-    add_safe_operation(user, "Расход", amount, f"Расход продавца: {comment}")
-    
-    ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
-    ws_exp.append_row([sdate(), amount, comment, who, "Наличные", "Расход продавца"])
-
-    await update.message.reply_text(
-        f"✅ Расход '{comment}' на сумму {amount:.2f}₴ успешно добавлен.",
-        reply_markup=safe_menu_kb(is_admin=False)
-    )
-    # Очищаем состояние
-    context.user_data.pop('seller_expense', None)
-
 async def edit_plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинает процесс редактирования плана."""
     query = update.callback_query
@@ -3618,6 +3564,52 @@ async def show_my_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += "<i>У вас нет назначенных смен в ближайшее время.</i>"
 
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=staff_settings_menu_kb())
+
+# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
+
+async def start_seller_expense_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает простой диалог добавления расхода для продавца."""
+    query = update.callback_query
+    await query.answer()
+    
+    context.user_data['seller_expense'] = {'step': 'amount'}
+    await query.message.edit_text(
+        "💸 Введите сумму расхода (будет списана из сейфа):",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="safe_menu")]])
+    )
+
+async def handle_seller_expense_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает сумму расхода от продавца и запрашивает комментарий."""
+    try:
+        amount = parse_float(update.message.text)
+        if amount <= 0: raise ValueError("Сумма должна быть положительной")
+        
+        context.user_data['seller_expense']['amount'] = amount
+        context.user_data['seller_expense']['step'] = 'comment'
+        await update.message.reply_text("📝 Введите комментарий/категорию расхода:")
+    except ValueError:
+        await update.message.reply_text("❌ Неверный формат. Введите положительное число.")
+
+async def save_seller_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохраняет расход, добавленный продавцом."""
+    expense_data = context.user_data['seller_expense']
+    amount = expense_data['amount']
+    comment = update.message.text
+    user = update.effective_user
+    who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
+    
+    # 1. Списываем деньги из сейфа
+    add_safe_operation(user, "Расход", amount, f"Расход продавца: {comment}")
+    
+    # 2. Записываем в таблицу расходов
+    ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
+    ws_exp.append_row([sdate(), amount, comment, who, "Наличные", "Расход продавца"])
+
+    await update.message.reply_text(
+        f"✅ Расход '{comment}' на сумму {amount:.2f}₴ успешно добавлен.",
+        reply_markup=safe_menu_kb(is_admin=False)
+    )
+    context.user_data.pop('seller_expense', None)
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def show_my_salary(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6146,11 +6138,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif step == 'expenses': return await handle_report_expenses(update, context)
         elif step == 'expense_comment': return await handle_expense_comment(update, context)
         elif step == 'comment': return await save_report(update, context)
-
-    elif state_key == 'seller_expense':
-        # Любой текстовый ответ в этом состоянии будет обработан новой функцией
-        return await process_seller_expense(update, context)
-
     
     elif state_key == 'supplier':
         step = user_data['supplier'].get('step')
@@ -6163,11 +6150,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif step == 'due_date': return await handle_due_date_selection(update, context) # Должно обрабатываться кнопкой, но на всякий случай
         elif step == 'comment': return await save_supplier(update, context)
 
-
-    elif state_key == 'expense':
-        step = user_data['expense'].get('step')
-        if step == 'value': return await handle_expense_value(update, context)
-        elif step == 'comment': return await save_expense(update, context)
+    elif state_key == 'seller_expense':
+        step = user_data['seller_expense'].get('step')
+        if step == 'amount': return await handle_seller_expense_amount(update, context)
+        elif step == 'comment': return await save_seller_expense(update, context)
 
     elif state_key == 'admin_expense':
         step = user_data['admin_expense'].get('step')
@@ -6613,7 +6599,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "admin_revision": await start_revision(update, context)
 
         elif data == "add_admin_expense": await start_admin_expense(update, context)
-        elif data == "add_seller_expense": await start_seller_expense(update, context)
+        elif data == "add_seller_expense": await start_seller_expense_dialog(update, context)
         elif data.startswith("expense_history"):
             try:
                 # Пытаемся извлечь номер страницы из 'expense_history_2'
