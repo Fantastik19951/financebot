@@ -4549,77 +4549,81 @@ async def show_today_invoices(update: Update, context: ContextTypes.DEFAULT_TYPE
     kb = [[InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")]]
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
     
+# --- ЗАМЕНИТЕ ВСЮ ФУНКЦИЮ НА ЭТУ ЭТАЛОННУЮ ВЕРСИЮ ---
 async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # --- ИСПРАВЛЕНИЕ 1: Убираем логику, которая портила комментарий ---
-    # Теперь мы просто отправляем "processing_message" и доверяем данным, 
-    # которые были установлены на предыдущих шагах.
     processing_message = None
-    if update.callback_query:
-        await update.callback_query.answer()
-        await update.callback_query.message.edit_text("⏳ Процесс создания вечернего отчета, пожалуйста, подождите...")
-        processing_message = update.callback_query.message
-    else:
-        processing_message = await update.message.reply_text("⏳ Процесс создания вечернего отчета, пожалуйста, подождите...")
+    query = update.callback_query
     
     try:
+        # Шаг 1: Отправляем/редактируем сообщение о статусе
+        if query:
+            await query.answer()
+            # Устанавливаем пустой комментарий, так как пользователь нажал "Пропустить"
+            if 'report' in context.user_data:
+                context.user_data['report']['comment'] = ""
+            await query.message.edit_text("⏳ Процесс создания вечернего отчета, пожалуйста, подождите...")
+            processing_message = query.message
+        else:
+            # Сохраняем комментарий из текстового сообщения
+            if 'report' in context.user_data:
+                context.user_data['report']['comment'] = update.message.text
+            processing_message = await update.message.reply_text("⏳ Процесс создания вечернего отчета, пожалуйста, подождите...")
+
+        # Шаг 2: Безопасно собираем все данные для отчета
         report_data = context.user_data.get('report', {})
         today_str = sdate()
         current_date = pdate(today_str)
-        tomorrow_date = current_date + dt.timedelta(days=1)
-        
-        # 2. Собираем данные (комментарий и расходы уже установлены в handle_report_terminal)
+        tomorrow_date = current_date + dt.timedelta(days=1) if current_date else None
+
         cash = report_data.get('cash', 0)
         terminal = report_data.get('terminal', 0)
         total_sales = cash + terminal
         seller = report_data.get('seller', 'Неизвестный')
-        comment = report_data.get('comment', '') # Просто берем готовое значение
-        expenses_total = sum(exp['amount'] for exp in report_data.get('expenses', []))
-    
-    # 3. Записываем расходы
-    expenses_total = sum(exp['amount'] for exp in report_data.get('expenses', []))
-    if 'expenses' in report_data and report_data['expenses']:
-        ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
-        for exp in report_data['expenses']:
-            ws_exp.append_row([
-                    today_str, 
-                    exp['amount'], 
-                    exp.get('comment', ''), 
-                    seller,
-                    "Наличные (касса)",
-                    f"Закрытие смены за {today_str}"
+        comment = report_data.get('comment', '')
+        expenses_total = sum(exp.get('amount', 0) for exp in report_data.get('expenses', []))
+
+        # Шаг 3: Записываем расходы смены (если они были)
+        if 'expenses' in report_data and report_data['expenses']:
+            ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
+            for exp in report_data['expenses']:
+                ws_exp.append_row([
+                    today_str, exp.get('amount', 0), exp.get('comment', ''), seller,
+                    "Наличные (касса)", f"Закрытие смены за {today_str}"
                 ])
 
-    # 4. Проводим операции с сейфом
-    balance_before_shift = get_safe_balance(context)
-    cash_balance = cash - expenses_total
-    add_safe_operation(update.effective_user, "Пополнение", cash_balance, "Остаток кассы за день")
-    add_inventory_operation("Продажа", total_sales, "Продажа товаров за смену", seller)
-    
-    # Начисляем бонус
-    if seller in ["Мария", "Людмила"]:
-        bonus = round((total_sales * 0.02) - 700, 2)
-        if bonus > 0:
-            add_salary_record(seller, "Премия 2%", bonus, f"За {today_str} (продажи: {total_sales:.2f}₴)")
+        # Шаг 4: Проводим операции с сейфом и остатком
+        balance_before_shift = get_safe_balance(context)
+        cash_balance = cash - expenses_total
+        add_safe_operation(update.effective_user, "Пополнение", cash_balance, "Остаток кассы за день")
+        add_inventory_operation("Продажа", total_sales, "Продажа товаров за смену", seller)
+        
+        # Начисляем бонус, если применимо
+        if seller in ["Мария", "Людмила"]:
+            bonus = round((total_sales * 0.02) - 700, 2)
+            if bonus > 0:
+                add_salary_record(seller, "Премия 2%", bonus, f"За {today_str} (продажи: {total_sales:.2f}₴)")
 
-    # Сбрасываем кэш и получаем финальный баланс
-    if 'sheets_cache' in context.bot_data and "Сейф" in context.bot_data['sheets_cache']:
-        del context.bot_data['sheets_cache']["Сейф"]
-    safe_bal_after_shift = get_safe_balance(context)
+        # Обновляем кэш сейфа и получаем финальный баланс
+        get_cached_sheet_data(context, "Сейф", force_update=True)
+        safe_bal_after_shift = get_safe_balance(context)
 
-    # 5. Получаем данные на завтра
-    total_debts, suppliers_debts = get_debts_for_date(context, tomorrow_date)
-        planning_report, planned_cash, planned_card, planned_total = get_planning_details_for_date(context, tomorrow_date)
-    
-    # 6. Записываем дневной отчет
-    ws_report = GSHEET.worksheet(SHEET_REPORT)
-    report_row_data = [
-        today_str, seller, cash, terminal, total_sales, 
-        cash_balance, total_debts, planned_total, comment, safe_bal_after_shift
-    ]
-    ws_report.append_row(report_row_data)
+        # Шаг 5: Собираем данные для прогноза на завтра
+        total_debts, suppliers_debts = (0, [])
+        planning_report, planned_cash, planned_card, planned_total = ("", 0, 0, 0)
+        if tomorrow_date:
+            total_debts, suppliers_debts = get_debts_for_date(context, tomorrow_date)
+            planning_report, planned_cash, planned_card, planned_total = get_planning_details_for_date(context, tomorrow_date)
+        
+        # Шаг 6: Записываем главный дневной отчет
+        ws_report = GSHEET.worksheet(SHEET_REPORT)
+        report_row_data = [
+            today_str, seller, cash, terminal, total_sales, 
+            cash_balance, total_debts, planned_total, comment, safe_bal_after_shift
+        ]
+        ws_report.append_row(report_row_data)
 
-    # 7. Формируем финальное сообщение (здесь без изменений)
-    resp = (f"✅ <b>Смена полностью завершена!</b>\n\n"
+        # Шаг 7: Формируем и отправляем финальное сообщение
+        resp = (f"✅ <b>Смена полностью завершена!</b>\n\n"
             f"📅 Дата: {today_str}\n"
             f"👤 Продавец: {seller}\n"
             f"💵 Наличные: {cash:.2f}₴\n"
@@ -4632,32 +4636,17 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• Остаток кассы: +{cash_balance:.2f}₴\n"
             f"• Зарплата (ставка): -700.00₴\n"
             f"• <b>Стало в сейфе: {safe_bal_after_shift:.2f}₴</b>\n")
-    
-    if not planning_report and not suppliers_debts:
-         resp += f"\n\nℹ️ *Нет планов или долгов на {sdate(tomorrow_date)}.*"
-    else:
-        if planning_report: resp += planning_report
-        if suppliers_debts:
-            resp += "\n\n<b>🗓 Долги к оплате на завтра:</b>\n" + "\n".join([f"- {n}: {a:.2f}₴" for n, a in suppliers_debts])
-    
-    total_needed_cash = total_debts + planned_cash
-    total_needed_card = planned_card
-    
-    resp += "\n"
-    if total_needed_cash > 0: resp += f"\n<b>ИТОГО на завтра наличными: {total_needed_cash:.2f}₴</b>"
-    if total_needed_card > 0: resp += f"\n<b>ИТОГО на завтра картой: {total_needed_card:.2f}₴</b>"
-    
-    kb = [[
-        InlineKeyboardButton("💸 Детально расходы", callback_data=f"details_exp_{today_str}_{today_str}"),
-        InlineKeyboardButton("📦 Детально накладные", callback_data=f"details_sup_{today_str}_{today_str}_0")
-    ], [InlineKeyboardButton("🔙 В главное меню", callback_data="main_menu")]]
-    markup = InlineKeyboardMarkup(kb)
+        kb = [[
+            InlineKeyboardButton("💸 Детально расходы", callback_data=f"details_exp_{today_str}_{today_str}"),
+            InlineKeyboardButton("📦 Детально накладные", callback_data=f"details_sup_{today_str}_{today_str}_0")
+        ], [InlineKeyboardButton("🔙 В главное меню", callback_data="main_menu")]]
+        markup = InlineKeyboardMarkup(kb)
 
-    await processing_message.edit_text(
-            resp,
-            parse_mode=ParseMode.HTML,
-            reply_markup=markup
-    )
+        await processing_message.edit_text(resp, parse_mode=ParseMode.HTML, reply_markup=markup)
+        
+        # Шаг 8: Очищаем планы на сегодня ПОСЛЕ всех операций
+        clear_plan_for_date(today_str)
+
     except Exception as e:
         error_msg = f"❌ Критическая ошибка при сохранении отчета: {e}"
         if processing_message:
@@ -4665,7 +4654,17 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(error_msg, exc_info=True)
     
     finally:
+        # Гарантированно очищаем состояние диалога в любом случае
         context.user_data.pop('report', None)
+
+
+
+
+
+
+
+
+
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def generate_daily_report_text(context: ContextTypes.DEFAULT_TYPE, report_date_str: str):
