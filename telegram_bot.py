@@ -2903,18 +2903,23 @@ def analytics_menu_kb():
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
     
-def safe_menu_kb():
-    """Меню для операций с сейфом."""
-    return InlineKeyboardMarkup([
+def safe_menu_kb(is_admin=False):
+    """Меню для операций с сейфом с правами доступа."""
+    kb = [
         [InlineKeyboardButton("💵 Остаток в сейфе", callback_data="safe_balance")],
         [InlineKeyboardButton("🧾 История сейфа", callback_data="safe_history")],
-        [
-            InlineKeyboardButton("➕ Положить", callback_data="safe_deposit"),
-            InlineKeyboardButton("➖ Снять", callback_data="safe_withdraw")
-        ],
-        [InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")]
-    ])
-
+        [InlineKeyboardButton("➕ Положить в сейф", callback_data="safe_deposit")],
+        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Кнопка "Добавить расход" теперь доступна всем ---
+        [InlineKeyboardButton("💸 Добавить расход", callback_data="start_expense_flow")]
+    ]
+    
+    if is_admin:
+        # Кнопка "Снять" остается только для админов
+        kb.append([InlineKeyboardButton("➖ Снять из сейфа", callback_data="safe_withdraw")])
+    
+    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")])
+    return InlineKeyboardMarkup(kb)
+    
 def stock_menu_kb():
     """Меню для операций с остатком магазина."""
     return InlineKeyboardMarkup([
@@ -3083,9 +3088,10 @@ def settings_menu_kb():
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 def admin_panel_kb():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Добавить расход", callback_data="add_admin_expense")],
+        # Кнопка "Добавить расход" убрана
         [InlineKeyboardButton("🧾 История расходов", callback_data="expense_history")],
         [InlineKeyboardButton("👥 Управление персоналом", callback_data="staff_management")],
         [InlineKeyboardButton("⚙️ Системные настройки", callback_data="system_settings")],
@@ -3093,7 +3099,7 @@ def admin_panel_kb():
         [InlineKeyboardButton("🧮 Переучёт", callback_data="admin_revision")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
-
+    
 def back_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔙 Назад", callback_data="back")]
@@ -3385,11 +3391,73 @@ async def start_admin_expense(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     context.user_data['admin_expense'] = {'step': 'amount'}
+    
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Кнопка отмены теперь ведет в меню сейфа ---
     await query.message.edit_text(
         "💸 Введите сумму расхода:",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="admin_panel")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="safe_menu")]])
     )
 
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+async def start_expense_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Запускает правильный диалог добавления расхода в зависимости от роли пользователя.
+    """
+    query = update.callback_query
+    await query.answer()
+    user_id = str(query.from_user.id)
+    
+    # Если пользователь - админ, запускаем админский сценарий
+    if user_id in ADMINS:
+        context.user_data['admin_expense'] = {'step': 'amount'}
+        await query.message.edit_text(
+            "💸 Введите сумму расхода (админ):",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="safe_menu")]])
+        )
+    # Если это продавец, запускаем упрощенный сценарий
+    else:
+        context.user_data['seller_expense'] = {'step': 'amount'}
+        await query.message.edit_text(
+            "💸 Введите сумму расхода (наличные из сейфа):",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="safe_menu")]])
+        )
+
+# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
+
+async def handle_seller_expense_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает сумму расхода от продавца и запрашивает комментарий."""
+    try:
+        amount = parse_float(update.message.text)
+        context.user_data['seller_expense']['amount'] = amount
+        context.user_data['seller_expense']['step'] = 'comment'
+        await update.message.reply_text("📝 Введите комментарий/категорию расхода:")
+    except ValueError:
+        await update.message.reply_text("❌ Пожалуйста, введите сумму числом.")
+
+async def save_seller_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохраняет расход, добавленный продавцом."""
+    expense_data = context.user_data['seller_expense']
+    amount = expense_data['amount']
+    comment = update.message.text
+    user = update.effective_user
+    who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
+    
+    # 1. Списываем деньги из сейфа
+    add_safe_operation(user, "Расход", amount, f"Расход продавца: {comment}")
+    
+    # 2. Записываем в таблицу расходов
+    ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
+    # Указываем, что это наличный расход, внесенный продавцом
+    ws_exp.append_row([sdate(), amount, comment, who, "Наличные", "Расход продавца"])
+
+    await update.message.reply_text(
+        f"✅ Расход '{comment}' на сумму {amount:.2f}₴ (наличные) успешно добавлен.",
+        reply_markup=safe_menu_kb(is_admin=False) # Показываем меню сейфа для продавца
+    )
+    context.user_data.pop('seller_expense', None)
+
+
+    
 async def handle_admin_expense_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает сумму расхода и запрашивает комментарий."""
     try:
@@ -4195,21 +4263,25 @@ async def handle_report_cash(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except ValueError:
         await update.message.reply_text("❌ Неверный формат суммы. Введите число:")
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_report_terminal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обрабатывает ввод суммы по терминалу и СРАЗУ ЖЕ запускает сохранение отчета,
+    пропуская вопросы о расходах и комментарии.
+    """
     try:
-        terminal = float(update.message.text.replace(',', '.'))
+        terminal = parse_float(update.message.text)
         context.user_data['report']['terminal'] = terminal
-        context.user_data['report']['step'] = 'expenses_ask'
         
-        kb = [
-            [InlineKeyboardButton("✅ Да", callback_data="exp_yes")],
-            [InlineKeyboardButton("❌ Нет", callback_data="exp_no")],# <-- Добавить назад
-            [InlineKeyboardButton("❌ Отменить отчет", callback_data="cancel_report")]     # <-- Добавить отмену
-        ]
+        # --- ГЛАВНОЕ ИЗМЕНЕНИЕ ---
+        # Мы больше не спрашиваем про расходы и комментарии.
+        # Сразу устанавливаем пустые значения и вызываем функцию сохранения.
+        context.user_data['report']['expenses'] = []
+        context.user_data['report']['comment'] = ""
         
-        await update.message.reply_text(
-            "💸 Были ли расходы во время смены?",
-            reply_markup=InlineKeyboardMarkup(kb))
+        # Вызываем save_report, передавая update от ТЕКУЩЕГО сообщения
+        await save_report(update, context)
+        
     except ValueError:
         await update.message.reply_text("❌ Неверный формат суммы. Введите число:")
 
@@ -6006,6 +6078,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif step == 'expense_comment': return await handle_expense_comment(update, context)
         elif step == 'comment': return await save_report(update, context)
 
+    elif state_key == 'seller_expense':
+        step = user_data['seller_expense'].get('step')
+        if step == 'amount': return await handle_seller_expense_amount(update, context)
+        elif step == 'comment': return await save_seller_expense(update, context)
+
     elif state_key == 'supplier':
         step = user_data['supplier'].get('step')
         # ИСПРАВЛЕНИЕ ЗДЕСЬ: Вызываем новую универсальную функцию поиска
@@ -6388,6 +6465,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("confirm_payout_"): await confirm_payout(update, context)
         elif data.startswith("execute_payout_"): await execute_payout(update, context)
         elif data.startswith("salary_history_"): await show_salary_history(update, context)
+        elif data == "start_expense_flow": await start_expense_flow(update, context)
         elif data == "view_shifts":
             await view_shifts_calendar(update, context)
         elif data == "edit_shifts":
