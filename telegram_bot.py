@@ -2909,15 +2909,18 @@ def safe_menu_kb(is_admin=False):
     kb = [
         [InlineKeyboardButton("💵 Остаток в сейфе", callback_data="safe_balance")],
         [InlineKeyboardButton("🧾 История сейфа", callback_data="safe_history")],
-        [InlineKeyboardButton("➕ Положить в сейф", callback_data="safe_deposit")],
-        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Кнопка "Добавить расход" теперь доступна всем ---
-        [InlineKeyboardButton("💸 Добавить расход", callback_data="start_expense_flow")]
+        [InlineKeyboardButton("➕ Положить в сейф", callback_data="safe_deposit")]
     ]
     
+    # --- ИЗМЕНЕНИЕ: Упрощаем callback_data ---
     if is_admin:
-        # Кнопка "Снять" остается только для админов
         kb.append([InlineKeyboardButton("➖ Снять из сейфа", callback_data="safe_withdraw")])
-    
+        # Для админа оставляем старый, многошаговый процесс
+        kb.append([InlineKeyboardButton("💸 Добавить расход (Админ)", callback_data="add_admin_expense")])
+    else:
+        # Для продавца - новый, простой процесс
+        kb.append([InlineKeyboardButton("💸 Добавить расход", callback_data="add_seller_expense")])
+
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")])
     return InlineKeyboardMarkup(kb)
     
@@ -3353,6 +3356,61 @@ async def toggle_arrival_status(update: Update, context: ContextTypes.DEFAULT_TY
         return
         
     await show_arrivals_journal(update, context)
+
+# --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
+
+async def start_seller_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запрашивает у продавца сумму и комментарий в одном сообщении."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Устанавливаем состояние, чтобы handle_text мог поймать ответ
+    context.user_data['seller_expense'] = {'step': 'amount_and_comment'}
+    
+    await query.message.edit_text(
+        "💸 Введите расход в формате: **Сумма Комментарий**\n\n"
+        "Например: `150 Такси`",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="safe_menu")]])
+    )
+
+async def process_seller_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает сообщение от продавца, парсит его и сохраняет расход."""
+    user = update.effective_user
+    text = update.message.text
+    
+    try:
+        # Пытаемся разделить сообщение на сумму и комментарий
+        parts = text.split(maxsplit=1)
+        amount = parse_float(parts[0])
+        comment = parts[1] if len(parts) > 1 else "Расход продавца"
+
+        if amount <= 0:
+            raise ValueError("Сумма должна быть больше нуля.")
+
+    except (ValueError, IndexError):
+        await update.message.reply_text(
+            "❌ **Неверный формат!**\n\n"
+            "Пожалуйста, введите расход в формате: **Сумма Комментарий**\n"
+            "Например: `150 Такси`",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+
+    # Если все в порядке, сохраняем расход
+    who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
+    
+    add_safe_operation(user, "Расход", amount, f"Расход продавца: {comment}")
+    
+    ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
+    ws_exp.append_row([sdate(), amount, comment, who, "Наличные", "Расход продавца"])
+
+    await update.message.reply_text(
+        f"✅ Расход '{comment}' на сумму {amount:.2f}₴ успешно добавлен.",
+        reply_markup=safe_menu_kb(is_admin=False)
+    )
+    # Очищаем состояние
+    context.user_data.pop('seller_expense', None)
 
 async def edit_plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинает процесс редактирования плана."""
@@ -6090,15 +6148,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif step == 'comment': return await save_report(update, context)
 
     elif state_key == 'seller_expense':
-        print("--- DEBUG: Условие state_key == 'seller_expense' ВЫПОЛНЕНО. ---")
-        step = user_data['seller_expense'].get('step')
-        if step == 'amount': 
-            print("--- DEBUG: Вызываю handle_seller_expense_amount ---")
-            return await handle_seller_expense_amount(update, context)
-        elif step == 'comment': 
-            print("--- DEBUG: Вызываю save_seller_expense ---")
-            return await save_seller_expense(update, context)
+        # Любой текстовый ответ в этом состоянии будет обработан новой функцией
+        return await process_seller_expense(update, context)
 
+    
     elif state_key == 'supplier':
         step = user_data['supplier'].get('step')
         # ИСПРАВЛЕНИЕ ЗДЕСЬ: Вызываем новую универсальную функцию поиска
@@ -6560,6 +6613,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "admin_revision": await start_revision(update, context)
 
         elif data == "add_admin_expense": await start_admin_expense(update, context)
+        elif data == "add_seller_expense": await start_seller_expense(update, context)
         elif data.startswith("expense_history"):
             try:
                 # Пытаемся извлечь номер страницы из 'expense_history_2'
