@@ -6247,11 +6247,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     repayment_date = get_repayment_date_from_history(context, debt[0], supplier)
                     msg += f"✅ <b>{supplier}</b> | {pay_type}\n"
                     msg += f"  Сумма: {total:.2f}₴\n"
-                    msg += f"  <b>Статус: Погашен {repayment_date}</b>"
+                    msg += f"  <b>Погашен {repayment_date}</b>"
                 else:
                     # Если долг не погашен, показываем как обычно
                     msg += f"🟠 <b>{supplier}</b> | {pay_type}\n"
-                    msg += f"  Сумма: {total:.2f}₴ | Остаток: {to_pay:.2f}₴\n"
+                    msg += f"  Сумма: {total:.2f}₴\n"
                     msg += f"  Срок: {due_date}"
                     kb.append([InlineKeyboardButton(f"✅ Погасить для {supplier} ({to_pay:.2f}₴)", callback_data=f"repay_confirm_{row_index}")])
             
