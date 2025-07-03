@@ -6048,6 +6048,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_data = context.user_data
     state_key = next((key for key in DIALOG_KEYS if key in user_data), None)
+
+    print("--- DEBUG: Вход в handle_text ---")
+    if state_key:
+        print(f"--- DEBUG: Найден state_key: '{state_key}'")
+        print(f"--- DEBUG: Содержимое состояния: {user_data.get(state_key)}")
+    else:
+        print("--- DEBUG: Активное состояние не найдено. ---")
+    # --- КОНЕЦ ДИАГНОСТИКИ ---
     
     if not state_key:
         return await update.message.reply_text(
@@ -6080,9 +6088,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif step == 'comment': return await save_report(update, context)
 
     elif state_key == 'seller_expense':
+        print("--- DEBUG: Условие state_key == 'seller_expense' ВЫПОЛНЕНО. ---")
         step = user_data['seller_expense'].get('step')
-        if step == 'amount': return await handle_seller_expense_amount(update, context)
-        elif step == 'comment': return await save_seller_expense(update, context)
+        if step == 'amount': 
+            print("--- DEBUG: Вызываю handle_seller_expense_amount ---")
+            return await handle_seller_expense_amount(update, context)
+        elif step == 'comment': 
+            print("--- DEBUG: Вызываю save_seller_expense ---")
+            return await save_seller_expense(update, context)
 
     elif state_key == 'supplier':
         step = user_data['supplier'].get('step')
