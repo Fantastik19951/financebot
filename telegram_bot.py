@@ -4550,36 +4550,30 @@ async def show_today_invoices(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
     
 async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    message = update.message
+    # --- ИСПРАВЛЕНИЕ 1: Убираем логику, которая портила комментарий ---
+    # Теперь мы просто отправляем "processing_message" и доверяем данным, 
+    # которые были установлены на предыдущих шагах.
+    processing_message = None
+    if update.callback_query:
+        await update.callback_query.answer()
+        await update.callback_query.message.edit_text("⏳ Процесс создания вечернего отчета, пожалуйста, подождите...")
+        processing_message = update.callback_query.message
+    else:
+        processing_message = await update.message.reply_text("⏳ Процесс создания вечернего отчета, пожалуйста, подождите...")
     
-    # --- НАЧАЛО ИСПРАВЛЕНИЙ: Правильная обработка входа в функцию ---
-    if query: # Если функция вызвана нажатием кнопки (пропуск комментария)
-        await query.answer()
-        context.user_data['report']['comment'] = ""
-        # Редактируем сообщение с кнопками, показывая статус загрузки
-        await query.message.edit_text("⏳ Процесс создания вечернего отчета, пожалуйста, подождите...")
-        processing_message = query.message
-    else: # Если функция вызвана текстовым сообщением (введен комментарий)
-        context.user_data['report']['comment'] = message.text
-        # Отправляем новое сообщение со статусом загрузки
-        processing_message = await message.reply_text("⏳ Процесс создания вечернего отчета, пожалуйста, подождите...")
-    # --- КОНЕЦ ИСПРАВЛЕНИЙ ---
-
-    report_data = context.user_data.get('report', {})
-    today_str = sdate()
-    current_date = pdate(today_str)
-    tomorrow_date = current_date + dt.timedelta(days=1)
-    
-    # 1. Очищаем планы
-    clear_plan_for_date(today_str)
-
-    # 2. Собираем данные
-    cash = report_data.get('cash', 0)
-    terminal = report_data.get('terminal', 0)
-    total_sales = cash + terminal
-    seller = report_data.get('seller', 'Неизвестный')
-    comment = report_data.get('comment', '')
+    try:
+        report_data = context.user_data.get('report', {})
+        today_str = sdate()
+        current_date = pdate(today_str)
+        tomorrow_date = current_date + dt.timedelta(days=1)
+        
+        # 2. Собираем данные (комментарий и расходы уже установлены в handle_report_terminal)
+        cash = report_data.get('cash', 0)
+        terminal = report_data.get('terminal', 0)
+        total_sales = cash + terminal
+        seller = report_data.get('seller', 'Неизвестный')
+        comment = report_data.get('comment', '') # Просто берем готовое значение
+        expenses_total = sum(exp['amount'] for exp in report_data.get('expenses', []))
     
     # 3. Записываем расходы
     expenses_total = sum(exp['amount'] for exp in report_data.get('expenses', []))
@@ -4614,7 +4608,7 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # 5. Получаем данные на завтра
     total_debts, suppliers_debts = get_debts_for_date(context, tomorrow_date)
-    planning_report, planned_cash, planned_card, planned_total = get_planning_details_for_date(context, tomorrow_date)
+        planning_report, planned_cash, planned_card, planned_total = get_planning_details_for_date(context, tomorrow_date)
     
     # 6. Записываем дневной отчет
     ws_report = GSHEET.worksheet(SHEET_REPORT)
@@ -4659,15 +4653,19 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ], [InlineKeyboardButton("🔙 В главное меню", callback_data="main_menu")]]
     markup = InlineKeyboardMarkup(kb)
 
-    if update.callback_query:
-        await update.callback_query.message.edit_text(resp, parse_mode=ParseMode.HTML, reply_markup=markup)
-    else:
-        await processing_message.edit_text(
-        resp,  # 'resp' - это переменная с текстом итогового отчета, которая у вас уже есть
-        parse_mode=ParseMode.HTML,
-        reply_markup=markup
+    await processing_message.edit_text(
+            resp,
+            parse_mode=ParseMode.HTML,
+            reply_markup=markup
     )
-    context.user_data.pop('report', None)
+    except Exception as e:
+        error_msg = f"❌ Критическая ошибка при сохранении отчета: {e}"
+        if processing_message:
+            await processing_message.edit_text(error_msg)
+        logging.error(error_msg, exc_info=True)
+    
+    finally:
+        context.user_data.pop('report', None)
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def generate_daily_report_text(context: ContextTypes.DEFAULT_TYPE, report_date_str: str):
