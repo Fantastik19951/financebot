@@ -6267,12 +6267,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "staff_menu", "admin_panel", "stock_safe_menu", "analytics_menu",
         "settings_menu", "cancel_report", "back", "add_supplier", "planning"
     ]
-    if data in resetting_callbacks:
-        if clear_conversation_state(context):
-             await query.answer("Текущая операция отменена.", show_alert=False)
-
-    # Теперь отвечаем на колбэк после возможной очистки
     await query.answer()
+    if data in resetting_callbacks:
+        clear_conversation_state(context)
 
     try:
         # --- 1. ОСНОВНЫЕ МЕНЮ ---
