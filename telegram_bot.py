@@ -931,6 +931,30 @@ def add_inventory_operation(op_type, amount, comment, user):
     ws = GSHEET.worksheet("Остаток магазина")
     ws.append_row([sdate(), op_type, amount, comment, user])
 
+def get_repayment_date_from_history(context: ContextTypes.DEFAULT_TYPE, invoice_date: str, supplier_name: str) -> str:
+    """
+    Находит накладную в листе "Поставщики" и извлекает дату погашения из истории.
+    """
+    try:
+        suppliers_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+        if not suppliers_rows:
+            return ""
+
+        for row in suppliers_rows:
+            # Ищем накладную по дате создания и имени поставщика
+            if len(row) > 12 and row[0] == invoice_date and row[1] == supplier_name:
+                history_text = row[12] # Колонка M - "История погашений"
+                # Ищем первое слово "Погашен" и извлекаем следующую за ним дату
+                if "Погашен" in history_text:
+                    parts = history_text.split("Погашен")
+                    # Ищем дату в формате ДД.ММ.ГГГГ
+                    date_part = parts[1].strip().split(';')[0]
+                    return date_part
+        return ""
+    except Exception as e:
+        logging.error(f"Ошибка получения даты погашения: {e}")
+        return ""
+
 # --- И ЭТУ ФУНКЦИЮ ТОЖЕ ЗАМЕНИТЕ ---
 def get_inventory_balance():
     ws = GSHEET.worksheet("Остаток магазина")
@@ -6212,22 +6236,29 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg = f"<b>🔎 Результаты поиска по '{search_query}':</b>\n"
             kb = []
             for debt in matches:
-                # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
                 supplier, total, to_pay, due_date, status, row_index = debt[1], parse_float(debt[2]), parse_float(debt[4]), debt[5], debt[6], debt[-1]
                 pay_type = debt[7] if len(debt) > 7 else "Наличные"
-                status_icon = "✅" if status.lower() == 'да' else "🟠"
                 
                 msg += f"\n──────────────────\n"
-                msg += f"{status_icon} <b>{supplier}</b> | {pay_type}\n" # Добавили тип оплаты
-                msg += f"  Сумма: {total:.2f}₴"
-                msg += f"  Срок: {due_date}"
                 
-                if status.lower() != 'да':
+                # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+                if status.lower() == 'да':
+                    # Если долг погашен, ищем и показываем дату погашения
+                    repayment_date = get_repayment_date_from_history(context, debt[0], supplier)
+                    msg += f"✅ <b>{supplier}</b> | {pay_type}\n"
+                    msg += f"  Сумма: {total:.2f}₴\n"
+                    msg += f"  <b>Статус: Погашен {repayment_date}</b>"
+                else:
+                    # Если долг не погашен, показываем как обычно
+                    msg += f"🟠 <b>{supplier}</b> | {pay_type}\n"
+                    msg += f"  Сумма: {total:.2f}₴ | Остаток: {to_pay:.2f}₴\n"
+                    msg += f"  Срок: {due_date}"
                     kb.append([InlineKeyboardButton(f"✅ Погасить для {supplier} ({to_pay:.2f}₴)", callback_data=f"repay_confirm_{row_index}")])
             
             kb.append([InlineKeyboardButton("🔙 Назад", callback_data="debts_menu")])
             await update.message.reply_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
         return
+        
         
 
     elif state_key == 'safe_op':
