@@ -64,32 +64,27 @@ def push_nav(context, target):
     context.user_data['nav_stack'] = stack
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-def get_sales_forecast_for_today(context: ContextTypes.DEFAULT_TYPE) -> float | None:
-    """Анализирует продажи за последние 8 недель для этого дня недели и выдает среднее значение."""
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+def get_avg_daily_costs(context: ContextTypes.DEFAULT_TYPE) -> float:
+    """Считает среднюю сумму всех расходов (закупка + прочие) в день за последние 30 дней."""
     today = dt.date.today()
-    target_weekday = today.weekday()
-    # Анализируем данные за последние 60 дней
-    start_date_for_analysis = today - dt.timedelta(days=60)
-
-    reports = get_cached_sheet_data(context, SHEET_REPORT)
-    if not reports:
-        return None
-
-    sales_for_weekday = []
-    for row in reports:
-        try:
-            report_date = pdate(row[0])
-            if report_date and start_date_for_analysis <= report_date < today:
-                if report_date.weekday() == target_weekday:
-                    sales_for_weekday.append(parse_float(row[4]))
-        except (ValueError, IndexError):
-            continue
+    start_date_for_analysis = today - dt.timedelta(days=30)
     
-    # Если у нас есть хотя бы 2 точки для анализа, считаем среднее
-    if len(sales_for_weekday) >= 2:
-        return sum(sales_for_weekday) / len(sales_for_weekday)
+    suppliers_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
+    expenses_rows = get_cached_sheet_data(context, SHEET_EXPENSES) or []
     
-    return None
+    total_costs = 0.0
+    # Суммируем затраты на закупку
+    for row in suppliers_rows:
+        if len(row) > 4 and (d := pdate(row[0])) and start_date_for_analysis <= d < today:
+            total_costs += parse_float(row[4])
+            
+    # Добавляем прочие расходы
+    for row in expenses_rows:
+        if len(row) > 1 and (d := pdate(row[0])) and start_date_for_analysis <= d < today:
+            total_costs += parse_float(row[1])
+
+    return total_costs / 30 if total_costs > 0 else 0
 
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
