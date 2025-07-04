@@ -2094,74 +2094,74 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE, start_
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def show_daily_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Формирует и показывает умную оперативную панель на текущий день."""
+    """Формирует и показывает умную и полную оперативную панель на текущий день."""
     query = update.callback_query
     await query.message.edit_text("⏳ Собираю оперативную сводку...")
 
     today_str = sdate()
     today = pdate(today_str)
 
-    # --- Загружаем данные ---
+    # --- 1. Загружаем все необходимые данные ---
     all_data = {
         sheet: get_cached_sheet_data(context, sheet, force_update=True) or []
-        for sheet in [SHEET_SHIFTS, SHEET_PLAN_FACT, SHEET_SUPPLIERS, SHEET_DEBTS, "Сейф"]
+        for sheet in [SHEET_SHIFTS, SHEET_SUPPLIERS, SHEET_DEBTS, SHEET_EXPENSES, SHEET_INVENTORY]
     }
-
-    # --- Обрабатываем данные ---
-    on_shift_today = "Не указано"
-    for row in all_data[SHEET_SHIFTS]:
-        if row and row[0] == today_str:
-            on_shift_today = ", ".join([seller for seller in row[1:] if seller])
-            break
     
-    # --- 1. Новый, более чистый формат отображения поставщиков ---
-    suppliers_status = defaultdict(lambda: {'plan_amount': 0, 'plan_type': '-', 'fact_amount': 0, 'fact_types': set()})
-    
-    todays_plans = [row for row in all_data[SHEET_PLAN_FACT] if row and row[0] == today_str]
-    for plan in todays_plans:
-        supplier, amount, p_type = plan[1], parse_float(plan[2]), plan[3]
-        suppliers_status[supplier]['plan_amount'] += amount
-        suppliers_status[supplier]['plan_type'] = p_type
+    # --- 2. Обрабатываем данные ---
+    # Кто на смене
+    on_shift_today = next((", ".join(filter(None, row[1:])) for row in all_data[SHEET_SHIFTS] if row and row[0] == today_str), "Не указано")
 
-    todays_invoices = [row for row in all_data[SHEET_SUPPLIERS] if row and row[0] == today_str]
-    for invoice in todays_invoices:
-        supplier, to_pay, pay_type = invoice[1], parse_float(invoice[4]), invoice[6]
-        suppliers_status[supplier]['fact_amount'] += to_pay
-        suppliers_status[supplier]['fact_types'].add(pay_type)
-
-    # --- 2. Получаем и добавляем прогноз продаж ---
+    # Прогноз продаж
     sales_forecast = get_sales_forecast_for_today(context)
     
-    # --- 3. Автоматическая проверка кассового разрыва ---
-    cash_needed_today = sum(data['plan_amount'] for data in suppliers_status.values() if 'налич' in data['plan_type'].lower())
-    safe_balance = get_safe_balance(context)
-    cash_shortage = cash_needed_today - safe_balance
+    # Фактические накладные за сегодня
+    todays_invoices = [row for row in all_data[SHEET_SUPPLIERS] if row and row[0] == today_str]
     
-    # --- Собираем красивое сообщение ---
+    # Финансовые потребности (только на основе долгов)
+    critical_debts = [row for row in all_data[SHEET_DEBTS] if len(row) > 6 and row[6].strip().lower() != 'да' and pdate(row[5]) == today]
+    needed_for_debts = sum(parse_float(debt[4]) for debt in critical_debts)
+    
+    safe_balance = get_safe_balance(context)
+    cash_shortage = needed_for_debts - safe_balance
+
+    # Активность за день
+    invoice_count_today = len(todays_invoices)
+    expenses_list = [f"  • {parse_float(row[1]):.2f}₴ - {row[2]}" for row in all_data[SHEET_EXPENSES] if row and row[0] == today_str and len(row) > 2 and row[1]]
+    writeoffs_list = [f"  • {parse_float(row[2]):.2f}₴ - {row[3]}" for row in all_data[SHEET_INVENTORY] if row and row[0] == today_str and row[1] == "Списание" and len(row) > 3 and row[2]]
+
+    # --- 3. Собираем итоговое сообщение ---
     msg = f"<b>☀️ Оперативная сводка на {today_str}</b>\n"
     msg += f"<b>👤 На смене:</b> {on_shift_today}\n"
     if sales_forecast:
         msg += f"🔮 <b>Прогноз продаж:</b> ~{sales_forecast:,.0f}₴\n".replace(',', ' ')
     
     msg += "──────────────────\n"
+    
+    # Предупреждение о нехватке наличных
     if cash_shortage > 0:
         msg += f"⚠️ <b>ВНИМАНИЕ! НЕХВАТКА НАЛИЧНЫХ В СЕЙФЕ!</b>\n"
-        msg += f"   • Требуется наличными: {cash_needed_today:.2f}₴\n"
+        msg += f"   • Требуется на долги сегодня: {needed_for_debts:.2f}₴\n"
         msg += f"   • В сейфе: {safe_balance:.2f}₴\n"
         msg += f"   • <b>Нужно добавить: {cash_shortage:.2f}₴</b>\n"
         msg += "──────────────────\n"
 
-    msg += "<b>🚚 Прибытие товаров (План/Факт)</b>\n"
-    if not suppliers_status:
-        msg += "<i>Нет запланированных прибытий.</i>"
+    # Блок с фактическими приходами
+    msg += "<b>✅ Фактические приходы за сегодня:</b>\n"
+    if not todays_invoices:
+        msg += "<i>Приходов еще не было.</i>\n"
     else:
-        for supplier, data in sorted(suppliers_status.items()):
-            status_icon = "✅" if data['fact_amount'] > 0 else "⌛️"
-            msg += f"\n{status_icon} <b>{supplier}</b>\n"
-            msg += f"  • План: {data['plan_amount']:.2f}₴ ({data['plan_type']})\n"
-            msg += f"  • Факт: {data['fact_amount']:.2f}₴ ({', '.join(data['fact_types']) or '-'})"
-            
+        for invoice in todays_invoices:
+            supplier, to_pay, pay_type = invoice[1], parse_float(invoice[4]), invoice[6]
+            msg += f"  • {supplier}: <b>{to_pay:.2f}₴</b> ({pay_type})\n"
+
+    # Блок с активностью
+    msg += "\n──────────────────\n<b>📊 Активность за день:</b>\n"
+    msg += f"  • 🧾 Добавлено накладных: {invoice_count_today}\n"
+    msg += "  • 💸 Расходы по кассе:\n" + ("\n".join(expenses_list) if expenses_list else "    <i>(нет)</i>\n")
+    msg += "  • 🗑️ Списания с остатка:\n" + ("\n".join(writeoffs_list) if writeoffs_list else "    <i>(нет)</i>")
+    
     kb = [[InlineKeyboardButton("🔄 Обновить", callback_data="daily_summary")],
           [InlineKeyboardButton("🔙 Назад в меню Финансы", callback_data="finance_menu")]]
     
