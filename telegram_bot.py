@@ -2102,7 +2102,6 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE, start_
         f"💳 Карта: {total_terminal:.2f}₴\n"
         f"💸 Расходы: {total_expenses:.2f}₴\n"
         f"📦 Поставщики: {total_suppliers:.2f}₴\n"
-        f"🏦 Чистая прибыль: <b>{(total_cash + total_terminal) - (total_expenses + total_suppliers):.2f}₴</b>"
     )
 
     kb = week_buttons(start_date, end_date) if (end_date - start_date).days <= 7 else month_buttons(start_date, end_date)
@@ -3152,7 +3151,7 @@ def admin_panel_kb():
     return InlineKeyboardMarkup([
         # Кнопка "Добавить расход" убрана
         [InlineKeyboardButton("🧾 История расходов", callback_data="expense_history")],
-        [InlineKeyboardButton("👥 Управление персоналом", callback_data="staff_management")],
+        [InlineKeyboardButton("👥 Бонусы продавцов", callback_data="staff_management")],
         [InlineKeyboardButton("⚙️ Системные настройки", callback_data="system_settings")],
         [InlineKeyboardButton("📋 Журнал действий", callback_data="action_log")],
         [InlineKeyboardButton("🧮 Переучёт", callback_data="admin_revision")],
@@ -4723,7 +4722,6 @@ async def generate_daily_report_text(context: ContextTypes.DEFAULT_TYPE, report_
             f"💰 Общая сумма: {total_sales:.2f}₴\n"
             f"💸 Расходы: {expenses_total:.2f}₴\n"
             f"💼 <b>Остаток в сейфе (на конец того дня): {safe_balance:.2f}₴</b>")
-    if comment: resp += f"\n📝 Комментарий: {comment}"
     
     report_date = pdate(date)
     if report_date:
