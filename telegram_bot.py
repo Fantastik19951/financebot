@@ -86,6 +86,34 @@ def get_avg_daily_costs(context: ContextTypes.DEFAULT_TYPE) -> float:
 
     return total_costs / 30 if total_costs > 0 else 0
 
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+def get_sales_forecast_for_today(context: ContextTypes.DEFAULT_TYPE) -> float | None:
+    """Анализирует продажи за последние 8 недель для этого дня недели и выдает среднее значение."""
+    today = dt.date.today()
+    target_weekday = today.weekday()
+    # Анализируем данные за последние 60 дней
+    start_date_for_analysis = today - dt.timedelta(days=60)
+
+    reports = get_cached_sheet_data(context, SHEET_REPORT)
+    if not reports:
+        return None
+
+    sales_for_weekday = []
+    for row in reports:
+        try:
+            report_date = pdate(row[0])
+            if report_date and start_date_for_analysis <= report_date < today:
+                if report_date.weekday() == target_weekday:
+                    sales_for_weekday.append(parse_float(row[4]))
+        except (ValueError, IndexError):
+            continue
+    
+    # Если у нас есть хотя бы 2 точки для анализа, считаем среднее
+    if len(sales_for_weekday) >= 2:
+        return sum(sales_for_weekday) / len(sales_for_weekday)
+    
+    return None
+
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 def normalize_text(text: str) -> str:
