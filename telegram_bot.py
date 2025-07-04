@@ -2562,6 +2562,46 @@ async def handle_planning_supplier_choice(update: Update, context: ContextTypes.
             parse_mode=ParseMode.HTML
         )
         
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+async def send_shift_closed_notification(context: ContextTypes.DEFAULT_TYPE, seller_name: str, report_date_str: str):
+    """Отправляет уведомление о закрытии смены всем администраторам."""
+    
+    text = (f"🔔 <b>Уведомление о смене</b>\n\n"
+            f"Продавец <b>{seller_name}</b> только что сдал(а) смену за {report_date_str}.\n\n"
+            f"Хотите посмотреть детальный отчет?")
+            
+    # Кнопки для взаимодействия с уведомлением
+    kb = [[
+        InlineKeyboardButton("✅ Да, посмотреть", callback_data=f"show_report_from_notification_{report_date_str}"),
+        InlineKeyboardButton("❌ Закрыть", callback_data="close")
+    ]]
+    markup = InlineKeyboardMarkup(kb)
+
+    # Функция, которая будет удалять сообщение
+    async def delete_message(job_context: ContextTypes.DEFAULT_TYPE):
+        chat_id, message_id = job_context.job.data
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=message_id)
+            logging.info(f"Уведомление о смене ({message_id}) удалено по таймауту.")
+        except BadRequest as e:
+            # Игнорируем ошибку, если сообщение уже было удалено пользователем
+            if "Message to delete not found" not in str(e):
+                logging.error(f"Ошибка удаления сообщения по таймауту: {e}")
+
+    # Рассылаем сообщение каждому админу
+    for chat_id in USER_ID_TO_NAME.keys():
+        try:
+            sent_message = await context.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=markup
+            )
+            # Планируем удаление этого сообщения через 1 час (3600 секунд)
+            context.job_queue.run_once(delete_message, 3600, data=(chat_id, sent_message.message_id))
+        except Exception as e:
+            logging.error(f"Не удалось отправить уведомление о смене админу {chat_id}: {e}")
+
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 def update_supplier_schedule(context: ContextTypes.DEFAULT_TYPE, date_str: str, supplier_name: str):
@@ -4678,6 +4718,7 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --- КОНЕЦ БЛОКА ---
 
         await processing_message.edit_text(resp, parse_mode=ParseMode.HTML, reply_markup=markup)
+        await send_shift_closed_notification(context, seller, today_str)
         
         clear_plan_for_date(today_str)
 
@@ -6510,6 +6551,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data in ("exp_yes", "exp_no"): await handle_report_expenses_ask(update, context)
         elif data in ("more_yes", "more_no"): await handle_expense_more(update, context)
         elif data == "skip_comment": await save_report(update, context)
+        elif data.startswith("show_report_from_notification_"):
+            report_date_str = data.split('_')[-1]
+            # Вызываем существующую функцию для показа детального отчета
+            report_text = await generate_daily_report_text(context, report_date_str)
+            
+            # Удаляем сообщение с кнопками и присылаем отчет
+            await query.message.delete()
+            await context.bot.send_message(
+                chat_id=query.message.chat_id,
+                text=report_text,
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В главное меню", callback_data="main_menu")]])
+            )
         
         # --- 7. ПРОСМОТР ОТЧЕТОВ ---
         elif data == "view_reports_menu": await view_reports_menu(update, context)
