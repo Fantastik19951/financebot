@@ -109,7 +109,7 @@ def get_sales_forecast_for_today(context: ContextTypes.DEFAULT_TYPE) -> float | 
             continue
     
     # Если у нас есть хотя бы 2 точки для анализа, считаем среднее
-    if len(sales_for_weekday) >= 1:
+    if len(sales_for_weekday) >= 2:
         return sum(sales_for_weekday) / len(sales_for_weekday)
     
     return None
@@ -2167,9 +2167,9 @@ async def show_daily_dashboard(update: Update, context: ContextTypes.DEFAULT_TYP
     msg += "──────────────────\n"
     
     msg += "<b>💰 Финансы (Наличные):</b>\n"
-    msg += f"  • Запланировано к оплате наличными: {total_cash_planned:.2f}₴\n"
-    msg += f"  • Уже оплачено сегодня наличными: {total_cash_paid:.2f}₴\n"
-    msg += f"  • <b>Осталось оплатит наличными: {remaining_cash_to_pay:.2f}₴</b>\n"
+    msg += f"  • Запланировано к оплате (НАЛ): {total_cash_planned:.2f}₴\n"
+    msg += f"  • Уже оплачено сегодня (НАЛ): {total_cash_paid:.2f}₴\n"
+    msg += f"  • <b>Осталось оплатить (НАЛ): {remaining_cash_to_pay:.2f}₴</b>\n"
     if remaining_to_pay_list:
         msg += "\n".join(remaining_to_pay_list)
         
