@@ -2,6 +2,8 @@ import os, logging, datetime as dt, calendar, json
 from collections import defaultdict
 from dotenv import load_dotenv
 from telegram.constants import ParseMode
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from telegram.error import BadRequest
 from thefuzz import fuzz
 from telegram.error import TelegramError
@@ -17,6 +19,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import matplotlib.pyplot as plt
 import io
 import math
+import pytz
 import numpy as np
 from matplotlib.ticker import MaxNLocator
 
@@ -6833,12 +6836,9 @@ async def error_handler(update, context):
 
 # --- ЗАПУСК ---
 def main():
-    from apscheduler.schedulers.asyncio import AsyncIOScheduler
-    from apscheduler.triggers.cron import CronTrigger
-    import pytz
     scheduler = AsyncIOScheduler(timezone=pytz.timezone('Europe/Kiev'))
-    scheduler.add_job(check_cash_shortage, trigger=CronTrigger(hour=12, minute=10))
-    scheduler.add_job(check_overdue_debts, trigger=CronTrigger(hour=12, minute=10))
+    scheduler.add_job(check_cash_shortage, trigger=CronTrigger(hour=12, minute=15))
+    scheduler.add_job(check_overdue_debts, trigger=CronTrigger(hour=12, minute=15))
     scheduler.start()
     
     app = ApplicationBuilder().token(TOKEN).build()
