@@ -1615,11 +1615,11 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-async def check_cash_shortage(context: ContextTypes.DEFAULT_TYPE):
+async def check_cash_shortage(app: ApplicationBuilder.build):
     """
-    Проверяет, хватает ли наличных в сейфе для запланированных на сегодня оплат.
-    Отправляет уведомление администраторам в случае нехватки.
+    Проверяет нехватку наличных. Теперь принимает объект 'app' для доступа к context.
     """
+    context = ContextTypes.DEFAULT_TYPE(application=app)
     logging.info("SCHEDULER: Запущена проверка нехватки наличных.")
     today_str = sdate()
     
@@ -1648,10 +1648,11 @@ async def check_cash_shortage(context: ContextTypes.DEFAULT_TYPE):
         logging.info("SCHEDULER: Нехватки наличных не обнаружено.")
 
 # --- ДОБАВЬТЕ И ЭТУ НОВУЮ ФУНКЦИЮ ---
-async def check_overdue_debts(context: ContextTypes.DEFAULT_TYPE):
+async def check_overdue_debts(app: ApplicationBuilder.build):
     """
-    Проверяет наличие просроченных долгов и уведомляет администраторов.
+    Проверяет просроченные долги. Теперь принимает объект 'app' для доступа к context.
     """
+    context = ContextTypes.DEFAULT_TYPE(application=app)
     logging.info("SCHEDULER: Запущена проверка просроченных долгов.")
     today = dt.date.today()
     
@@ -6836,13 +6837,18 @@ async def error_handler(update, context):
 
 # --- ЗАПУСК ---
 def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+
     scheduler = AsyncIOScheduler(timezone=pytz.timezone('Europe/Kiev'))
-    scheduler.add_job(check_cash_shortage, trigger=CronTrigger(hour=12, minute=21))
-    scheduler.add_job(check_overdue_debts, trigger=CronTrigger(hour=12, minute=21))
+    
+    # Передаем 'app' в качестве аргумента в наши задачи
+    scheduler.add_job(check_cash_shortage, trigger=CronTrigger(hour=12, minute=25), args=[app])
+    scheduler.add_job(check_overdue_debts, trigger=CronTrigger(hour=12, minute=25), args=[app])
+    
     scheduler.start()
     
-    app = ApplicationBuilder().token(TOKEN).build()
     app.job_queue = scheduler
+    
     # Основные обработчики
     app.add_handler(CallbackQueryHandler(cancel_report, pattern="^cancel_report$"))
     app.add_handler(CommandHandler("cancel", cancel))
