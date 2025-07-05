@@ -6835,22 +6835,23 @@ async def error_handler(update, context):
 
 # --- ЗАПУСК ---
 # --- ЗАМЕНИТЕ ВАШУ ФУНКЦИЮ main() НА ЭТУ ---
-async def main():
-    """Главная асинхронная функция для запуска бота и встроенного планировщика."""
-    # Создаем приложение. Планировщик создается автоматически.
+# --- ЗАМЕНИТЕ ВЕСЬ БЛОК ЗАПУСКА В КОНЦЕ ФАЙЛА НА ЭТОТ ---
+
+def main():
+    """Главная функция для настройки и запуска бота."""
+    
+    # 1. Создаем приложение
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # --- ИЗМЕНЕНИЕ: Используем встроенный job_queue ---
+    # 2. Получаем доступ к встроенному планировщику
     job_queue = app.job_queue
     
-    # Устанавливаем часовой пояс
+    # 3. Настраиваем часовой пояс и добавляем задачи
     kiev_tz = pytz.timezone('Europe/Kiev')
+    job_queue.run_daily(check_cash_shortage, time=dt.time(hour=13, minute=8, tzinfo=kiev_tz))
+    job_queue.run_daily(check_overdue_debts, time=dt.time(hour=13, minute=8, tzinfo=kiev_tz))
     
-    # Добавляем задачи на 7:00 утра каждый день по Киеву
-    job_queue.run_daily(check_cash_shortage, time=dt.time(hour=13, minute=3, tzinfo=kiev_tz))
-    job_queue.run_daily(check_overdue_debts, time=dt.time(hour=13, minute=3, tzinfo=kiev_tz))
-    
-    # Регистрируем все обработчики (эта часть без изменений)
+    # 4. Регистрируем все обработчики (как и раньше)
     app.add_handler(CallbackQueryHandler(cancel_report, pattern="^cancel_report$"))
     app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(CommandHandler("start", start))
@@ -6860,12 +6861,9 @@ async def main():
     
     logging.info("Бот запущен и готов к работе!")
 
-    # Используем асинхронный запуск
-    await app.run_polling()
+    # 5. Запускаем бота (этот метод сам справится с асинхронностью)
+    app.run_polling()
 
-    
+
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logging.info("Бот остановлен вручную.")
+    main()
