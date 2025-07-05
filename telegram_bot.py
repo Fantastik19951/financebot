@@ -1614,68 +1614,59 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-async def check_cash_shortage(context: ContextTypes.DEFAULT_TYPE):
+
+
+# --- ДОБАВЬТЕ И ЭТУ НОВУЮ ФУНКЦИЮ ---
+# --- ЗАМЕНИТЕ СТАРУЮ ФУНКЦИЮ НА ЭТУ ---
+async def check_financial_shield(context: ContextTypes.DEFAULT_TYPE):
     """
-    Проверяет, хватает ли наличных в сейфе для запланированных на сегодня оплат.
-    Отправляет уведомление администраторам в случае нехватки.
+    Проверяет, хватает ли денег в сейфе на завтрашние оплаты наличными (планы + долги),
+    а также ищет просроченные долги. Отправляет единый отчет админам.
     """
-    logging.info("SCHEDULER: Запущена проверка нехватки наличных.")
-    today_str = sdate()
+    logging.info("FINANCIAL SHIELD: Запущена проверка на завтра.")
     
-    # Получаем данные
-    plans = get_cached_sheet_data(context, SHEET_PLAN_FACT, force_update=True) or []
+    # --- 1. Проверка нехватки наличных на ЗАВТРА ---
+    tomorrow = dt.date.today() + dt.timedelta(days=1)
+    
+    # Получаем актуальные данные
     safe_balance = get_safe_balance(context)
+    planned_cash_tomorrow = get_planning_details_for_date(context, tomorrow)[1]
+    debts_cash_tomorrow = get_debts_for_date(context, tomorrow)[0]
+    
+    total_needed_cash = planned_cash_tomorrow + debts_cash_tomorrow
+    shortage = total_needed_cash - safe_balance
+    
+    # --- 2. Проверка просроченных долгов ---
+    today = dt.date.today()
+    all_debts = get_cached_sheet_data(context, SHEET_DEBTS) or []
+    overdue_debts_list = [
+        f"  • {row[1]}: {parse_float(row[4]):.2f}₴ (срок: {row[5]})"
+        for row in all_debts
+        if len(row) > 6 and row[6].strip().lower() != 'да' and (d := pdate(row[5])) and d < today
+    ]
 
-    # Считаем, сколько наличных нужно на сегодня по плану
-    cash_needed_today = 0
-    for plan in plans:
-        if len(plan) > 3 and plan[0] == today_str and 'налич' in plan[3].lower():
-            cash_needed_today += parse_float(plan[2])
-
-    # Проверяем, есть ли нехватка
-    shortage = cash_needed_today - safe_balance
-    if shortage > 0:
-        msg = (f"⚠️ **ФИНАНСОВЫЙ ЩИТ: ВНИМАНИЕ!**\n\n"
-               f"На сегодня запланировано оплат наличными на: **{cash_needed_today:,.2f}₴**\n"
-               f"В сейфе сейчас всего: **{safe_balance:,.2f}₴**\n\n"
-               f"🔴 **НЕ ХВАТАЕТ: {shortage:,.2f}₴**").replace(',', ' ')
+    # --- 3. Формируем и отправляем отчет, ТОЛЬКО если есть на что обратить внимание ---
+    if shortage > 0 or overdue_debts_list:
+        msg = "🔔 **ФИНАНСОВЫЙ ЩИТ:**\n"
         
+        if shortage > 0:
+            msg += (
+                f"\n⚠️ **Внимание: возможен кассовый разрыв завтра!**\n"
+                f"   • Запланировано к оплате: {total_needed_cash:,.2f}₴\n"
+                f"   • В сейфе сейчас: {safe_balance:,.2f}₴\n"
+                f"   🔴 **Нужно пополнить на: {shortage:,.2f}₴**\n"
+            ).replace(',', ' ')
+            
+        if overdue_debts_list:
+            msg += "\n❗️ **Обнаружены просроченные долги:**\n"
+            msg += "\n".join(overdue_debts_list)
+            
         # Отправляем уведомление всем админам
         for chat_id in ADMIN_CHAT_IDS:
             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode=ParseMode.HTML)
     else:
-        logging.info("SCHEDULER: Нехватки наличных не обнаружено.")
-
-# --- ДОБАВЬТЕ И ЭТУ НОВУЮ ФУНКЦИЮ ---
-async def check_overdue_debts(context: ContextTypes.DEFAULT_TYPE):
-    """
-    Проверяет наличие просроченных долгов и уведомляет администраторов.
-    """
-    logging.info("SCHEDULER: Запущена проверка просроченных долгов.")
-    today = dt.date.today()
-    
-    debts = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
-    overdue_debts = []
-
-    for row in debts:
-        try:
-            # Проверяем, что долг не закрыт и его срок прошел
-            if len(row) > 6 and row[6].strip().lower() != 'да':
-                due_date = pdate(row[5])
-                if due_date and due_date < today:
-                    overdue_debts.append(f"  • {row[1]}: {parse_float(row[4]):.2f}₴ (срок: {row[5]})")
-        except (ValueError, IndexError):
-            continue
-
-    if overdue_debts:
-        msg = "❗️ **ФИНАНСОВЫЙ ЩИТ: ПРОСРОЧЕННЫЕ ДОЛГИ!**\n\n"
-        msg += "Следующие долги не были погашены в срок:\n"
-        msg += "\n".join(overdue_debts)
+        logging.info("FINANCIAL SHIELD: Проблем не обнаружено.")
         
-        for chat_id in ADMIN_CHAT_IDS:
-            await context.bot.send_message(chat_id=chat_id, text=msg)
-    else:
-        logging.info("SCHEDULER: Просроченных долгов не обнаружено.")
 
 async def show_seller_salary_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает детализацию бонусов и кнопку для просмотра истории."""
@@ -4787,6 +4778,12 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await send_shift_closed_notification(context, seller, today_str)
         
         clear_plan_for_date(today_str)
+        kiev_tz = pytz.timezone('Europe/Kiev')
+        run_time = dt.datetime.now(kiev_tz).replace(hour=21, minute=15, second=0, microsecond=0)
+        if dt.datetime.now(kiev_tz) > run_time:
+            run_time += dt.timedelta(days=1)
+        context.job_queue.run_once(check_financial_shield, run_time)
+        logging.info(f"FINANCIAL SHIELD: Проверка запланирована на {run_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     except Exception as e:
         error_msg = f"❌ Критическая ошибка при сохранении отчета: {e}"
@@ -6842,14 +6839,6 @@ def main():
     
     # 1. Создаем приложение
     app = ApplicationBuilder().token(TOKEN).build()
-    
-    # 2. Получаем доступ к встроенному планировщику
-    job_queue = app.job_queue
-    
-    # 3. Настраиваем часовой пояс и добавляем задачи
-    kiev_tz = pytz.timezone('Europe/Kiev')
-    job_queue.run_daily(check_cash_shortage, time=dt.time(hour=13, minute=8, tzinfo=kiev_tz))
-    job_queue.run_daily(check_overdue_debts, time=dt.time(hour=13, minute=8, tzinfo=kiev_tz))
     
     # 4. Регистрируем все обработчики (как и раньше)
     app.add_handler(CallbackQueryHandler(cancel_report, pattern="^cancel_report$"))
