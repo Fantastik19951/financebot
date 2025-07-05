@@ -6837,8 +6837,8 @@ async def error_handler(update, context):
 # --- ЗАПУСК ---
 def main():
     scheduler = AsyncIOScheduler(timezone=pytz.timezone('Europe/Kiev'))
-    scheduler.add_job(check_cash_shortage, trigger=CronTrigger(hour=12, minute=15))
-    scheduler.add_job(check_overdue_debts, trigger=CronTrigger(hour=12, minute=15))
+    scheduler.add_job(check_cash_shortage, trigger=CronTrigger(hour=12, minute=21))
+    scheduler.add_job(check_overdue_debts, trigger=CronTrigger(hour=12, minute=21))
     scheduler.start()
     
     app = ApplicationBuilder().token(TOKEN).build()
