@@ -13,6 +13,7 @@ from telegram.ext import (
     MessageHandler,ConversationHandler, ContextTypes, filters
 )
 import gspread
+import pytz
 from oauth2client.service_account import ServiceAccountCredentials
 import matplotlib.pyplot as plt
 import io
@@ -6846,8 +6847,8 @@ async def main():
     kiev_tz = pytz.timezone('Europe/Kiev')
     
     # Добавляем задачи на 7:00 утра каждый день по Киеву
-    job_queue.run_daily(check_cash_shortage, time=dt.time(hour=13, minute=0, tzinfo=kiev_tz))
-    job_queue.run_daily(check_overdue_debts, time=dt.time(hour=13, minute=0, tzinfo=kiev_tz))
+    job_queue.run_daily(check_cash_shortage, time=dt.time(hour=13, minute=3, tzinfo=kiev_tz))
+    job_queue.run_daily(check_overdue_debts, time=dt.time(hour=13, minute=3, tzinfo=kiev_tz))
     
     # Регистрируем все обработчики (эта часть без изменений)
     app.add_handler(CallbackQueryHandler(cancel_report, pattern="^cancel_report$"))
