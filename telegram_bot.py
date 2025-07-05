@@ -1611,6 +1611,70 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
                                   reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Продолжить просмотр", callback_data=f"edit_invoice_cancel_{row_index}")]]))
 
 
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+async def check_cash_shortage(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Проверяет, хватает ли наличных в сейфе для запланированных на сегодня оплат.
+    Отправляет уведомление администраторам в случае нехватки.
+    """
+    logging.info("SCHEDULER: Запущена проверка нехватки наличных.")
+    today_str = sdate()
+    
+    # Получаем данные
+    plans = get_cached_sheet_data(context, SHEET_PLAN_FACT, force_update=True) or []
+    safe_balance = get_safe_balance(context)
+
+    # Считаем, сколько наличных нужно на сегодня по плану
+    cash_needed_today = 0
+    for plan in plans:
+        if len(plan) > 3 and plan[0] == today_str and 'налич' in plan[3].lower():
+            cash_needed_today += parse_float(plan[2])
+
+    # Проверяем, есть ли нехватка
+    shortage = cash_needed_today - safe_balance
+    if shortage > 0:
+        msg = (f"⚠️ **ФИНАНСОВЫЙ ЩИТ: ВНИМАНИЕ!**\n\n"
+               f"На сегодня запланировано оплат наличными на: **{cash_needed_today:,.2f}₴**\n"
+               f"В сейфе сейчас всего: **{safe_balance:,.2f}₴**\n\n"
+               f"🔴 **НЕ ХВАТАЕТ: {shortage:,.2f}₴**").replace(',', ' ')
+        
+        # Отправляем уведомление всем админам
+        for chat_id in ADMIN_CHAT_IDS:
+            await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode=ParseMode.HTML)
+    else:
+        logging.info("SCHEDULER: Нехватки наличных не обнаружено.")
+
+# --- ДОБАВЬТЕ И ЭТУ НОВУЮ ФУНКЦИЮ ---
+async def check_overdue_debts(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Проверяет наличие просроченных долгов и уведомляет администраторов.
+    """
+    logging.info("SCHEDULER: Запущена проверка просроченных долгов.")
+    today = dt.date.today()
+    
+    debts = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
+    overdue_debts = []
+
+    for row in debts:
+        try:
+            # Проверяем, что долг не закрыт и его срок прошел
+            if len(row) > 6 and row[6].strip().lower() != 'да':
+                due_date = pdate(row[5])
+                if due_date and due_date < today:
+                    overdue_debts.append(f"  • {row[1]}: {parse_float(row[4]):.2f}₴ (срок: {row[5]})")
+        except (ValueError, IndexError):
+            continue
+
+    if overdue_debts:
+        msg = "❗️ **ФИНАНСОВЫЙ ЩИТ: ПРОСРОЧЕННЫЕ ДОЛГИ!**\n\n"
+        msg += "Следующие долги не были погашены в срок:\n"
+        msg += "\n".join(overdue_debts)
+        
+        for chat_id in ADMIN_CHAT_IDS:
+            await context.bot.send_message(chat_id=chat_id, text=msg)
+    else:
+        logging.info("SCHEDULER: Просроченных долгов не обнаружено.")
+
 async def show_seller_salary_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает детализацию бонусов и кнопку для просмотра истории."""
     query = update.callback_query
@@ -6769,8 +6833,16 @@ async def error_handler(update, context):
 
 # --- ЗАПУСК ---
 def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    import pytz
+    scheduler = AsyncIOScheduler(timezone=pytz.timezone('Europe/Kiev'))
+    scheduler.add_job(check_cash_shortage, trigger=CronTrigger(hour=12, minute=10))
+    scheduler.add_job(check_overdue_debts, trigger=CronTrigger(hour=12, minute=10))
+    scheduler.start()
     
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.job_queue = scheduler
     # Основные обработчики
     app.add_handler(CallbackQueryHandler(cancel_report, pattern="^cancel_report$"))
     app.add_handler(CommandHandler("cancel", cancel))
