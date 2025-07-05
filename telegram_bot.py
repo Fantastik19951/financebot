@@ -18,6 +18,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import matplotlib.pyplot as plt
 import io
+import asyncio
 import math
 import pytz
 import numpy as np
@@ -6836,17 +6837,16 @@ async def error_handler(update, context):
 
 
 # --- ЗАПУСК ---
-def main():
+async def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     scheduler = AsyncIOScheduler(timezone=pytz.timezone('Europe/Kiev'))
-    
     # Передаем 'app' в качестве аргумента в наши задачи
-    scheduler.add_job(check_cash_shortage, trigger=CronTrigger(hour=12, minute=25), args=[app])
-    scheduler.add_job(check_overdue_debts, trigger=CronTrigger(hour=12, minute=25), args=[app])
-    
+    scheduler.add_job(check_cash_shortage, trigger=CronTrigger(hour=12, minute=33), args=[app])
+    scheduler.add_job(check_overdue_debts, trigger=CronTrigger(hour=12, minute=33), args=[app])
     scheduler.start()
     
+    # Передаем планировщик в контекст, чтобы он был доступен везде
     app.job_queue = scheduler
     
     # Основные обработчики
@@ -6857,7 +6857,18 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_error_handler(error_handler)
     logging.info("Бот запущен!")
-    app.run_polling()
+    
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    while True:
+        await asyncio.sleep(3600)
+
+
+
     
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("Бот остановлен вручную.")
