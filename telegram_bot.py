@@ -1613,11 +1613,11 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-async def check_cash_shortage(app: ApplicationBuilder.build):
+async def check_cash_shortage(context: ContextTypes.DEFAULT_TYPE):
     """
-    Проверяет нехватку наличных. Теперь принимает объект 'app' для доступа к context.
+    Проверяет, хватает ли наличных в сейфе для запланированных на сегодня оплат.
+    Отправляет уведомление администраторам в случае нехватки.
     """
-    context = ContextTypes.DEFAULT_TYPE(application=app)
     logging.info("SCHEDULER: Запущена проверка нехватки наличных.")
     today_str = sdate()
     
@@ -1646,11 +1646,10 @@ async def check_cash_shortage(app: ApplicationBuilder.build):
         logging.info("SCHEDULER: Нехватки наличных не обнаружено.")
 
 # --- ДОБАВЬТЕ И ЭТУ НОВУЮ ФУНКЦИЮ ---
-async def check_overdue_debts(app: ApplicationBuilder.build):
+async def check_overdue_debts(context: ContextTypes.DEFAULT_TYPE):
     """
-    Проверяет просроченные долги. Теперь принимает объект 'app' для доступа к context.
+    Проверяет наличие просроченных долгов и уведомляет администраторов.
     """
-    context = ContextTypes.DEFAULT_TYPE(application=app)
     logging.info("SCHEDULER: Запущена проверка просроченных долгов.")
     today = dt.date.today()
     
@@ -6836,24 +6835,19 @@ async def error_handler(update, context):
 # --- ЗАПУСК ---
 # --- ЗАМЕНИТЕ ВАШУ ФУНКЦИЮ main() НА ЭТУ ---
 async def main():
-    """Главная асинхронная функция для запуска бота и планировщика."""
-    from apscheduler.schedulers.asyncio import AsyncIOScheduler
-    from apscheduler.triggers.cron import CronTrigger
-    import pytz
-
-    # --- ИЗМЕНЕНИЕ: Сначала создаем и настраиваем планировщик ---
-    scheduler = AsyncIOScheduler(timezone=pytz.timezone('Europe/Kiev'))
+    """Главная асинхронная функция для запуска бота и встроенного планировщика."""
+    # Создаем приложение. Планировщик создается автоматически.
+    app = ApplicationBuilder().token(TOKEN).build()
     
-    # Создаем приложение и СРАЗУ передаем в него наш планировщик
-    app = ApplicationBuilder().token(TOKEN).job_queue(scheduler).build()
-
-    # --- ИЗМЕНЕНИЕ: Добавляем задачи в job_queue, который уже является частью app ---
-    app.job_queue.add_job(check_cash_shortage, trigger=CronTrigger(hour=7, minute=0), args=[app])
-    app.job_queue.add_job(check_overdue_debts, trigger=CronTrigger(hour=7, minute=0), args=[app])
-
-    # --- Запускаем планировщик только ПОСЛЕ добавления задач ---
-    # Важно! В последней версии библиотеки start() вызывается автоматически.
-    # Прямой вызов scheduler.start() больше не нужен, если он интегрирован в app.
+    # --- ИЗМЕНЕНИЕ: Используем встроенный job_queue ---
+    job_queue = app.job_queue
+    
+    # Устанавливаем часовой пояс
+    kiev_tz = pytz.timezone('Europe/Kiev')
+    
+    # Добавляем задачи на 7:00 утра каждый день по Киеву
+    job_queue.run_daily(check_cash_shortage, time=dt.time(hour=13, minute=0, tzinfo=kiev_tz))
+    job_queue.run_daily(check_overdue_debts, time=dt.time(hour=13, minute=0, tzinfo=kiev_tz))
     
     # Регистрируем все обработчики (эта часть без изменений)
     app.add_handler(CallbackQueryHandler(cancel_report, pattern="^cancel_report$"))
@@ -6866,13 +6860,7 @@ async def main():
     logging.info("Бот запущен и готов к работе!")
 
     # Используем асинхронный запуск
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-
-    # Бесконечный цикл, чтобы программа не завершалась
-    while True:
-        await asyncio.sleep(3600)
+    await app.run_polling()
 
     
 if __name__ == "__main__":
