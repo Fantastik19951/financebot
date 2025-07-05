@@ -15,6 +15,8 @@ matplotlib = "*"
 numpy = "*"
 thefuzz = "*"
 python-Levenshtein = "*"
+APScheduler = "*"
+pytz = "*"
 
 [build-system]
 requires = ["poetry-core"]
