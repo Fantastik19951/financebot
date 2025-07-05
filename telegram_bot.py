@@ -6672,7 +6672,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "add_supplier": await start_supplier(update, context) # Кнопка "Назад" теперь будет работать правильно
         elif data.startswith("add_sup_"): await handle_add_supplier_choice(update, context)
         elif data == "sup_return_yes" or data == "sup_return_no":
-        await handle_return_or_writeoff_choice(update, context)
+            await handle_return_or_writeoff_choice(update, context)
         elif data.startswith("pay_"): await handle_supplier_pay_type(update, context)
         elif data == "card_pay_actual": await handle_card_payment_choice(update, context)
         elif data == "card_pay_debt": await handle_card_payment_choice(update, context)
