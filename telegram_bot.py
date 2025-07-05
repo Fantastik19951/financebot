@@ -2,8 +2,6 @@ import os, logging, datetime as dt, calendar, json
 from collections import defaultdict
 from dotenv import load_dotenv
 from telegram.constants import ParseMode
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 from telegram.error import BadRequest
 from thefuzz import fuzz
 from telegram.error import TelegramError
@@ -20,7 +18,6 @@ import matplotlib.pyplot as plt
 import io
 import asyncio
 import math
-import pytz
 import numpy as np
 from matplotlib.ticker import MaxNLocator
 
@@ -6837,34 +6834,45 @@ async def error_handler(update, context):
 
 
 # --- ЗАПУСК ---
+# --- ЗАМЕНИТЕ ВАШУ ФУНКЦИЮ main() НА ЭТУ ---
 async def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+    """Главная асинхронная функция для запуска бота и планировщика."""
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    import pytz
 
+    # --- ИЗМЕНЕНИЕ: Сначала создаем и настраиваем планировщик ---
     scheduler = AsyncIOScheduler(timezone=pytz.timezone('Europe/Kiev'))
-    # Передаем 'app' в качестве аргумента в наши задачи
-    scheduler.add_job(check_cash_shortage, trigger=CronTrigger(hour=12, minute=33), args=[app])
-    scheduler.add_job(check_overdue_debts, trigger=CronTrigger(hour=12, minute=33), args=[app])
-    scheduler.start()
     
-    # Передаем планировщик в контекст, чтобы он был доступен везде
-    app.job_queue = scheduler
+    # Создаем приложение и СРАЗУ передаем в него наш планировщик
+    app = ApplicationBuilder().token(TOKEN).job_queue(scheduler).build()
+
+    # --- ИЗМЕНЕНИЕ: Добавляем задачи в job_queue, который уже является частью app ---
+    app.job_queue.add_job(check_cash_shortage, trigger=CronTrigger(hour=7, minute=0), args=[app])
+    app.job_queue.add_job(check_overdue_debts, trigger=CronTrigger(hour=7, minute=0), args=[app])
+
+    # --- Запускаем планировщик только ПОСЛЕ добавления задач ---
+    # Важно! В последней версии библиотеки start() вызывается автоматически.
+    # Прямой вызов scheduler.start() больше не нужен, если он интегрирован в app.
     
-    # Основные обработчики
+    # Регистрируем все обработчики (эта часть без изменений)
     app.add_handler(CallbackQueryHandler(cancel_report, pattern="^cancel_report$"))
     app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_error_handler(error_handler)
-    logging.info("Бот запущен!")
     
+    logging.info("Бот запущен и готов к работе!")
+
+    # Используем асинхронный запуск
     await app.initialize()
     await app.start()
     await app.updater.start_polling()
+
+    # Бесконечный цикл, чтобы программа не завершалась
     while True:
         await asyncio.sleep(3600)
-
-
 
     
 if __name__ == "__main__":
