@@ -1962,7 +1962,7 @@ async def handle_return_or_writeoff_choice(update: Update, context: ContextTypes
         context.user_data['supplier']['writeoff'] = 0
         context.user_data['supplier']['step'] = 'invoice_total_markup'
         await query.message.edit_text(
-            "📑 Введите сумму накладной после наценки:",
+            "📑 Введите сумму накладной после наценки (Та сумма, которая добавится в остаток магазина):",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]])
         )
 
@@ -2679,9 +2679,15 @@ async def handle_planning_supplier_choice(update: Update, context: ContextTypes.
         )
         
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-async def send_shift_closed_notification(context: ContextTypes.DEFAULT_TYPE, seller_name: str, report_date_str: str):
-    """Отправляет уведомление о закрытии смены всем администраторам."""
-    
+async def send_shift_closed_notification(context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет уведомление о закрытии смены всем пользователям."""
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Получаем данные из job.data ---
+    job_data = context.job.data
+    seller_name = job_data.get('seller_name', 'Неизвестный')
+    report_date_str = job_data.get('report_date_str', 'сегодня')
+
+    logging.info(f"NOTIFICATION: Отправка уведомления о смене от {seller_name}.")
+
     text = (f"🔔 <b>Уведомление о смене</b>\n\n"
             f"Продавец <b>{seller_name}</b> только что сдал(а) смену за {report_date_str}.\n\n"
             f"Хотите посмотреть детальный отчет?")
@@ -4833,16 +4839,29 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         markup = InlineKeyboardMarkup(kb)
         # --- КОНЕЦ БЛОКА ---
 
-        await processing_message.edit_text(resp, parse_mode=ParseMode.HTML, reply_markup=markup)
-        await send_shift_closed_notification(context, seller, today_str)
+        await processing_message.edit_text(
+            resp,
+            parse_mode=ParseMode.HTML,
+            reply_markup=markup
+        )
+        context.job_queue.run_once(
+            send_shift_closed_notification, 
+            15, 
+            data={'seller_name': seller, 'report_date_str': today_str},
+            name=f"notification_{today_str}_{seller}"
+        )
         
-        clear_plan_for_date(today_str)
+        # 2. Планируем проверку "Финансового щита" на 21:15
         kiev_tz = pytz.timezone('Europe/Kiev')
-        run_time = dt.datetime.now(kiev_tz).replace(hour=21, minute=15, second=0, microsecond=0)
+        run_time = dt.datetime.now(kiev_tz).replace(hour=21, minute=10, second=0, microsecond=0)
+        
         if dt.datetime.now(kiev_tz) > run_time:
             run_time += dt.timedelta(days=1)
-        context.job_queue.run_once(check_financial_shield, run_time)
+            
+        context.job_queue.run_once(check_financial_shield, run_time, name="financial_shield_check")
         logging.info(f"FINANCIAL SHIELD: Проверка запланирована на {run_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        clear_plan_for_date(today_str)
+        
 
     except Exception as e:
         error_msg = f"❌ Критическая ошибка при сохранении отчета: {e}"
@@ -5564,7 +5583,7 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 add_safe_operation(user, "Расход", sum_to_pay, comment_for_safe)
         
         row_to_save = [
-            sdate(), supplier_data['name'], amount_income, amount_writeoff, sum_to_pay,
+            sdate(), supplier_data['name'], amount_income, amount_return, sum_to_pay,
             invoice_total_markup, pay_type, paid_status, debt_amount, due_date, 
             supplier_data.get('comment', ''), who, ""
         ]
