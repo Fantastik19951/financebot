@@ -6773,7 +6773,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await repay_confirm(update, context, int(data.split('_')[2]))
         elif data.startswith("repay_final_"):
             await repay_final(update, context, int(data.split('_')[2]))
-        elif data.startswith("debt_history") or data.startswith("debt_filter_"):
+        elif data.startswith("debts_history") or data.startswith("debt_filter_"):
             page = 0
             filter_by = None
             
