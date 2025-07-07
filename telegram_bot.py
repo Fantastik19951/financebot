@@ -5452,23 +5452,6 @@ async def handle_supplier_pay_type(update: Update, context: ContextTypes.DEFAULT
         reply_markup=generate_due_date_buttons()
     )
 
-    elif pay_type == "Долг":
-        # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-        # Вместо запроса текста показываем календарь
-        context.user_data['supplier']['step'] = 'due_date'
-        await query.message.edit_text(
-            "📅 Выберите дату погашения долга:",
-            reply_markup=generate_due_date_buttons()
-        )
-    else: # Для наличных
-        context.user_data['supplier']['step'] = 'comment'
-        await query.message.edit_text(
-            "📝 Добавьте комментарий (или нажмите 'Пропустить'):",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⏭ Пропустить", callback_data="skip_comment_supplier")],
-                [InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]
-            ])
-        )
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
