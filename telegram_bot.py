@@ -5410,7 +5410,7 @@ async def handle_supplier_invoice_total_markup(update: Update, context: ContextT
         kb = [
             [InlineKeyboardButton("💵 Наличные", callback_data="pay_Наличные")],
             [InlineKeyboardButton("💳 Карта", callback_data="pay_Карта")],
-            [InlineKeyboardButton("📆 Долг", callback_data="pay_Долг")],
+            [InlineKeyboardButton("📆 Долг", callback_data="pay_Долг_init")], # Новый колбэк
             [InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]
         ]
         await update.message.reply_text(
@@ -5420,28 +5420,37 @@ async def handle_supplier_invoice_total_markup(update: Update, context: ContextT
     except ValueError:
         await update.message.reply_text("❌ Введите сумму числом!")
 
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+async def handle_debt_type_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает выбор типа долга (Наличные или Карта)."""
+    query = update.callback_query
+    await query.answer()
+    
+    kb = [
+        [InlineKeyboardButton("💵 Долг (Наличные)", callback_data="pay_Долг")],
+        [InlineKeyboardButton("💳 Долг (Карта)", callback_data="pay_Долг (Карта)")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]
+    ]
+    
+    await query.message.edit_text("Выберите тип долга:", reply_markup=InlineKeyboardMarkup(kb))
+
 
 # 5. Тип оплаты (callback)
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_supplier_pay_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает ВЫБОР ТИПА ДОЛГА и переходит к выбору даты."""
     query = update.callback_query
     await query.answer()
-    pay_type = query.data.split('_', 1)[1]
+    
+    pay_type = query.data.split('_', 1)[1] # Получаем "Долг" или "Долг (Карта)"
     context.user_data['supplier']['payment_type'] = pay_type
-
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
-    if pay_type == "Карта":
-        # Если выбрана карта, показываем дополнительное меню
-        context.user_data['supplier']['step'] = 'card_payment_choice'
-        kb = [
-            [InlineKeyboardButton("✅ Фактическая оплата", callback_data="card_pay_actual")],
-            [InlineKeyboardButton("📆 Долг (Карта)", callback_data="card_pay_debt")]
-        ]
-        await query.message.edit_text(
-            "Это фактическая оплата картой или долг?",
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
-        return
+    context.user_data['supplier']['step'] = 'due_date'
+    
+    await query.message.edit_text(
+        "📅 Выберите дату погашения долга:",
+        reply_markup=generate_due_date_buttons()
+    )
 
     elif pay_type == "Долг":
         # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
@@ -5463,34 +5472,6 @@ async def handle_supplier_pay_type(update: Update, context: ContextTypes.DEFAULT
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-async def handle_card_payment_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает выбор между фактической оплатой картой и долгом по карте."""
-    query = update.callback_query
-    await query.answer()
-    choice = query.data
-
-    if choice == 'card_pay_actual':
-        # Пользователь выбрал фактическую оплату картой.
-        # Устанавливаем тип и переходим к следующему шагу - комментарию.
-        context.user_data['supplier']['payment_type'] = 'Карта'
-        context.user_data['supplier']['step'] = 'comment'
-        await query.message.edit_text(
-            "📝 Добавьте комментарий (или нажмите 'Пропустить'):",
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⏭ Пропустить", callback_data="skip_comment_supplier")],
-                [InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]
-            ])
-        )
-
-    elif choice == 'card_pay_debt':
-        # Пользователь выбрал долг по карте.
-        # Устанавливаем тип и показываем календарь для выбора срока погашения.
-        context.user_data['supplier']['payment_type'] = 'Долг (Карта)'
-        context.user_data['supplier']['step'] = 'due_date'
-        await query.message.edit_text(
-            "📅 Выберите дату погашения долга (Карта):",
-            reply_markup=generate_due_date_buttons()
-        )
         
 async def handle_due_date_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сохраняет выбранную из календаря дату долга и переходит к комментарию."""
@@ -6692,6 +6673,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("add_sup_"): await handle_add_supplier_choice(update, context)
         elif data == "sup_return_yes" or data == "sup_return_no":
             await handle_return_or_writeoff_choice(update, context)
+        elif data == "pay_Долг_init": await handle_debt_type_choice(update, context)
         elif data.startswith("pay_"): await handle_supplier_pay_type(update, context)
         elif data == "card_pay_actual": await handle_card_payment_choice(update, context)
         elif data == "card_pay_debt": await handle_card_payment_choice(update, context)
