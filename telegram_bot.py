@@ -2126,29 +2126,29 @@ def debt_history_keyboard(page: int, total_pages: int, filter_by: str = None):
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ (старую show_debts_history можно будет удалить) ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
-async def show_debt_history_view(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0, filter_by: str = None):
-    """Показывает новый, чистый и информативный интерфейс истории долгов."""
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+async def show_debt_history_view(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int, filter_by: str = None):
+    """Показывает финальную, исправленную версию истории долгов."""
     query = update.callback_query
     await query.message.edit_text("📖 Загружаю историю долгов...")
 
-    all_debts = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
-
+    all_logs = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
+    
     # Фильтруем данные
     if filter_by == "Оплаченные":
-        filtered_logs = [row for row in all_debts if len(row) > 6 and row[6].strip().lower() == "да"]
+        filtered_logs = [row for row in all_logs if len(row) > 6 and row[6].strip().lower() == "да"]
     elif filter_by == "Неоплаченные":
-        filtered_logs = [row for row in all_debts if len(row) > 6 and row[6].strip().lower() != "да"]
+        filtered_logs = [row for row in all_logs if len(row) > 6 and row[6].strip().lower() != "да"]
     else:
-        filtered_logs = all_debts
+        filtered_logs = all_logs
 
     if not filtered_logs:
         filter_text = f" (фильтр: {filter_by})" if filter_by else ""
         return await query.message.edit_text(f"Записей не найдено{filter_text}.", reply_markup=debt_history_keyboard(0, 0, filter_by))
 
-    # Пагинация (старые записи в начале, новые в конце)
+    # Пагинация (старые записи вверху, новые внизу)
     per_page = 10
-    total_records = len(filtered_logs)
-    total_pages = math.ceil(total_records / per_page) if total_records > 0 else 1
+    total_pages = math.ceil(len(filtered_logs) / per_page)
     page = max(0, min(page, total_pages - 1))
     
     start_index = page * per_page
@@ -2162,15 +2162,17 @@ async def show_debt_history_view(update: Update, context: ContextTypes.DEFAULT_T
         status_icon = "✅" if is_paid.lower() == 'да' else "🟠"
         
         msg += "\n" + "─" * 28 + "\n"
-        msg += f"{status_icon} <b>{supplier} | {pay_type or 'Наличные'}</b>\n"
-        msg += f"  • Сумма: {parse_float(total):.2f}₴ | Дата: {date}\n"
+        msg += f"{status_icon} <b>{supplier}</b>\n"
+        msg += f"   • Сумма: {parse_float(total):.2f}₴ ({pay_type or 'Наличные'})\n"
+        msg += f"   • Дата: {date}\n"
         
         if is_paid.lower() == 'да':
+            # Ищем и показываем дату погашения
             repayment_date = get_repayment_date_from_history(context, date, supplier)
             if repayment_date:
-                msg += f"  • <b>Погашен: {repayment_date}</b>"
+                msg += f"   • <b>Погашен: {repayment_date}</b>"
         else:
-            msg += f"  • Срок погашения: {row[5]}"
+            msg += f"   • Срок: {row[5]}"
 
     await query.message.edit_text(
         msg, 
@@ -3348,7 +3350,7 @@ def debts_menu_kb():
         [InlineKeyboardButton("📋 Текущие долги", callback_data="current_debts_0")],
         [InlineKeyboardButton("📆 Предстоящие платежи", callback_data="upcoming_payments")],
         [InlineKeyboardButton("✅ Погасить долг", callback_data="close_debt")],
-        [InlineKeyboardButton("📜 История долгов", callback_data="debts_history_0")],
+        [InlineKeyboardButton("📜 История долгов", callback_data="debts_history")],
         [InlineKeyboardButton("🔎 Поиск долгов", callback_data="search_debts")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
@@ -6774,33 +6776,30 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await repay_confirm(update, context, int(data.split('_')[2]))
         elif data.startswith("repay_final_"):
             await repay_final(update, context, int(data.split('_')[2]))
-        elif data.startswith("debt_history_"):
-            parts = data.split('_')
-            # Формат: debt_history_all_0 или debt_history_Неоплаченные_0
-            filter_by = parts[2] if len(parts) > 3 else "all"
-            page = int(parts[3]) if len(parts) > 3 else 0
+        elif data.startswith("debt_history") or data.startswith("debt_filter_"):
+            # Определяем, был ли это первый клик или навигация/фильтрация
+            page = 0
+            filter_by = None
+
+            if data.startswith("debt_filter_"):
+                filter_by = data.split('_')[-1]
+                # При смене фильтра всегда показываем первую страницу отфильтрованного списка
+                page = 0 
+                if filter_by == "all": filter_by = None
             
-            # Если это первый вызов (без номера страницы в callback_data)
-            if len(parts) < 4:
-                all_debts = get_cached_sheet_data(context, SHEET_DEBTS) or []
-                
-                # Применяем тот же фильтр, что будет в функции отображения
-                if filter_by == "Оплаченные":
-                    filtered_list = [r for r in all_debts if len(r) > 6 and r[6].strip().lower() == "да"]
-                elif filter_by == "Неоплаченные":
-                    filtered_list = [r for r in all_debts if len(r) > 6 and r[6].strip().lower() != "да"]
-                else:
-                    filtered_list = all_debts
-                
-                total_pages = math.ceil(len(filtered_list) / 10)
+            elif '_' in data: # Это навигация, e.g., debt_history_all_1
+                parts = data.split('_')
+                filter_by = parts[2] if parts[2] != "all" else None
+                page = int(parts[3])
+            
+            else: # Это самый первый клик, data == "debts_history"
+                # Вычисляем последнюю страницу для полного списка
+                all_logs = get_cached_sheet_data(context, SHEET_DEBTS) or []
+                total_pages = math.ceil(len(all_logs) / 10)
                 page = max(0, total_pages - 1)
 
-            await show_debt_history_view(update, context, page=page, filter_by=filter_by if filter_by != "all" else None)
+            await show_debt_history_view(update, context, page=page, filter_by=filter_by)
         
-        elif data.startswith("debt_filter_"):
-            filter_by = data.split('_')[-1]
-            # При смене фильтра всегда показываем первую страницу
-            await show_debt_history_view(update, context, page=0, filter_by=filter_by if filter_by != "all" else None)
 
         elif data == "debt_search_start":
             context.user_data['search_debt'] = {}
