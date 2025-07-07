@@ -6787,7 +6787,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 page = 0 
                 if filter_by == "all": filter_by = None
             
-            elif '_' in data: # Это навигация, e.g., debt_history_all_1
+            elif '_' in data and len(data.split('_')) > 2: # Это навигация, e.g., debt_history_all_1
                 parts = data.split('_')
                 filter_by = parts[2] if parts[2] != "all" else None
                 page = int(parts[3])
@@ -6799,6 +6799,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 page = max(0, total_pages - 1)
 
             await show_debt_history_view(update, context, page=page, filter_by=filter_by)
+
+        # ----------------------------------------------------
         
 
         elif data == "debt_search_start":
