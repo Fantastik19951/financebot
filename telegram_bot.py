@@ -3350,7 +3350,7 @@ def debts_menu_kb():
         [InlineKeyboardButton("📋 Текущие долги", callback_data="current_debts_0")],
         [InlineKeyboardButton("📆 Предстоящие платежи", callback_data="upcoming_payments")],
         [InlineKeyboardButton("✅ Погасить долг", callback_data="close_debt")],
-        [InlineKeyboardButton("📜 История долгов", callback_data="debts_history")],
+        [InlineKeyboardButton("📜 История долгов", callback_data="debt_history")],
         [InlineKeyboardButton("🔎 Поиск долгов", callback_data="search_debts")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
