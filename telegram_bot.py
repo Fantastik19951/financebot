@@ -2134,7 +2134,6 @@ async def show_debt_history_view(update: Update, context: ContextTypes.DEFAULT_T
 
     all_logs = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
     
-    # Фильтруем данные
     if filter_by == "Оплаченные":
         filtered_logs = [row for row in all_logs if len(row) > 6 and row[6].strip().lower() == "да"]
     elif filter_by == "Неоплаченные":
@@ -2146,9 +2145,9 @@ async def show_debt_history_view(update: Update, context: ContextTypes.DEFAULT_T
         filter_text = f" (фильтр: {filter_by})" if filter_by else ""
         return await query.message.edit_text(f"Записей не найдено{filter_text}.", reply_markup=debt_history_keyboard(0, 0, filter_by))
 
-    # Пагинация (старые записи вверху, новые внизу)
+    # НЕ переворачиваем список, чтобы сохранить хронологический порядок
     per_page = 10
-    total_pages = math.ceil(len(filtered_logs) / per_page)
+    total_pages = math.ceil(len(filtered_logs) / per_page) if filtered_logs else 1
     page = max(0, min(page, total_pages - 1))
     
     start_index = page * per_page
@@ -2162,12 +2161,10 @@ async def show_debt_history_view(update: Update, context: ContextTypes.DEFAULT_T
         status_icon = "✅" if is_paid.lower() == 'да' else "🟠"
         
         msg += "\n" + "─" * 28 + "\n"
-        msg += f"{status_icon} <b>{supplier}</b>\n"
-        msg += f"   • Сумма: {parse_float(total):.2f}₴ ({pay_type or 'Наличные'})\n"
-        msg += f"   • Дата: {date}\n"
+        msg += f"{status_icon} <b>{supplier} | {pay_type or 'Наличные'}</b>\n"
+        msg += f"   • Сумма: {parse_float(total):.2f}₴ | Дата: {date}\n"
         
         if is_paid.lower() == 'да':
-            # Ищем и показываем дату погашения
             repayment_date = get_repayment_date_from_history(context, date, supplier)
             if repayment_date:
                 msg += f"   • <b>Погашен: {repayment_date}</b>"
@@ -3350,7 +3347,7 @@ def debts_menu_kb():
         [InlineKeyboardButton("📋 Текущие долги", callback_data="current_debts_0")],
         [InlineKeyboardButton("📆 Предстоящие платежи", callback_data="upcoming_payments")],
         [InlineKeyboardButton("✅ Погасить долг", callback_data="close_debt")],
-        [InlineKeyboardButton("📜 История долгов", callback_data="debt_history")],
+        [InlineKeyboardButton("📜 История долгов", callback_data="debts_history")],
         [InlineKeyboardButton("🔎 Поиск долгов", callback_data="search_debts")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
@@ -6777,23 +6774,24 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("repay_final_"):
             await repay_final(update, context, int(data.split('_')[2]))
         elif data.startswith("debt_history") or data.startswith("debt_filter_"):
-            # Определяем, был ли это первый клик или навигация/фильтрация
             page = 0
             filter_by = None
-
+            
+            # Если нажата кнопка фильтра
             if data.startswith("debt_filter_"):
                 filter_by = data.split('_')[-1]
-                # При смене фильтра всегда показываем первую страницу отфильтрованного списка
-                page = 0 
                 if filter_by == "all": filter_by = None
+                # При смене фильтра всегда показываем первую страницу
+                page = 0
             
-            elif '_' in data and len(data.split('_')) > 2: # Это навигация, e.g., debt_history_all_1
+            # Если это навигация по страницам
+            elif '_' in data and len(data.split('_')) > 2:
                 parts = data.split('_')
                 filter_by = parts[2] if parts[2] != "all" else None
                 page = int(parts[3])
             
-            else: # Это самый первый клик, data == "debts_history"
-                # Вычисляем последнюю страницу для полного списка
+            # Если это самый первый клик по кнопке "История долгов"
+            else:
                 all_logs = get_cached_sheet_data(context, SHEET_DEBTS) or []
                 total_pages = math.ceil(len(all_logs) / 10)
                 page = max(0, total_pages - 1)
