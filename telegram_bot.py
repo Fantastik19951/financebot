@@ -5439,20 +5439,33 @@ async def handle_debt_type_choice(update: Update, context: ContextTypes.DEFAULT_
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_supplier_pay_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает ВЫБОР ТИПА ДОЛГА и переходит к выбору даты."""
+    """
+    Корректно обрабатывает ВСЕ типы оплаты: Наличные, Карта, и все виды Долга.
+    """
     query = update.callback_query
     await query.answer()
     
-    pay_type = query.data.split('_', 1)[1] # Получаем "Долг" или "Долг (Карта)"
+    pay_type = query.data.split('_', 1)[1]
     context.user_data['supplier']['payment_type'] = pay_type
-    context.user_data['supplier']['step'] = 'due_date'
-    
-    await query.message.edit_text(
-        "📅 Выберите дату погашения долга:",
-        reply_markup=generate_due_date_buttons()
-    )
 
-
+    # --- ИСПРАВЛЕННАЯ ЛОГИКА ---
+    # Если это любой тип долга, запрашиваем дату
+    if pay_type.startswith("Долг"):
+        context.user_data['supplier']['step'] = 'due_date'
+        await query.message.edit_text(
+            "📅 Выберите дату погашения долга:",
+            reply_markup=generate_due_date_buttons()
+        )
+    # Иначе (если это "Наличные" или "Карта") переходим к комментарию
+    else:
+        context.user_data['supplier']['step'] = 'comment'
+        await query.message.edit_text(
+            "📝 Добавьте комментарий (или нажмите 'Пропустить'):",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⏭ Пропустить", callback_data="skip_comment_supplier")],
+                [InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]
+            ])
+        )
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
         
