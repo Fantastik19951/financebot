@@ -2128,11 +2128,12 @@ def debt_history_keyboard(page: int, total_pages: int, filter_by: str = None):
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def show_debt_history_view(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int, filter_by: str = None):
-    """Показывает финальную, исправленную версию истории долгов."""
+    """Показывает историю долгов, работая с уже загруженными данными из user_data."""
     query = update.callback_query
-    await query.message.edit_text("📖 Загружаю историю долгов...")
+    # Убираем сообщение о загрузке, так как теперь все будет мгновенно
+    await query.answer()
 
-    all_logs = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
+    all_logs = context.user_data.get('debt_history_data', [])
     
     if filter_by == "Оплаченные":
         filtered_logs = [row for row in all_logs if len(row) > 6 and row[6].strip().lower() == "да"]
@@ -2149,7 +2150,6 @@ async def show_debt_history_view(update: Update, context: ContextTypes.DEFAULT_T
     per_page = 10
     total_pages = math.ceil(len(filtered_logs) / per_page) if filtered_logs else 1
     page = max(0, min(page, total_pages - 1))
-    
     start_index = page * per_page
     page_records = filtered_logs[start_index : start_index + per_page]
 
@@ -2176,6 +2176,7 @@ async def show_debt_history_view(update: Update, context: ContextTypes.DEFAULT_T
         parse_mode=ParseMode.HTML,
         reply_markup=debt_history_keyboard(page, total_pages, filter_by)
     )
+    
 # Функция для обновления данных у поставщика
 def update_supplier_payment(supplier_name, amount, user_name, debt_closed, debt_id=None):
     ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
@@ -6792,27 +6793,30 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("repay_final_"):
             await repay_final(update, context, int(data.split('_')[2]))
         elif data == "debts_history":
-            # Самый первый клик по кнопке "История долгов"
-            all_logs = get_cached_sheet_data(context, SHEET_DEBTS) or []
-            total_pages = math.ceil(len(all_logs) / 10)
-            page = max(0, total_pages - 1)  # Вычисляем последнюю страницу
+            # Самый первый клик. Загружаем и сохраняем все данные.
+            all_logs = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
+            context.user_data['debt_history_data'] = all_logs
+            
+            # Вычисляем последнюю страницу
+            total_pages = math.ceil(len(all_logs) / 10) if all_logs else 1
+            page = max(0, total_pages - 1)
+            
             await show_debt_history_view(update, context, page=page, filter_by=None)
 
         elif data.startswith("debt_filter_"):
-            # Обработка кнопок фильтрации ("Оплаченные", "Неоплаченные", "Сбросить")
+            # Обработка кнопок фильтрации. Данные уже загружены.
             filter_by = data.split('_')[-1]
-            if filter_by == "all":
-                filter_by = None
-            # При смене фильтра всегда показываем первую страницу отфильтрованного списка
+            if filter_by == "all": filter_by = None
+            # При смене фильтра всегда показываем первую страницу
             await show_debt_history_view(update, context, page=0, filter_by=filter_by)
             
         elif data.startswith("debt_history_"):
-            # Обработка кнопок навигации "Вперед" / "Назад"
-            # Формат: debt_history_all_1 или debt_history_Оплаченные_0
+            # Обработка кнопок навигации. Данные уже загружены.
             parts = data.split('_')
             filter_by = parts[2] if parts[2] != "all" else None
             page = int(parts[3])
             await show_debt_history_view(update, context, page=page, filter_by=filter_by)
+
 
         # ----------------------------------------------------
         
