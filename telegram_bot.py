@@ -6286,53 +6286,66 @@ async def repay_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, row_
         await query.message.edit_text(f"❌ Не удалось найти данные о долге. Возможно, он был удален.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="debts_menu")]]))
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+# --- ЗАМЕНИТЕ СТАРУЮ ФУНКЦИЮ НА ЭТУ ---
 async def generate_shift_protocol(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Собирает все действия за день в единую хронологическую ленту."""
+    """Собирает все действия за день и формирует структурированный протокол смены."""
     query = update.callback_query
-    # Извлекаем дату из callback_data, который был вида `detail_report_nav_{start_str}_{end_str}_{index}`
-    # или `details_exp_{target_date_str}_{start_str}_{end_str}_{index}`
-    date_str = query.data.split('_')[2]
-    
+    date_str = query.data.split('_')[-1]
     await query.message.edit_text(f"📜 Собираю полный протокол смены за {date_str}...")
 
-    events = []
-    # Собираем данные из всех релевантных листов
-    sheets_to_check = {
-        SHEET_EXPENSES: "💸 Расход",
-        SHEET_SUPPLIERS: "📦 Накладная",
-        "Сейф": "🗄️ Сейф",
-        SHEET_INVENTORY: "📦 Остаток"
-    }
-
-    for sheet, event_type in sheets_to_check.items():
-        rows = get_cached_sheet_data(context, sheet, force_update=True) or []
-        for row in rows:
-            if row and row[0] == date_str:
-                events.append(f"<b>{event_type}</b>: {', '.join(row[1:])}")
-
-    # Получаем финальный отчет о закрытии смены
+    # --- 1. Собираем данные из всех таблиц ---
+    supplier_rows = [r for r in (get_cached_sheet_data(context, SHEET_SUPPLIERS) or []) if r and r[0] == date_str]
+    expense_rows = [r for r in (get_cached_sheet_data(context, SHEET_EXPENSES) or []) if r and r[0] == date_str and "Закрытие смены" in r[5]]
+    safe_rows = [r for r in (get_cached_sheet_data(context, "Сейф") or []) if r and r[0].startswith(date_str)]
+    inventory_rows = [r for r in (get_cached_sheet_data(context, SHEET_INVENTORY) or []) if r and r[0] == date_str]
     report_row = next((r for r in (get_cached_sheet_data(context, SHEET_REPORT) or []) if r and r[0] == date_str), None)
 
+    # --- 2. Формируем красивое сообщение ---
     msg = f"<b>📜 Протокол смены за {date_str}</b>\n"
     if report_row:
         msg += f"<i>Продавец: {report_row[1]}</i>\n"
-    msg += "──────────────────\n\n"
-
-    if not events and not report_row:
-        msg += "<i>За этот день не найдено никаких операций.</i>"
     
-    msg += "\n".join(events)
+    # Блок: Накладные
+    msg += "\n──────────────────\n"
+    msg += "<b>📦 Приходы по накладным:</b>\n"
+    if not supplier_rows:
+        msg += "  <i>(нет)</i>"
+    else:
+        for row in supplier_rows:
+            msg += f"  • {row[1]}: {parse_float(row[4]):.2f}₴ ({row[6]})\n"
 
+    # Блок: Расходы по кассе
+    msg += "\n<b>💸 Расходы (из кассы смены):</b>\n"
+    if not expense_rows:
+        msg += "  <i>(нет)</i>"
+    else:
+        for row in expense_rows:
+            msg += f"  • {row[2]}: {parse_float(row[1]):.2f}₴\n"
+
+    # Блок: Списания с остатка
+    msg += "\n<b>🗑️ Списания с остатка:</b>\n"
+    writeoffs = [r for r in inventory_rows if r[1] == "Списание"]
+    if not writeoffs:
+        msg += "  <i>(нет)</i>"
+    else:
+        for row in writeoffs:
+            msg += f"  • {row[3]}: {parse_float(row[2]):.2f}₴\n"
+
+    # Блок: Финальные операции при закрытии
     if report_row:
-        msg += f"\n\n<b>🏁 Закрытие смены:</b>\n"
-        msg += f"  • Наличные: {report_row[2]}₴\n"
-        msg += f"  • Карта: {report_row[3]}₴\n"
-        msg += f"  • Итог в сейфе: {report_row[9]}₴"
-
+        msg += "\n──────────────────\n"
+        msg += "<b>🏁 Закрытие смены:</b>\n"
+        msg += f"  • Выручка (Нал+Карта): {parse_float(report_row[4]):.2f}₴\n"
+        msg += f"  • Остаток кассы в сейф: {parse_float(report_row[5]):.2f}₴\n"
+        msg += f"  • Итоговый остаток в сейфе: <b>{parse_float(report_row[9]):.2f}₴</b>\n"
+    
     # Кнопка "Назад" к детальному отчету
     back_cb = f"detail_report_nav_{date_str}_{date_str}_0"
-    await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 К отчету", callback_data=back_cb)]]))
-
+    await query.message.edit_text(
+        msg, 
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 К отчету", callback_data=back_cb)]])
+    )
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def view_repayable_debts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает список долгов для погашения с указанием типа оплаты на кнопке."""
