@@ -2760,6 +2760,7 @@ async def confirm_delete_invoice(update: Update, context: ContextTypes.DEFAULT_T
     ]]
     await query.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def execute_delete_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выполняет полное удаление накладной и всех связанных операций."""
     query = update.callback_query
@@ -2774,6 +2775,8 @@ async def execute_delete_invoice(update: Update, context: ContextTypes.DEFAULT_T
     to_pay = parse_float(to_pay_str)
     markup_amount = parse_float(markup_amount_str)
     user = query.from_user
+    # Используем наш справочник имен
+    who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
 
     # 2. Откатываем операции
     try:
@@ -2781,8 +2784,8 @@ async def execute_delete_invoice(update: Update, context: ContextTypes.DEFAULT_T
         if pay_type == "Наличные":
             add_safe_operation(user, "Пополнение", to_pay, f"Отмена оплаты по удаленной накладной от {invoice_date} ({supplier_name})")
 
-        # Откат остатка магазина
-        add_inventory_operation("Корректировка", -markup_amount, f"Удаление накладной от {invoice_date} ({supplier_name})")
+        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Добавляем 'who' в вызов функции ---
+        add_inventory_operation("Корректировка", -markup_amount, f"Удаление накладной от {invoice_date} ({supplier_name})", who)
 
         # Откат долга, если он был
         if pay_type.startswith("Долг"):
@@ -2812,7 +2815,7 @@ async def execute_delete_invoice(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         await query.message.edit_text(f"❌ Произошла критическая ошибка при удалении: {e}")
         logging.error(f"Ошибка при удалении накладной (строка {row_index}): {e}", exc_info=True)
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+        
 async def handle_planning_supplier_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает выбор поставщика при планировании."""
     query = update.callback_query
