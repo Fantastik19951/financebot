@@ -5219,6 +5219,8 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         resp += "\n"
         if total_needed_cash > 0: resp += f"\n<b>ИТОГО на завтра наличными: {total_needed_cash:.2f}₴</b>"
         if total_needed_card > 0: resp += f"\n<b>ИТОГО на завтра картой: {total_needed_card:.2f}₴</b>"
+
+
         
         kb = [[
             InlineKeyboardButton("💸 Детально расходы", callback_data=f"details_exp_{today_str}_{today_str}"),
@@ -6840,49 +6842,43 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif state_key == 'search_debt':
-        search_query = update.message.text.strip()
+        search_query = update.message.text.strip().lower()
         context.user_data.pop('search_debt', None)
-        await update.message.reply_text(f"🔎 Ищу '{search_query}' в истории долгов...")
-        
-        rows = get_cached_sheet_data(context, SHEET_DEBTS) or []
-        
-        # --- ВОЗВРАЩАЕМ ПОЛНУЮ ЛОГИКУ ПОИСКА ---
-        normalized_query = normalize_text(search_query)
+        rows = get_cached_sheet_data(context, SHEET_DEBTS)
+        if rows is None:
+            await update.message.reply_text(f"❌ Ошибка чтения таблицы долгов.")
+            return
+
         matches = []
         for i, row in enumerate(rows):
             if len(row) < 7: continue
-            
-            # Получаем все данные для поиска
-            date_str = row[0].strip()
-            name_str = row[1].strip()
-            amount_str = row[2].replace(',', '.')
-            
-            # Проверяем совпадение по дате, нормализованному имени или точной сумме
-            if (search_query == date_str or 
-                normalized_query in normalize_text(name_str) or 
-                (search_query.replace(',', '.').isdigit() and search_query == amount_str)):
+            date_str, name_str, amount_str = row[0].strip(), row[1].strip().lower(), row[2].replace(',', '.')
+            if (search_query in date_str or search_query in name_str or (search_query.replace(',', '.').isdigit() and search_query == amount_str)):
                 matches.append(row + [i+2])
-        # --- КОНЕЦ ЛОГИКИ ПОИСКА ---
-
+        
         if not matches:
-            await update.message.reply_text("🚫 Ничего не найдено.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="debts_history")]]))
+            await update.message.reply_text("🚫 Ничего не найдено.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="debts_menu")]]))
         else:
             msg = f"<b>🔎 Результаты поиска по '{search_query}':</b>\n"
+            kb = []
             for debt in matches:
-                # ... (вся логика отображения результатов остается без изменений) ...
-                supplier, total, to_pay, due_date, status = debt[1], parse_float(debt[2]), parse_float(debt[4]), debt[5], debt[6]
+                supplier, total, to_pay, due_date, status, row_index = debt[1], parse_float(debt[2]), parse_float(debt[4]), debt[5], debt[6], debt[-1]
                 pay_type = debt[7] if len(debt) > 7 else "Наличные"
                 status_icon = "✅" if status.lower() == 'да' else "🟠"
+                
                 msg += f"\n──────────────────\n{status_icon} <b>{supplier}</b> | {pay_type}\n"
+                
                 if status.lower() == 'да':
                     repayment_date = get_repayment_date_from_history(context, debt[0], supplier)
                     msg += f"  Сумма: {total:.2f}₴ (Погашен {repayment_date})"
                 else:
-                    msg += f"  Сумма: {total:.2f}₴ | Остаток: {to_pay:.2f}₴ | Срок: {due_date}"
+                    msg += f"  Сумма: {total:.2f}₴ | Срок: {due_date}"
+                    # --- ВОТ ВОЗВРАЩЕННАЯ КНОПКА ---
+                    kb.append([InlineKeyboardButton(f"✅ Погасить для {supplier} ({to_pay:.2f}₴)", callback_data=f"repay_confirm_{row_index}")])
             
-            await update.message.reply_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="debts_history")]]))
+            kb.append([InlineKeyboardButton("🔙 Назад", callback_data="debts_menu")])
+            await update.message.reply_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
         return
-        
         
 
     elif state_key == 'safe_op':
