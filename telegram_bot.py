@@ -419,6 +419,65 @@ def generate_expense_pie_chart(context: ContextTypes.DEFAULT_TYPE, start_date: d
     plt.close(fig)
     return buf
 
+# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
+def debt_filter_keyboard(filters: dict):
+    """Создает клавиатуру для нового меню фильтров."""
+    status_paid = "✅ Оплаченные" if "Оплаченные" in filters.get('status', []) else "Оплаченные"
+    status_unpaid = "✅ Неоплаченные" if "Неоплаченные" in filters.get('status', []) else "Неоплаченные"
+    
+    type_cash = "✅ Наличные" if "Наличные" in filters.get('pay_type', []) else "Наличные"
+    type_card = "✅ Карта" if "Карта" in filters.get('pay_type', []) else "Карта"
+    
+    date_last_week = "✅ Последние" if filters.get('date_range') == "last_week" else "Последние"
+    
+    sort_by_creation = f"🔽 По дате созд. ({filters.get('sort_order', 'desc')})" if filters.get('sort_by') == "creation" else "По дате созд."
+    sort_by_due_date = f"🔽 По сроку ({filters.get('sort_order', 'desc')})" if filters.get('sort_by') == "due_date" else "По сроку"
+
+    kb = [
+        [InlineKeyboardButton(status_paid, callback_data="toggle_filter_status_Оплаченные"), InlineKeyboardButton(status_unpaid, callback_data="toggle_filter_status_Неоплаченные")],
+        [InlineKeyboardButton(type_cash, callback_data="toggle_filter_pay_type_Наличные"), InlineKeyboardButton(type_card, callback_data="toggle_filter_pay_type_Карта")],
+        [InlineKeyboardButton(date_last_week, callback_data="toggle_filter_date_range_last_week")],
+        [InlineKeyboardButton(sort_by_creation, callback_data="toggle_filter_sort_by_creation"), InlineKeyboardButton(sort_by_due_date, callback_data="toggle_filter_sort_by_due_date")],
+        [InlineKeyboardButton("✅ Применить и показать", callback_data="apply_debt_filters")],
+        [InlineKeyboardButton("🔙 Назад к истории", callback_data="debts_history")]
+    ]
+    return InlineKeyboardMarkup(kb)
+
+async def show_debt_filter_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню выбора фильтров для истории долгов."""
+    query = update.callback_query
+    # Инициализируем фильтры, если их нет
+    if 'debt_filters' not in context.user_data:
+        context.user_data['debt_filters'] = {
+            'status': [], 'pay_type': [], 'date_range': None, 
+            'sort_by': 'creation', 'sort_order': 'desc'
+        }
+    
+    filters = context.user_data['debt_filters']
+    await query.message.edit_text("⚙️ **Настройте фильтры отбора:**", reply_markup=debt_filter_keyboard(filters))
+
+async def toggle_debt_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переключает выбранный фильтр."""
+    query = update.callback_query
+    _, _, f_type, f_value = query.data.split('_', 3)
+    filters = context.user_data.get('debt_filters', {})
+
+    if f_type == "status" or f_type == "pay_type":
+        if f_value in filters[f_type]:
+            filters[f_type].remove(f_value)
+        else:
+            filters[f_type].append(f_value)
+    elif f_type == "date_range":
+        filters['date_range'] = f_value if filters.get('date_range') != f_value else None
+    elif f_type == "sort_by":
+        if filters.get('sort_by') == f_value:
+            filters['sort_order'] = 'asc' if filters.get('sort_order') == 'desc' else 'desc'
+        else:
+            filters['sort_by'] = f_value
+            filters['sort_order'] = 'desc'
+            
+    await show_debt_filter_menu(update, context)
+
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 def perform_abc_analysis(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> dict | None:
     """Проводит ABC-анализ поставщиков по сумме закупок за период."""
@@ -553,23 +612,16 @@ def week_range(date=None):
     end = start + dt.timedelta(days=6)
     return start, end
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-def get_all_supplier_names(context: ContextTypes.DEFAULT_TYPE, force_update: bool = False) -> list[str]:
-    """Читает и кэширует полный список поставщиков из справочника."""
-    sheet_name = "СправочникПоставщиков"
+def get_all_supplier_names(context: ContextTypes.DEFAULT_TYPE, force_update: bool = False, include_archived: bool = False) -> list:
+    """Возвращает список имен всех поставщиков. По умолчанию только активных."""
+    rows = get_cached_sheet_data(context, "СправочникПоставщиков", force_update)
+    if not rows: return []
     
-    # ИСПРАВЛЕНИЕ: Передаем аргумент force_update дальше в основную функцию кэширования
-    cached_data = get_cached_sheet_data(
-        context, 
-        sheet_name, 
-        cache_duration_seconds=3600, 
-        force_update=force_update
-    )
-    
-    if cached_data:
-        # Извлекаем только первое значение из каждой строки (название)
-        return [row[0] for row in cached_data if row and row[0]]
-    return []
+    if include_archived:
+        return [row[0] for row in rows if row and row[0]]
+    else:
+        # Возвращаем только тех, у кого статус "Активный" во второй колонке
+        return [row[0] for row in rows if row and row[0] and len(row) > 1 and row[1] == "Активный"]
 
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
@@ -2179,19 +2231,10 @@ async def show_salary_history(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-def debt_history_keyboard(page: int, total_pages: int, filter_by: str = None):
+def debt_history_keyboard(page: int, total_pages: int):
     """Создает клавиатуру для навигации и фильтрации в истории долгов."""
     kb = []
-    
-    # Ряд с фильтрами
-    filter_row = [
-        InlineKeyboardButton("🟠 Неоплаченные", callback_data="debt_filter_Неоплаченные"),
-        InlineKeyboardButton("✅ Оплаченные", callback_data="debt_filter_Оплаченные"),
-    ]
-    # Если фильтр уже применен, добавляем кнопку сброса
-    if filter_by:
-        filter_row.append(InlineKeyboardButton("❌ Сбросить", callback_data="debt_filter_all"))
-    kb.append(filter_row)
+
 
     # Ряд с пагинацией
     nav_row = []
@@ -2204,32 +2247,50 @@ def debt_history_keyboard(page: int, total_pages: int, filter_by: str = None):
         kb.append(nav_row)
 
     # Ряд с поиском и выходом
+    kb.append([InlineKeyboardButton("⚙️ Фильтры отбора", callback_data="debt_filters_menu")])
     kb.append([InlineKeyboardButton("🔎 Поиск по истории", callback_data="debt_search_start")])
     kb.append([InlineKeyboardButton("🔙 В меню Долги", callback_data="debts_menu")])
+    
     
     return InlineKeyboardMarkup(kb)
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ (старую show_debts_history можно будет удалить) ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
-async def show_debt_history_view(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int, filter_by: str = None):
-    """Показывает историю долгов, работая с уже загруженными данными из user_data."""
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+async def show_debt_history_view(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
+    """Показывает историю долгов с учетом сложных фильтров."""
     query = update.callback_query
-    # Убираем сообщение о загрузке, так как теперь все будет мгновенно
-    await query.answer()
+    await query.message.edit_text("📖 Загружаю историю долгов...")
 
     all_logs = context.user_data.get('debt_history_data', [])
+    filters = context.user_data.get('debt_filters', {})
     
-    if filter_by == "Оплаченные":
-        filtered_logs = [row for row in all_logs if len(row) > 6 and row[6].strip().lower() == "да"]
-    elif filter_by == "Неоплаченные":
-        filtered_logs = [row for row in all_logs if len(row) > 6 and row[6].strip().lower() != "да"]
-    else:
-        filtered_logs = all_logs
+    # --- ПРИМЕНЕНИЕ ФИЛЬТРОВ ---
+    filtered_logs = all_logs
+    # 1. Фильтр по статусу
+    if filters.get('status'):
+        filtered_logs = [r for r in filtered_logs if (("Оплаченные" in filters['status'] and r[6].lower() == 'да') or ("Неоплаченные" in filters['status'] and r[6].lower() != 'да'))]
+    # 2. Фильтр по типу оплаты
+    if filters.get('pay_type'):
+        filtered_logs = [r for r in filtered_logs if (r[7] or "Наличные") in filters['pay_type']]
+    # 3. Фильтр по дате
+    if filters.get('date_range') == 'last_week':
+        today = dt.date.today()
+        start_of_week = today - dt.timedelta(days=today.weekday())
+        filtered_logs = [r for r in filtered_logs if pdate(r[0]) >= start_of_week]
 
-    if not filtered_logs:
-        filter_text = f" (фильтр: {filter_by})" if filter_by else ""
-        return await query.message.edit_text(f"Записей не найдено{filter_text}.", reply_markup=debt_history_keyboard(0, 0, filter_by))
+    # --- СОРТИРОВКА ---
+    sort_by = filters.get('sort_by', 'creation')
+    sort_order = filters.get('sort_order', 'desc')
+    reverse = sort_order == 'desc'
+    
+    if sort_by == 'due_date':
+        filtered_logs.sort(key=lambda r: pdate(r[5]) or dt.date.min, reverse=reverse)
+    else: # По умолчанию сортируем по дате создания (естественный порядок)
+        if reverse: filtered_logs.reverse()
+    
+    # ... (остальная логика пагинации и отображения остается без изменений) ...
 
     # НЕ переворачиваем список, чтобы сохранить хронологический порядок
     per_page = 10
@@ -4221,20 +4282,57 @@ async def list_suppliers_for_editing(update: Update, context: ContextTypes.DEFAU
     await update.message.reply_text("Выберите поставщика для переименования:", reply_markup=InlineKeyboardMarkup(kb))
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def prompt_for_new_supplier_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает меню действий для выбранного поставщика."""
     query = update.callback_query
     old_name = query.data.split('edit_supplier_name_')[-1]
     
-    context.user_data['supplier_edit'] = { 'old_name': old_name }
+    context.user_data['supplier_edit'] = { 'old_name': old_name, 'step': 'actions' }
 
     kb = [
         [InlineKeyboardButton("📂 Открыть досье", callback_data=f"dossier_{old_name}")],
         [InlineKeyboardButton("✏️ Переименовать", callback_data="rename_supplier_start")],
-        [InlineKeyboardButton("🗑️ Удалить из справочника", callback_data=f"delete_supplier_confirm_{old_name}")],
+        # --- ИЗМЕНЕНИЕ: Кнопка архивации ---
+        [InlineKeyboardButton("🗄️ Архивировать", callback_data=f"archive_supplier_confirm_{old_name}")],
         [InlineKeyboardButton("🔙 Назад к поиску", callback_data="supplier_directory_menu")]
     ]
     await query.message.edit_text(f"Выбран поставщик: <b>{old_name}</b>\n\nВыберите действие:", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
+async def confirm_archive_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запрашивает подтверждение перед архивацией поставщика."""
+    query = update.callback_query
+    supplier_name = query.data.split('archive_supplier_confirm_')[-1]
+    
+    text = (f"Вы уверены, что хотите архивировать '<b>{supplier_name}</b>'?\n\n"
+            f"Он перестанет появляться в списках для добавления накладных и планирования, "
+            f"но вся его история сохранится.")
+    
+    kb = [
+        [InlineKeyboardButton(f"🗄️ Да, архивировать", callback_data=f"archive_supplier_execute_{supplier_name}")],
+        [InlineKeyboardButton("❌ Отмена", callback_data=f"edit_supplier_name_{supplier_name}")]
+    ]
+    await query.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+async def execute_archive_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Изменяет статус поставщика на 'Архивный'."""
+    query = update.callback_query
+    supplier_name = query.data.split('archive_supplier_execute_')[-1]
+    await query.message.edit_text(f"⏳ Архивирую '<b>{supplier_name}</b>'...", parse_mode=ParseMode.HTML)
+    
+    try:
+        ws_dir = GSHEET.worksheet("СправочникПоставщиков")
+        cell = ws_dir.find(supplier_name)
+        if cell:
+            # Устанавливаем статус "Архивный" во второй колонке
+            ws_dir.update_cell(cell.row, 2, "Архивный")
+            get_all_supplier_names(context, force_update=True)
+            await query.message.edit_text(f"✅ Поставщик '<b>{supplier_name}</b>' успешно архивирован.", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В меню", callback_data="supplier_directory_menu")]]))
+        else:
+            await query.message.edit_text("❌ Не удалось найти поставщика для архивации.")
+    except Exception as e:
+        await query.message.edit_text(f"❌ Произошла ошибка: {e}")
 
 async def save_edited_supplier_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сохраняет новое имя, обновляя его во ВСЕХ таблицах."""
@@ -6870,9 +6968,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 if status.lower() == 'да':
                     repayment_date = get_repayment_date_from_history(context, debt[0], supplier)
-                    msg += f"  Сумма: {total:.2f}₴ (Погашен {repayment_date})"
+                    msg += f"  Сумма: {total:.2f}₴ | <b>Погашен {repayment_date}</b>"
                 else:
-                    msg += f"  Сумма: {total:.2f}₴ | Срок: {due_date}"
+                    msg += f"  Сумма: {total:.2f}₴ | <b>Срок: {due_date}</b>"
                     # --- ВОТ ВОЗВРАЩЕННАЯ КНОПКА ---
                     kb.append([InlineKeyboardButton(f"✅ Погасить для {supplier} ({to_pay:.2f}₴)", callback_data=f"repay_confirm_{row_index}")])
             
@@ -7184,30 +7282,32 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("repay_final_"):
             await repay_final(update, context, int(data.split('_')[2]))
         elif data == "debts_history":
-            # Самый первый клик. Загружаем и сохраняем все данные.
             all_logs = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
             context.user_data['debt_history_data'] = all_logs
-            
-            # Вычисляем последнюю страницу
-            total_pages = math.ceil(len(all_logs) / 10) if all_logs else 1
-            page = max(0, total_pages - 1)
-            
-            await show_debt_history_view(update, context, page=page, filter_by=None)
-
-        elif data.startswith("debt_filter_"):
-            # Обработка кнопок фильтрации. Данные уже загружены.
-            filter_by = data.split('_')[-1]
-            if filter_by == "all": filter_by = None
-            # При смене фильтра всегда показываем первую страницу
-            await show_debt_history_view(update, context, page=0, filter_by=filter_by)
-            
+            context.user_data.pop('debt_filters', None) # Сбрасываем фильтры при входе
+            await show_debt_history_view(update, context, page=0)
+    
         elif data.startswith("debt_history_"):
-            # Обработка кнопок навигации. Данные уже загружены.
-            parts = data.split('_')
-            filter_by = parts[2] if parts[2] != "all" else None
-            page = int(parts[3])
-            await show_debt_history_view(update, context, page=page, filter_by=filter_by)
+            page = int(data.split('_')[-1])
+            await show_debt_history_view(update, context, page=page)
 
+        elif data == "debt_filters_menu":
+            await show_debt_filter_menu(update, context)
+        
+        elif data.startswith("toggle_filter_"):
+            await toggle_debt_filter(update, context)
+        
+        elif data == "apply_debt_filters":
+            await show_debt_history_view(update, context, page=0)
+    # --- КОНЕЦ БЛОКА ---
+    
+    # ...
+    # --- ДОБАВЬТЕ ЭТОТ БЛОК ДЛЯ АРХИВАЦИИ ---
+        elif data.startswith("archive_supplier_confirm_"):
+            await confirm_archive_supplier(update, context)
+        elif data.startswith("archive_supplier_execute_"):
+            await execute_archive_supplier(update, context)
+        
 
         # ----------------------------------------------------
         
