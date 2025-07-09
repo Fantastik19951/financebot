@@ -7286,8 +7286,8 @@ def main():
     app.add_handler(CallbackQueryHandler(cancel_report, pattern="^cancel_report$"))
     app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Regex(r'(?i)^сейф$'), quick_safe_balance))
     app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.Regex(r'^(?i)сейф$'), quick_safe_balance))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_error_handler(error_handler)
     
