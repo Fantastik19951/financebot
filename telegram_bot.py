@@ -2725,12 +2725,93 @@ async def show_single_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
     kb = []
     if kb_nav: kb.append(kb_nav)
     
-    kb.append([InlineKeyboardButton(f"✏️ Редактировать ({supplier})", callback_data=f"edit_invoice_start_{target_row_num}")])
+    # Добавляем кнопки действий
+    kb.append([InlineKeyboardButton(f"✏️ Редактировать", callback_data=f"edit_invoice_start_{target_row_num}")])
+    # --- НОВАЯ КНОПКА УДАЛЕНИЯ ---
+    kb.append([InlineKeyboardButton(f"🗑️ Удалить накладную", callback_data=f"delete_invoice_confirm_{target_row_num}")])
     kb.append([InlineKeyboardButton("🔙 К списку накладных", callback_data=f"invoices_list_{target_date_str}")])
     
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
     
 # 2. Выбор поставщика из списка или ввод нового
+
+# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
+
+async def confirm_delete_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запрашивает подтверждение перед удалением накладной."""
+    query = update.callback_query
+    row_index = int(query.data.split('_')[-1])
+
+    ws = GSHEET.worksheet(SHEET_SUPPLIERS)
+    invoice_row = ws.row_values(row_index)
+    supplier_name = invoice_row[1]
+    amount_str = invoice_row[4]
+
+    text = (f"❗️<b>Подтвердите действие</b>❗️\n\n"
+            f"Вы уверены, что хотите **ПОЛНОСТЬЮ УДАЛИТЬ** накладную от поставщика "
+            f"<b>{supplier_name}</b> на сумму <b>{amount_str}₴</b>?\n\n"
+            f"Это действие отменит все связанные финансовые и складские операции. "
+            f"<b>Отменить его будет невозможно.</b>")
+    
+    kb = [[
+        InlineKeyboardButton("🗑️ Да, удалить безвозвратно", callback_data=f"delete_invoice_execute_{row_index}"),
+        # Кнопка отмены просто возвращает на детальный просмотр этой же накладной
+        InlineKeyboardButton("❌ Отмена", callback_data=query.message.reply_markup.inline_keyboard[0][0].callback_data if query.message.reply_markup else "suppliers_menu")
+    ]]
+    await query.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+async def execute_delete_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выполняет полное удаление накладной и всех связанных операций."""
+    query = update.callback_query
+    await query.message.edit_text("⏳ Удаление накладной и корректировка данных...")
+
+    row_index = int(query.data.split('_')[-1])
+    ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
+    invoice_row = ws_sup.row_values(row_index)
+
+    # 1. Извлекаем все данные ДО удаления
+    invoice_date, supplier_name, _, _, to_pay_str, markup_amount_str, pay_type = invoice_row[:7]
+    to_pay = parse_float(to_pay_str)
+    markup_amount = parse_float(markup_amount_str)
+    user = query.from_user
+
+    # 2. Откатываем операции
+    try:
+        # Откат сейфа, если была оплата наличными
+        if pay_type == "Наличные":
+            add_safe_operation(user, "Пополнение", to_pay, f"Отмена оплаты по удаленной накладной от {invoice_date} ({supplier_name})")
+
+        # Откат остатка магазина
+        add_inventory_operation("Корректировка", -markup_amount, f"Удаление накладной от {invoice_date} ({supplier_name})")
+
+        # Откат долга, если он был
+        if pay_type.startswith("Долг"):
+            ws_debts = GSHEET.worksheet(SHEET_DEBTS)
+            debts_rows = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
+            for i, debt_row in enumerate(debts_rows, start=2):
+                if debt_row[0] == invoice_date and debt_row[1] == supplier_name:
+                    ws_debts.delete_rows(i)
+                    logging.info(f"Удалена связанная запись о долге в строке {i}")
+                    break
+        
+        # 3. Удаляем саму накладную
+        ws_sup.delete_rows(row_index)
+        
+        # 4. Сбрасываем кэши
+        get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True)
+        get_cached_sheet_data(context, SHEET_DEBTS, force_update=True)
+        get_cached_sheet_data(context, "Сейф", force_update=True)
+        get_cached_sheet_data(context, SHEET_INVENTORY, force_update=True)
+
+        await query.message.edit_text(
+            f"✅ Накладная для <b>{supplier_name}</b> от {invoice_date} была успешно удалена.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")]])
+        )
+
+    except Exception as e:
+        await query.message.edit_text(f"❌ Произошла критическая ошибка при удалении: {e}")
+        logging.error(f"Ошибка при удалении накладной (строка {row_index}): {e}", exc_info=True)
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_planning_supplier_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает выбор поставщика при планировании."""
@@ -6718,6 +6799,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data.startswith("execute_invoice_edit_"):
             await execute_invoice_edit(update, context)
+        elif data.startswith("delete_invoice_confirm_"):
+            await confirm_delete_invoice(update, context)
+        elif data.startswith("delete_invoice_execute_"):
+            await execute_delete_invoice(update, context)
 
         # --- 5. ДОБАВЛЕНИЕ НАКЛАДНОЙ ---
         elif data == "add_supplier": await start_supplier(update, context) # Кнопка "Назад" теперь будет работать правильно
