@@ -4220,16 +4220,21 @@ async def list_suppliers_for_editing(update: Update, context: ContextTypes.DEFAU
     
     await update.message.reply_text("Выберите поставщика для переименования:", reply_markup=InlineKeyboardMarkup(kb))
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def prompt_for_new_supplier_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запрашивает новое имя для выбранного поставщика."""
+    """Показывает меню действий для выбранного поставщика."""
     query = update.callback_query
     old_name = query.data.split('edit_supplier_name_')[-1]
     
-    context.user_data['supplier_edit'] = {
-        'step': 'new_name',
-        'old_name': old_name
-    }
-    await query.message.edit_text(f"Введите новое правильное название для '<b>{old_name}</b>':", parse_mode=ParseMode.HTML)
+    context.user_data['supplier_edit'] = { 'old_name': old_name }
+
+    kb = [
+        [InlineKeyboardButton("📂 Открыть досье", callback_data=f"dossier_{old_name}")],
+        [InlineKeyboardButton("✏️ Переименовать", callback_data="rename_supplier_start")],
+        [InlineKeyboardButton("🗑️ Удалить из справочника", callback_data=f"delete_supplier_confirm_{old_name}")],
+        [InlineKeyboardButton("🔙 Назад к поиску", callback_data="supplier_directory_menu")]
+    ]
+    await query.message.edit_text(f"Выбран поставщик: <b>{old_name}</b>\n\nВыберите действие:", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
 async def save_edited_supplier_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сохраняет новое имя, обновляя его во ВСЕХ таблицах."""
@@ -4242,7 +4247,10 @@ async def save_edited_supplier_name(update: Update, context: ContextTypes.DEFAUL
 
     processing_message = await update.message.reply_text(f"⏳ Переименовываю '<b>{old_name}</b>' в '<b>{new_name}</b>' во всех таблицах... Это может занять время.", parse_mode=ParseMode.HTML)
     
-    sheets_to_update = [SHEET_SUPPLIERS, SHEET_DEBTS, SHEET_PLAN_FACT, "СправочникПоставщиков", SHEET_REPORT]
+    sheets_to_update = [
+        SHEET_SUPPLIERS, SHEET_DEBTS, SHEET_PLAN_FACT, 
+        "СправочникПоставщиков", SHEET_REPORT, SHEET_PLANNING_SCHEDULE
+    ]
     
     try:
         updated_count = 0
@@ -4263,6 +4271,92 @@ async def save_edited_supplier_name(update: Update, context: ContextTypes.DEFAUL
     finally:
         context.user_data.pop('supplier_edit', None)
 # ... и другие новые функции для этого шага, которые будут ниже
+
+# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
+
+async def show_supplier_dossier(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Собирает и показывает полную сводку по выбранному поставщику."""
+    query = update.callback_query
+    supplier_name = query.data.split('dossier_')[-1]
+    await query.message.edit_text(f"📂 Собираю досье на <b>{supplier_name}</b>...", parse_mode=ParseMode.HTML)
+
+    # Собираем данные
+    suppliers = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
+    debts = get_cached_sheet_data(context, SHEET_DEBTS) or []
+    
+    total_spent = 0
+    first_invoice_date = None
+    last_invoice_date = None
+    invoice_count = 0
+    overdue_debts = 0
+
+    for row in suppliers:
+        if len(row) > 4 and row[1] == supplier_name:
+            total_spent += parse_float(row[4])
+            invoice_count += 1
+            if not first_invoice_date:
+                first_invoice_date = row[0]
+            last_invoice_date = row[0]
+    
+    for row in debts:
+        if len(row) > 6 and row[1] == supplier_name and row[6].lower() != 'да' and (d := pdate(row[5])) and d < dt.date.today():
+            overdue_debts += 1
+
+    msg = f"<b>📂 Досье: {supplier_name}</b>\n──────────────────\n"
+    msg += f"  • Первая поставка: {first_invoice_date or 'N/A'}\n"
+    msg += f"  • Последняя поставка: {last_invoice_date or 'N/A'}\n"
+    msg += f"  • Всего накладных: {invoice_count}\n"
+    msg += f"  • Общая сумма закупок: {total_spent:,.2f}₴\n".replace(',', ' ')
+    msg += f"  • Просроченных долгов: {overdue_debts}"
+
+    # Клавиатура для возврата к списку
+    back_button_text = "🔙 Назад к выбору"
+    kb = [[InlineKeyboardButton(back_button_text, callback_data="supplier_directory_menu")]]
+    await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def confirm_delete_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запрашивает подтверждение перед ПОЛНЫМ удалением поставщика из справочника."""
+    query = update.callback_query
+    supplier_name = query.data.split('delete_supplier_confirm_')[-1]
+    
+    text = (f"❗️<b>ВНИМАНИЕ! ОПАСНОЕ ДЕЙСТВИЕ!</b>\n\n"
+            f"Вы уверены, что хотите полностью удалить '<b>{supplier_name}</b>' из справочника?\n\n"
+            f"Это действие **не удалит** его из старых накладных, но он больше **никогда не появится** в списках для добавления и планирования.\n\n"
+            f"Это действие нельзя отменить.")
+    
+    kb = [
+        [InlineKeyboardButton(f"🗑️ Да, удалить '{supplier_name}'", callback_data=f"delete_supplier_execute_{supplier_name}")],
+        [InlineKeyboardButton("❌ Отмена", callback_data=f"edit_supplier_name_{supplier_name}")] # Возврат в меню действий
+    ]
+    await query.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+async def execute_delete_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Удаляет поставщика из Справочника и из Графика планирования."""
+    query = update.callback_query
+    supplier_name = query.data.split('delete_supplier_execute_')[-1]
+    await query.message.edit_text(f"⏳ Удаляю '<b>{supplier_name}</b>' из всех справочников...", parse_mode=ParseMode.HTML)
+    
+    try:
+        # Удаление из Справочника
+        ws_dir = GSHEET.worksheet("СправочникПоставщиков")
+        cell = ws_dir.find(supplier_name)
+        if cell:
+            ws_dir.delete_rows(cell.row)
+        
+        # Удаление из Графика планирования
+        ws_sched = GSHEET.worksheet(SHEET_PLANNING_SCHEDULE)
+        cells_to_delete = ws_sched.findall(supplier_name)
+        for cell in sorted(cells_to_delete, key=lambda c: c.row, reverse=True):
+            ws_sched.delete_rows(cell.row)
+
+        # Сбрасываем кэши
+        get_all_supplier_names(context, force_update=True)
+        get_cached_sheet_data(context, SHEET_PLANNING_SCHEDULE, force_update=True)
+
+        await query.message.edit_text(f"✅ Поставщик '<b>{supplier_name}</b>' успешно удален из справочников.", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В меню", callback_data="supplier_directory_menu")]]))
+    except Exception as e:
+        await query.message.edit_text(f"❌ Произошла ошибка при удалении: {e}")
 
 async def staff_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -5270,9 +5364,9 @@ async def show_detailed_report(update: Update, context: ContextTypes.DEFAULT_TYP
     
     kb.append([
         InlineKeyboardButton("💸 Расходы за день", callback_data=f"details_exp_{full_nav_context}"),
-        InlineKeyboardButton("📦 Накладные за день", callback_data=f"details_sup_{full_nav_context}_0")
+        InlineKeyboardButton("📦 Накладные за день", callback_data=f"details_sup_{full_nav_context}_0"),
+        [InlineKeyboardButton("📜 Полный протокол смены", callback_data=f"shift_protocol_{target_date_str}")]
     ])
-    kb.append([InlineKeyboardButton("📜 Полный протокол смены", callback_data=f"shift_protocol_{target_date_str}")])
     
     back_callback = f"report_week_{start_str}_{end_str}" if (end_date - start_date).days <= 7 else f"report_month_{start_str}_{end_str}"
     kb.append([InlineKeyboardButton("⬅️ К общему отчету", callback_data=back_callback)])
@@ -6870,6 +6964,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_supplier_directory_menu(update, context)
         elif data.startswith("edit_supplier_name_"):
             await prompt_for_new_supplier_name(update, context)
+        elif data == "rename_supplier_start":
+            old_name = context.user_data.get('supplier_edit', {}).get('old_name', 'N/A')
+            context.user_data['supplier_edit']['step'] = 'new_name'
+            await query.message.edit_text(f"Введите новое имя для '<b>{old_name}</b>':", parse_mode=ParseMode.HTML)
+        
+        elif data.startswith("dossier_"):
+            await show_supplier_dossier(update, context)
+            
+        elif data.startswith("delete_supplier_confirm_"):
+            await confirm_delete_supplier(update, context)
+
+        elif data.startswith("delete_supplier_execute_"):
+            await execute_delete_supplier(update, context)
+        # ------------------------
         elif data.startswith("dir_add_new_sup_"):
             await add_new_supplier_directory_and_continue(update, context)
 
