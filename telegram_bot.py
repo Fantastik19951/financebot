@@ -6466,24 +6466,42 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"🔎 Ищу '{search_query}' в истории долгов...")
         
         rows = get_cached_sheet_data(context, SHEET_DEBTS) or []
-        normalized_query = normalize_text(search_query)
-        matches = [row for row in rows if normalized_query in normalize_text(row[1])]
         
+        # --- ВОЗВРАЩАЕМ ПОЛНУЮ ЛОГИКУ ПОИСКА ---
+        normalized_query = normalize_text(search_query)
+        matches = []
+        for i, row in enumerate(rows):
+            if len(row) < 7: continue
+            
+            # Получаем все данные для поиска
+            date_str = row[0].strip()
+            name_str = row[1].strip()
+            amount_str = row[2].replace(',', '.')
+            
+            # Проверяем совпадение по дате, нормализованному имени или точной сумме
+            if (search_query == date_str or 
+                normalized_query in normalize_text(name_str) or 
+                (search_query.replace(',', '.').isdigit() and search_query == amount_str)):
+                matches.append(row + [i+2])
+        # --- КОНЕЦ ЛОГИКИ ПОИСКА ---
+
         if not matches:
-            await update.message.reply_text("🚫 Ничего не найдено.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="debts_history_all_0")]]))
+            await update.message.reply_text("🚫 Ничего не найдено.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="debts_history")]]))
         else:
             msg = f"<b>🔎 Результаты поиска по '{search_query}':</b>\n"
             for debt in matches:
+                # ... (вся логика отображения результатов остается без изменений) ...
                 supplier, total, to_pay, due_date, status = debt[1], parse_float(debt[2]), parse_float(debt[4]), debt[5], debt[6]
                 pay_type = debt[7] if len(debt) > 7 else "Наличные"
                 status_icon = "✅" if status.lower() == 'да' else "🟠"
                 msg += f"\n──────────────────\n{status_icon} <b>{supplier}</b> | {pay_type}\n"
                 if status.lower() == 'да':
-                    msg += f"  Сумма: {total:.2f}₴ (Погашен)"
+                    repayment_date = get_repayment_date_from_history(context, debt[0], supplier)
+                    msg += f"  Сумма: {total:.2f}₴ (Погашен {repayment_date})"
                 else:
                     msg += f"  Сумма: {total:.2f}₴ | Остаток: {to_pay:.2f}₴ | Срок: {due_date}"
             
-            await update.message.reply_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="debts_history_all_0")]]))
+            await update.message.reply_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="debts_history")]]))
         return
         
         
@@ -6773,29 +6791,27 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await repay_confirm(update, context, int(data.split('_')[2]))
         elif data.startswith("repay_final_"):
             await repay_final(update, context, int(data.split('_')[2]))
-        elif data.startswith("debts_history") or data.startswith("debt_filter_"):
-            page = 0
-            filter_by = None
-            
-            # Если нажата кнопка фильтра
-            if data.startswith("debt_filter_"):
-                filter_by = data.split('_')[-1]
-                if filter_by == "all": filter_by = None
-                # При смене фильтра всегда показываем первую страницу
-                page = 0
-            
-            # Если это навигация по страницам
-            elif '_' in data and len(data.split('_')) > 2:
-                parts = data.split('_')
-                filter_by = parts[2] if parts[2] != "all" else None
-                page = int(parts[3])
-            
-            # Если это самый первый клик по кнопке "История долгов"
-            else:
-                all_logs = get_cached_sheet_data(context, SHEET_DEBTS) or []
-                total_pages = math.ceil(len(all_logs) / 10)
-                page = max(0, total_pages - 1)
+        elif data == "debts_history":
+            # Самый первый клик по кнопке "История долгов"
+            all_logs = get_cached_sheet_data(context, SHEET_DEBTS) or []
+            total_pages = math.ceil(len(all_logs) / 10)
+            page = max(0, total_pages - 1)  # Вычисляем последнюю страницу
+            await show_debt_history_view(update, context, page=page, filter_by=None)
 
+        elif data.startswith("debt_filter_"):
+            # Обработка кнопок фильтрации ("Оплаченные", "Неоплаченные", "Сбросить")
+            filter_by = data.split('_')[-1]
+            if filter_by == "all":
+                filter_by = None
+            # При смене фильтра всегда показываем первую страницу отфильтрованного списка
+            await show_debt_history_view(update, context, page=0, filter_by=filter_by)
+            
+        elif data.startswith("debt_history_"):
+            # Обработка кнопок навигации "Вперед" / "Назад"
+            # Формат: debt_history_all_1 или debt_history_Оплаченные_0
+            parts = data.split('_')
+            filter_by = parts[2] if parts[2] != "all" else None
+            page = int(parts[3])
             await show_debt_history_view(update, context, page=page, filter_by=filter_by)
 
         # ----------------------------------------------------
