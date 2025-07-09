@@ -87,6 +87,31 @@ def get_avg_daily_costs(context: ContextTypes.DEFAULT_TYPE) -> float:
             total_costs += parse_float(row[1])
 
     return total_costs / 30 if total_costs > 0 else 0
+
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+def get_avg_order_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_name: str) -> float | None:
+    """Считает среднюю сумму заказа для поставщика за последний месяц."""
+    rows = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+    if not rows:
+        return None
+
+    one_month_ago = dt.date.today() - dt.timedelta(days=30)
+    supplier_orders = []
+    
+    for row in rows:
+        try:
+            # Проверяем имя и дату
+            if row[1] == supplier_name and pdate(row[0]) >= one_month_ago:
+                # Берем сумму "К оплате"
+                supplier_orders.append(parse_float(row[4]))
+        except (ValueError, IndexError):
+            continue
+            
+    # Если есть хотя бы 2 заказа, считаем среднее
+    if len(supplier_orders) >= 2:
+        return sum(supplier_orders) / len(supplier_orders)
+        
+    return None
     
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 def get_total_unpaid_debt(context: ContextTypes.DEFAULT_TYPE) -> float:
@@ -2876,36 +2901,62 @@ async def execute_delete_invoice(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.edit_text(f"❌ Произошла критическая ошибка при удалении: {e}")
         logging.error(f"Ошибка при удалении накладной (строка {row_index}): {e}", exc_info=True)
         
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ НА ИСПРАВЛЕННУЮ ВЕРСИЮ ---
 async def handle_planning_supplier_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает выбор поставщика при планировании."""
+    """Обрабатывает выбор поставщика при планировании и добавляет умную подсказку."""
     query = update.callback_query
     await query.answer()
     
-    # --- ИСПРАВЛЕНИЕ: Новая, более надежная логика разбора ---
+    # Ваша логика разбора данных с кнопки остается
     parts = query.data.split('_', 3)
-    # parts[0] = "plan", parts[1] = "sup"
-    
-    if len(parts) < 3: return # Защита от неверного формата
+    if len(parts) < 3: return
 
     target_date_str = parts[2]
     supplier_name = parts[3]
     
     context.user_data['planning'] = {'date': target_date_str}
     
+    # Ваш блок для обработки "Внепланового поставщика" остается без изменений
     if supplier_name == "other":
         context.user_data['planning']['step'] = 'search'
         await query.message.edit_text(
             "✍️ Введите имя или часть имени поставщика для поиска:",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data=f"plan_nav_{target_date_str}")]])
         )
+    # А в блок для конкретного поставщика мы добавляем нашу "фишку"
     else:
         context.user_data['planning']['supplier'] = supplier_name
         context.user_data['planning']['step'] = 'amount'
+
+        # --- НАЧАЛО НОВОГО БЛОКА: УМНАЯ ПОДСКАЗКА ---
+        avg_amount = get_avg_order_for_supplier(context, supplier_name)
+        
+        msg = f"💰 Введите примерную сумму для <b>{supplier_name}</b> на {target_date_str} (в гривнах):"
+        if avg_amount:
+            msg += f"\n\n<i>(Подсказка: средний заказ за последний месяц ~{avg_amount:,.0f}₴)</i>".replace(',', ' ')
+        # --- КОНЕЦ НОВОГО БЛОКА ---
+
         await query.message.edit_text(
-            f"💰 Введите примерную сумму для <b>{supplier_name}</b> на {target_date_str} (в гривнах):",
+            msg, # Отправляем сообщение с подсказкой
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data=f"plan_nav_{target_date_str}")]]),
             parse_mode=ParseMode.HTML
         )
+        
+
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+async def quick_safe_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет текущий баланс сейфа в ответ на команду 'сейф'."""
+    user_id = str(update.effective_user.id)
+    
+    # Проверяем, что команду отправил администратор
+    if user_id not in ADMINS:
+        return # Молча игнорируем, если это не админ
+
+    balance = get_safe_balance(context)
+    msg = f"🗄️ В сейфе сейчас: <b>{balance:,.2f}₴</b>".replace(',', ' ')
+    
+    # Отправляем ответ личным сообщением
+    await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
         
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 async def send_shift_closed_notification(context: ContextTypes.DEFAULT_TYPE):
@@ -7147,6 +7198,7 @@ def main():
     app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(MessageHandler(filters.Regex(r'^(?i)сейф$'), quick_safe_balance))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_error_handler(error_handler)
     
