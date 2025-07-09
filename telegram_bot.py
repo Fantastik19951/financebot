@@ -26,7 +26,7 @@ from matplotlib.ticker import MaxNLocator
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DATE_FMT = "%d.%m.%Y"
-ADMINS = {"5144039813", "476179186"}  # ID администратора
+ADMINS = {"5144039813", "476179186"}  # ID администратор
 USER_ID_TO_NAME = {
     "5144039813": "Наталия",  # Админ
     "476179186": "Евгений",   # Админ
