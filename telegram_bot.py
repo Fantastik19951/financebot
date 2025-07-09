@@ -51,7 +51,7 @@ SHEET_INVENTORY = "Остаток магазина"
 DIALOG_KEYS = [
     'report', 'supplier', 'planning', 'edit_plan', 'edit_invoice',
     'revision', 'search_debt', 'safe_op', 'inventory_expense', 
-    'repay', 'shift', 'report_period', 'admin_expense', 'custom_analytics_period', 'supplier_edit', 'seller_expense'
+    'repay', 'shift', 'report_period', 'admin_expense', 'custom_analytics_period', 'supplier_edit', 'seller_expense', 'supplier_edit'
 ]
 
 
@@ -4189,19 +4189,50 @@ async def finance_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
 
+# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
+
 async def show_supplier_directory_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает меню управления справочником поставщиков."""
+    """Начинает диалог управления справочником, запрашивая имя для поиска."""
     query = update.callback_query
     context.user_data['supplier_edit'] = {'step': 'search'}
     await query.message.edit_text(
-        "📖 Справочник Поставщиков.\n\n"
-        "Здесь вы можете исправить опечатки или переименовать поставщика. "
-        "Введите имя или часть имени для поиска и редактирования:",
+        "📖 **Управление Справочником**\n\n"
+        "Введите имя или часть имени поставщика, которого хотите найти и переименовать:",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="suppliers_menu")]])
     )
 
+async def list_suppliers_for_editing(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ищет поставщиков по запросу и выводит их списком для выбора."""
+    search_query = update.message.text.strip()
+    await update.message.reply_text(f"🔎 Ищу '{search_query}' в справочнике...")
+    
+    all_suppliers = get_all_supplier_names(context)
+    normalized_query = normalize_text(search_query)
+    matches = [name for name in all_suppliers if normalized_query in normalize_text(name)]
+
+    if not matches:
+        return await update.message.reply_text("🚫 Поставщик не найден. Попробуйте другой запрос.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="supplier_directory_menu")]]))
+
+    kb = []
+    for name in matches[:25]: # Ограничиваем вывод
+        kb.append([InlineKeyboardButton(name, callback_data=f"edit_supplier_name_{name}")])
+    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="supplier_directory_menu")])
+    
+    await update.message.reply_text("Выберите поставщика для переименования:", reply_markup=InlineKeyboardMarkup(kb))
+
+async def prompt_for_new_supplier_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запрашивает новое имя для выбранного поставщика."""
+    query = update.callback_query
+    old_name = query.data.split('edit_supplier_name_')[-1]
+    
+    context.user_data['supplier_edit'] = {
+        'step': 'new_name',
+        'old_name': old_name
+    }
+    await query.message.edit_text(f"Введите новое правильное название для '<b>{old_name}</b>':", parse_mode=ParseMode.HTML)
+
 async def save_edited_supplier_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сохраняет новое имя поставщика, обновляя его во ВСЕХ таблицах."""
+    """Сохраняет новое имя, обновляя его во ВСЕХ таблицах."""
     new_name = update.message.text.strip()
     edit_data = context.user_data.get('supplier_edit', {})
     old_name = edit_data.get('old_name')
@@ -4211,25 +4242,26 @@ async def save_edited_supplier_name(update: Update, context: ContextTypes.DEFAUL
 
     processing_message = await update.message.reply_text(f"⏳ Переименовываю '<b>{old_name}</b>' в '<b>{new_name}</b>' во всех таблицах... Это может занять время.", parse_mode=ParseMode.HTML)
     
-    # Список всех листов, где может встречаться имя поставщика
-    sheets_to_update = [SHEET_SUPPLIERS, SHEET_DEBTS, SHEET_PLAN_FACT, "СправочникПоставщиков"]
+    sheets_to_update = [SHEET_SUPPLIERS, SHEET_DEBTS, SHEET_PLAN_FACT, "СправочникПоставщиков", SHEET_REPORT]
     
     try:
+        updated_count = 0
         for sheet_name in sheets_to_update:
             ws = GSHEET.worksheet(sheet_name)
-            # Ищем все ячейки со старым именем
             cells_to_update = ws.findall(old_name)
             for cell in cells_to_update:
                 ws.update_cell(cell.row, cell.col, new_name)
-            logging.info(f"В листе '{sheet_name}' обновлено {len(cells_to_update)} записей.")
+            updated_count += len(cells_to_update)
+            if len(cells_to_update) > 0:
+                # Сбрасываем кэш измененного листа
+                get_cached_sheet_data(context, sheet_name, force_update=True)
         
-        await processing_message.edit_text(f"✅ Готово! Поставщик '<b>{old_name}</b>' был успешно переименован в '<b>{new_name}</b>' везде.", parse_mode=ParseMode.HTML)
+        await processing_message.edit_text(f"✅ Готово! Всего обновлено {updated_count} записей.", reply_markup=suppliers_menu_kb())
 
     except Exception as e:
         await processing_message.edit_text(f"❌ Произошла ошибка при обновлении таблиц: {e}")
     finally:
         context.user_data.pop('supplier_edit', None)
-
 # ... и другие новые функции для этого шага, которые будут ниже
 
 async def staff_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -5240,6 +5272,7 @@ async def show_detailed_report(update: Update, context: ContextTypes.DEFAULT_TYP
         InlineKeyboardButton("💸 Расходы за день", callback_data=f"details_exp_{full_nav_context}"),
         InlineKeyboardButton("📦 Накладные за день", callback_data=f"details_sup_{full_nav_context}_0")
     ])
+    kb.append([InlineKeyboardButton("📜 Полный протокол смены", callback_data=f"shift_protocol_{target_date_str}")])
     
     back_callback = f"report_week_{start_str}_{end_str}" if (end_date - start_date).days <= 7 else f"report_month_{start_str}_{end_str}"
     kb.append([InlineKeyboardButton("⬅️ К общему отчету", callback_data=back_callback)])
@@ -6183,6 +6216,54 @@ async def repay_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, row_
         logging.error(f"Ошибка в repay_confirm для строки {row_index}: {e}")
         await query.message.edit_text(f"❌ Не удалось найти данные о долге. Возможно, он был удален.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="debts_menu")]]))
 
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+async def generate_shift_protocol(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Собирает все действия за день в единую хронологическую ленту."""
+    query = update.callback_query
+    # Извлекаем дату из callback_data, который был вида `detail_report_nav_{start_str}_{end_str}_{index}`
+    # или `details_exp_{target_date_str}_{start_str}_{end_str}_{index}`
+    date_str = query.data.split('_')[2]
+    
+    await query.message.edit_text(f"📜 Собираю полный протокол смены за {date_str}...")
+
+    events = []
+    # Собираем данные из всех релевантных листов
+    sheets_to_check = {
+        SHEET_EXPENSES: "💸 Расход",
+        SHEET_SUPPLIERS: "📦 Накладная",
+        "Сейф": "🗄️ Сейф",
+        SHEET_INVENTORY: "📦 Остаток"
+    }
+
+    for sheet, event_type in sheets_to_check.items():
+        rows = get_cached_sheet_data(context, sheet, force_update=True) or []
+        for row in rows:
+            if row and row[0] == date_str:
+                events.append(f"<b>{event_type}</b>: {', '.join(row[1:])}")
+
+    # Получаем финальный отчет о закрытии смены
+    report_row = next((r for r in (get_cached_sheet_data(context, SHEET_REPORT) or []) if r and r[0] == date_str), None)
+
+    msg = f"<b>📜 Протокол смены за {date_str}</b>\n"
+    if report_row:
+        msg += f"<i>Продавец: {report_row[1]}</i>\n"
+    msg += "──────────────────\n\n"
+
+    if not events and not report_row:
+        msg += "<i>За этот день не найдено никаких операций.</i>"
+    
+    msg += "\n".join(events)
+
+    if report_row:
+        msg += f"\n\n<b>🏁 Закрытие смены:</b>\n"
+        msg += f"  • Наличные: {report_row[2]}₴\n"
+        msg += f"  • Карта: {report_row[3]}₴\n"
+        msg += f"  • Итог в сейфе: {report_row[9]}₴"
+
+    # Кнопка "Назад" к детальному отчету
+    back_cb = f"detail_report_nav_{date_str}_{date_str}_0"
+    await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 К отчету", callback_data=back_cb)]]))
+
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def view_repayable_debts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает список долгов для погашения с указанием типа оплаты на кнопке."""
@@ -6614,6 +6695,13 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif step == 'expenses': return await handle_report_expenses(update, context)
         elif step == 'expense_comment': return await handle_expense_comment(update, context)
         elif step == 'comment': return await save_report(update, context)
+
+    elif state_key == 'supplier_edit':
+        step = user_data['supplier_edit'].get('step')
+        if step == 'search':
+            return await list_suppliers_for_editing(update, context) 
+        elif step == 'new_name':
+            return await save_edited_supplier_name(update, context)
     
     elif state_key == 'supplier':
         step = user_data['supplier'].get('step')
@@ -6778,7 +6866,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.edit_text("⚙️ Персональные настройки:", reply_markup=staff_settings_menu_kb())
         elif data.startswith("due_date_select_"):
             await handle_due_date_selection(update, context)
-
         elif data == "supplier_directory_menu":
             await show_supplier_directory_menu(update, context)
         elif data.startswith("edit_supplier_name_"):
@@ -7081,6 +7168,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
              await process_financial_dashboard_period(update, context)
         elif data.startswith("custom_period_"):
             await start_custom_period_analytics(update, context)
+        elif data.startswith("shift_protocol_"):
+            await generate_shift_protocol(update, context)
 
     
         # --- 11. СЕЙФ И ОСТАТОК ---
