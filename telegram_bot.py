@@ -2160,7 +2160,7 @@ async def show_debt_history_view(update: Update, context: ContextTypes.DEFAULT_T
         date, supplier, total, _, _, _, is_paid, pay_type = (row + [""] * 8)[:8]
         status_icon = "✅" if is_paid.lower() == 'да' else "🟠"
         
-        msg += "\n" + "─" * 28 + "\n"
+        msg += "\n" + "─" * 16 + "\n"
         msg += f"{status_icon} <b>{supplier} | {pay_type or 'Наличные'}</b>\n"
         msg += f"   • Сумма: {parse_float(total):.2f}₴ | Дата: {date}\n"
         
