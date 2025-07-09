@@ -36,7 +36,7 @@ USER_ID_TO_NAME = {
 
     "7880600411": "Мария"
 }
-SELLERS = ["Сергей", "Наталия", "Людмила", "Мария", "Евгений Тест"]
+SELLERS = ["Сергей", "Наталия", "Людмила", "Мария"]
 ADMIN_CHAT_IDS = [5144039813, 476179186]
 SHEET_REPORT = "Дневные отчёты"
 SHEET_SUPPLIERS = "Поставщики"
@@ -87,7 +87,25 @@ def get_avg_daily_costs(context: ContextTypes.DEFAULT_TYPE) -> float:
             total_costs += parse_float(row[1])
 
     return total_costs / 30 if total_costs > 0 else 0
+    
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+def get_total_unpaid_debt(context: ContextTypes.DEFAULT_TYPE) -> float:
+    """Считает общую сумму всех неоплаченных долгов."""
+    rows = get_cached_sheet_data(context, SHEET_DEBTS)
+    if not rows:
+        return 0.0
 
+    total_debt = 0.0
+    for row in rows:
+        try:
+            # Проверяем, что долг не погашен (столбец G, индекс 6)
+            if len(row) > 6 and row[6].strip().lower() != "да":
+                # Суммируем остаток (столбец E, индекс 4)
+                total_debt += parse_float(row[4])
+        except (ValueError, IndexError):
+            continue
+            
+    return total_debt
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 def get_sales_forecast_for_today(context: ContextTypes.DEFAULT_TYPE) -> float | None:
     """Анализирует продажи за последние 8 недель для этого дня недели и выдает среднее значение."""
@@ -1009,30 +1027,41 @@ def get_repayment_date_from_history(context: ContextTypes.DEFAULT_TYPE, invoice_
         return ""
 
 # --- И ЭТУ ФУНКЦИЮ ТОЖЕ ЗАМЕНИТЕ ---
-def get_inventory_balance():
-    ws = GSHEET.worksheet("Остаток магазина")
-    rows = ws.get_all_values()[1:]
-    balance = 0
+def get_inventory_balance(context: ContextTypes.DEFAULT_TYPE, as_of_date: dt.date = None) -> float:
+    """
+    Считает баланс остатка магазина на определенную дату (as_of_date).
+    Если дата не указана, считает на текущий момент.
+    """
+    rows = get_cached_sheet_data(context, SHEET_INVENTORY)
+    if not rows:
+        return 0.0
+
+    balance = 0.0
+    # Если конечная дата не задана, берем сегодняшний день
+    end_date = as_of_date or dt.date.today()
+
     for row in rows:
         try:
-            op_type = row[1]
-            # Сумма операции (может быть пустой для переучета)
-            amount = float(row[2].replace(',', '.')) if len(row) > 2 and row[2] else 0
+            op_date = pdate(row[0])
+            # Пропускаем операции, которые были ПОСЛЕ нужной нам даты
+            if not op_date or op_date > end_date:
+                continue
 
+            op_type = row[1]
+            amount = parse_float(row[2]) if len(row) > 2 and row[2] else 0
+
+            # Логика расчета баланса (остается прежней)
             if op_type == "Старт":
                 balance = amount
-            elif op_type == "Приход":
-                balance += amount
-            elif op_type == "Корректировка":
+            elif op_type in ["Приход", "Корректировка"]:
                 balance += amount
             elif op_type in ["Продажа", "Списание"]:
                 balance -= amount
-            # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Новая логика для Переучета ---
             elif op_type == "Переучет":
-                # Устанавливаем баланс равным сумме, указанной в строке переучета
                 balance = amount
         except (ValueError, IndexError):
             continue
+            
     return balance
 
 def get_debts_page(debts, page=0, page_size=10):
@@ -1406,7 +1435,38 @@ async def staff_management_menu(update: Update, context: ContextTypes.DEFAULT_TY
                                   parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
 # --- ДОБАВЬТЕ ВЕСЬ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+async def show_inventory_balance_with_dynamics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает текущий остаток магазина и его изменение за последнюю неделю."""
+    query = update.callback_query
+    await query.message.edit_text("📈 Считаю остаток и динамику...")
 
+    # Расчет балансов
+    current_balance = get_inventory_balance(context)
+    
+    seven_days_ago = dt.date.today() - dt.timedelta(days=7)
+    past_balance = get_inventory_balance(context, as_of_date=seven_days_ago)
+
+    # Расчет динамики
+    difference = current_balance - past_balance
+    
+    if difference > 0:
+        dynamics_text = f"📈 Изменение за неделю: +{difference:,.2f}₴".replace(',', ' ')
+    elif difference < 0:
+        dynamics_text = f"📉 Изменение за неделю: {difference:,.2f}₴".replace(',', ' ')
+    else:
+        dynamics_text = "📈 Изменение за неделю: 0.00₴"
+
+    # Формирование сообщения
+    msg = (f"📦 Текущий остаток магазина: <b>{current_balance:,.2f}₴</b>\n\n".replace(',', ' ') +
+           f"{dynamics_text}")
+
+    await query.message.edit_text(
+        msg,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="stock_menu")]])
+    )
+    
 async def edit_invoice_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинает сессию редактирования накладной."""
     query = update.callback_query
@@ -4155,12 +4215,25 @@ async def suppliers_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
 async def debts_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    push_nav(context, "debts_menu")  # <---
+    """Показывает меню управления долгами с отображением общей суммы."""
     query = update.callback_query
     await query.answer()
+
+    # Получаем общую сумму долга
+    total_debt_amount = get_total_unpaid_debt(context)
+    
+    # Формируем сообщение
+    msg = "🏦 **Управление долгами**\n\n"
+    if total_debt_amount > 0:
+        msg += f"Общая сумма неоплаченных долгов: <b>{total_debt_amount:,.2f}₴</b>".replace(',', ' ')
+    else:
+        msg += "✅ Отлично! Неоплаченных долгов нет."
+
     await query.message.edit_text(
-        "🏦 Управление долгами\nВыберите действие:",
-        reply_markup=debts_menu_kb())
+        msg,
+        parse_mode=ParseMode.HTML,
+        reply_markup=debts_menu_kb()
+    )
     
 async def analytics_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     push_nav(context, "analytics_menu")  # <--
@@ -6960,7 +7033,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     
         # --- 11. СЕЙФ И ОСТАТОК ---
-        elif data == "inventory_balance": await inventory_balance(update, context)
+        elif data == "inventory_balance": await show_inventory_balance_with_dynamics(update, context)
         elif data == "safe_balance": await safe_balance(update, context)
         elif data.startswith("safe_history"):
             page = 0
