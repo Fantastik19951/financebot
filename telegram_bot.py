@@ -4196,8 +4196,8 @@ async def show_supplier_directory_menu(update: Update, context: ContextTypes.DEF
     query = update.callback_query
     context.user_data['supplier_edit'] = {'step': 'search'}
     await query.message.edit_text(
-        "📖 **Управление Справочником**\n\n"
-        "Введите имя или часть имени поставщика, которого хотите найти и переименовать:",
+        "📖 Управление поставщиками\n\n"
+        "Введите имя или часть имени поставщика, которого хотите найти в списке для управления",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="suppliers_menu")]])
     )
 
@@ -5315,27 +5315,26 @@ async def generate_daily_report_text(context: ContextTypes.DEFAULT_TYPE, report_
             
     return resp
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
-async def show_detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает страничный детальный отчет с исправленной навигацией и проверкой дат."""
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+async def show_detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE, start_str: str = None, end_str: str = None, index_str: str = None):
+    """Показывает страничный детальный отчет. Может принимать данные напрямую или из callback_data."""
     query = update.callback_query
     await query.answer()
 
-    try:
-        _, _, _, start_str, end_str, index_str = query.data.split('_')
-        current_index = int(index_str)
-    except (IndexError, ValueError):
-        await query.message.edit_text("❌ Ошибка в данных навигации. Не удалось загрузить отчет.")
-        return
+    # Если параметры не переданы напрямую, извлекаем их из callback_data
+    if start_str is None:
+        try:
+            _, _, _, start_str, end_str, index_str = query.data.split('_')
+        except (IndexError, ValueError):
+            return await query.message.edit_text("❌ Ошибка в данных навигации.")
 
+    current_index = int(index_str)
     start_date, end_date = pdate(start_str), pdate(end_str)
     
     report_rows = get_cached_sheet_data(context, SHEET_REPORT)
     if report_rows is None:
-        await query.message.edit_text("❌ Ошибка чтения отчетов из кэша.")
-        return
+        return await query.message.edit_text("❌ Ошибка чтения отчетов.")
 
-    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Добавляем проверку `if pdate(row[0])` ---
-    # Это гарантирует, что мы работаем только со строками, где есть корректная дата
     period_report_dates = sorted(
         list({row[0].strip() for row in report_rows if pdate(row[0]) and start_date <= pdate(row[0]) <= end_date}),
         key=pdate, 
@@ -5343,75 +5342,51 @@ async def show_detailed_report(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
     if not period_report_dates or current_index >= len(period_report_dates):
-        await query.message.edit_text("❌ В этом периоде нет отчетов для детального просмотра.")
-        return
+        # Если отчет за сегодня/вчера еще не сдан, показываем сообщение
+        if start_date == end_date:
+            return await query.message.edit_text(f"❌ Отчет за {start_str} еще не был сдан.")
+        return await query.message.edit_text("❌ В этом периоде нет отчетов для детального просмотра.")
 
     target_date_str = period_report_dates[current_index]
-    # Передаем context дальше, чтобы generate_daily_report_text тоже мог использовать кэш
     report_text = await generate_daily_report_text(context, target_date_str)
 
-    # Формирование кнопок (логика без изменений)
+    # Формирование кнопок (включая "Протокол смены")
     nav_buttons = []
     if current_index < len(period_report_dates) - 1:
-        nav_buttons.append(InlineKeyboardButton("◀️ Назад", callback_data=f"detail_report_nav_{start_str}_{end_str}_{current_index + 1}"))
+        nav_buttons.append(InlineKeyboardButton("◀️ Пред.", callback_data=f"detail_report_nav_{start_str}_{end_str}_{current_index + 1}"))
     if current_index > 0:
-        nav_buttons.append(InlineKeyboardButton("Вперед ▶️", callback_data=f"detail_report_nav_{start_str}_{end_str}_{current_index - 1}"))
+        nav_buttons.append(InlineKeyboardButton("След. ▶️", callback_data=f"detail_report_nav_{start_str}_{end_str}_{current_index - 1}"))
     
     full_nav_context = f"{target_date_str}_{start_str}_{end_str}_{current_index}"
-    kb = []
-    if nav_buttons:
-        kb.append(nav_buttons)
-    
+    kb = [nav_buttons] if nav_buttons else []
     kb.append([
         InlineKeyboardButton("💸 Расходы за день", callback_data=f"details_exp_{full_nav_context}"),
-        InlineKeyboardButton("📦 Накладные за день", callback_data=f"details_sup_{full_nav_context}_0"),
-        [InlineKeyboardButton("📜 Полный протокол смены", callback_data=f"shift_protocol_{target_date_str}")]
+        InlineKeyboardButton("📦 Накладные за день", callback_data=f"details_sup_{full_nav_context}_0")
     ])
+    # --- ВОТ И НАША КНОПКА ---
+    kb.append([InlineKeyboardButton("📜 Полный протокол смены", callback_data=f"shift_protocol_{target_date_str}")])
     
     back_callback = f"report_week_{start_str}_{end_str}" if (end_date - start_date).days <= 7 else f"report_month_{start_str}_{end_str}"
+    # Для отчета за один день кнопка "Назад" ведет в общее меню отчетов
+    if start_date == end_date:
+        back_callback = "view_reports_menu"
+        
     kb.append([InlineKeyboardButton("⬅️ К общему отчету", callback_data=back_callback)])
     
     await query.message.edit_text(report_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 # --- ЗАМЕНИТЕ ЭТИ ДВЕ ФУНКЦИИ ---
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def get_report_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
     today_str = sdate(dt.date.today())
-    
-    # ИСПРАВЛЕНИЕ: Передаем context и report_date_str
-    report_text = await generate_daily_report_text(context, today_str)
-    
-    kb = [[
-        InlineKeyboardButton("💸 Детально расходы", callback_data=f"details_exp_{today_str}_{today_str}"),
-        InlineKeyboardButton("📦 Детально накладные", callback_data=f"details_sup_{today_str}_{today_str}_0")
-    ], [InlineKeyboardButton("🔙 К выбору периода", callback_data="view_reports_menu")]]
-    
-    await query.message.edit_text(
-        report_text,
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
+    # Вызываем основную функцию для периода в один день (сегодня)
+    await show_detailed_report(update, context, start_str=today_str, end_str=today_str, index_str="0")
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def get_report_yesterday(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    yesterday = dt.date.today() - dt.timedelta(days=1)
-    yesterday_str = sdate(yesterday)
-
-    # ИСПРАВЛЕНИЕ: Передаем context и report_date_str
-    report_text = await generate_daily_report_text(context, yesterday_str)
-    
-    kb = [[
-        InlineKeyboardButton("💸 Детально расходы", callback_data=f"details_exp_{yesterday_str}_{yesterday_str}"),
-        InlineKeyboardButton("📦 Детально накладные", callback_data=f"details_sup_{yesterday_str}_{yesterday_str}_0")
-    ], [InlineKeyboardButton("🔙 К выбору периода", callback_data="view_reports_menu")]]
-    
-    await query.message.edit_text(
-        report_text,
-        parse_mode='HTML',
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
+    yesterday_str = sdate(dt.date.today() - dt.timedelta(days=1))
+    # Вызываем основную функцию для периода в один день (вчера)
+    await show_detailed_report(update, context, start_str=yesterday_str, end_str=yesterday_str, index_str="0")
 async def choose_details_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Формирует меню выбора даты для просмотра деталей (расходов или накладных)."""
     query = update.callback_query
