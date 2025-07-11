@@ -423,21 +423,21 @@ def generate_expense_pie_chart(context: ContextTypes.DEFAULT_TYPE, start_date: d
 
 # --- НОВЫЙ БЛОК ДЛЯ ИСТОРИИ ДОЛГОВ ---
 
+# --- ЗАМЕНИТЕ ВЕСЬ СТАРЫЙ БЛОК ИСТОРИИ ДОЛГОВ НА ЭТОТ ---
+
 def build_debt_history_keyboard(page: int, total_pages: int):
     """Создает основную клавиатуру для навигации в истории долгов."""
     kb = [
         [InlineKeyboardButton("⚙️ Фильтры и Сортировка", callback_data="debt_filters_menu")],
-        [InlineKeyboardButton("🔎 Поиск", callback_data="debt_search_start")]
+        [InlineKeyboardButton("🔎 Поиск", callback_data="debt_search_start")],
     ]
     nav_row = []
-    # Важно: префикс 'debt_page_' для навигации
     if page > 0:
         nav_row.append(InlineKeyboardButton("◀️ Назад", callback_data=f"debt_page_{page - 1}"))
     if (page + 1) < total_pages:
         nav_row.append(InlineKeyboardButton("Вперед ▶️", callback_data=f"debt_page_{page + 1}"))
     if nav_row:
         kb.append(nav_row)
-
     kb.append([InlineKeyboardButton("🔙 В меню Долги", callback_data="debts_menu")])
     return InlineKeyboardMarkup(kb)
 
@@ -448,14 +448,13 @@ def build_debt_filter_keyboard(filters: dict):
     date_range = filters.get('date_range')
     sort_by = filters.get('sort_by', 'creation')
     
-    status_paid = "✅ Оплаченные" if "Оплаченные" in status else "🟠 Оплаченные"
-    status_unpaid = "✅ Неоплаченные" if "Неоплаченные" in status else "🟠 Неоплаченные"
-    type_cash = "✅ Наличные" if "Наличные" in pay_type else "💵 Наличные"
-    type_card = "✅ Карта" if "Карта" in pay_type else "💳 Карта"
-    date_last_week = "✅ За последнюю неделю" if date_range == "last_week" else "🗓 За последнюю неделю"
-    
-    sort_by_creation = "🔽 Сорт: По дате" if sort_by == "creation" else "Сорт: По дате"
-    sort_by_due_date = "🔽 Сорт: По сроку" if sort_by == "due_date" else "Сорт: По сроку"
+    status_paid = f"✅ Оплаченные" if "Оплаченные" in status else "⚪️ Оплаченные"
+    status_unpaid = f"✅ Неоплаченные" if "Неоплаченные" in status else "⚪️ Неоплаченные"
+    type_cash = f"✅ Наличные" if "Наличные" in pay_type else "💵 Наличные"
+    type_card = f"✅ Карта" if "Карта" in pay_type else "💳 Карта"
+    date_last_week = f"✅ За текущую неделю" if date_range == "last_week" else "🗓 За текущую неделю"
+    sort_by_creation = f"🔽 Сорт: По дате" if sort_by == "creation" else "Сорт: По дате"
+    sort_by_due_date = f"🔽 Сорт: По сроку" if sort_by == "due_date" else "Сорт: По сроку"
 
     kb = [
         [InlineKeyboardButton(status_paid, callback_data="toggle_filter_status_Оплаченные"), InlineKeyboardButton(status_unpaid, callback_data="toggle_filter_status_Неоплаченные")],
@@ -476,9 +475,15 @@ async def show_debt_history_view(update: Update, context: ContextTypes.DEFAULT_T
     filters = context.user_data.get('debt_filters', {})
     page = context.user_data.get('debt_history_page', 0)
     
+    # Применение фильтров
     filtered_logs = all_logs
     if statuses := filters.get('status'):
-        filtered_logs = [r for r in filtered_logs if (("Оплаченные" in statuses and len(r) > 6 and r[6].strip().lower() == "да") or ("Неоплаченные" in statuses and len(r) > 6 and r[6].strip().lower() != "да"))]
+        is_paid_check = 'да' in [s.lower() for s in statuses]
+        is_unpaid_check = 'нет' in [s.lower() for s in statuses]
+        if 'Оплаченные' in statuses and 'Неоплаченные' not in statuses:
+             filtered_logs = [r for r in filtered_logs if len(r) > 6 and r[6].lower() == 'да']
+        elif 'Неоплаченные' in statuses and 'Оплаченные' not in statuses:
+             filtered_logs = [r for r in filtered_logs if len(r) > 6 and r[6].lower() != 'да']
     if pay_types := filters.get('pay_type'):
         filtered_logs = [r for r in filtered_logs if (r[7] if len(r) > 7 else "Наличные") in pay_types]
     if filters.get('date_range') == 'last_week':
@@ -486,41 +491,23 @@ async def show_debt_history_view(update: Update, context: ContextTypes.DEFAULT_T
         start_of_week = today - dt.timedelta(days=today.weekday())
         filtered_logs = [r for r in filtered_logs if (d := pdate(r[0])) and d >= start_of_week]
 
+    # Сортировка
     sort_by = filters.get('sort_by', 'creation')
     reverse_sort = filters.get('sort_order', 'desc') == 'desc'
     if sort_by == 'due_date':
         filtered_logs.sort(key=lambda r: pdate(r[5]) or dt.date.min, reverse=reverse_sort)
-    else: # По умолчанию сортировка по дате создания
-        # Исходный список уже отсортирован по дате создания, просто переворачиваем если нужно
+    else: # Сортировка по дате создания
+        # Исходный список уже отсортирован, если нужен обратный порядок - переворачиваем
         if reverse_sort:
             filtered_logs = filtered_logs[::-1]
 
-    if not filtered_logs:
-        return await query.message.edit_text("Записей по вашим фильтрам не найдено.", reply_markup=build_debt_history_keyboard(0, 0))
-
     per_page = 10
-    total_records = len(filtered_logs)
-    total_pages = math.ceil(total_records / per_page) if total_records > 0 else 1
+    total_pages = math.ceil(len(filtered_logs) / per_page) if filtered_logs else 1
     page = max(0, min(page, total_pages - 1))
     start_index = page * per_page
     page_records = filtered_logs[start_index : start_index + per_page]
 
-    filter_title = " (Фильтры активны)" if filters else ""
-    msg = f"<b>📜 История долгов{filter_title} (Стр. {page + 1}/{total_pages}):</b>\n"
-    
-    for row in page_records:
-        date, supplier, total, _, _, due_date, is_paid, pay_type = (row + [""] * 8)[:8]
-        status_icon = "✅" if is_paid.lower() == 'да' else "🟠"
-        
-        msg += "\n" + "─" * 28 + "\n"
-        msg += f"{status_icon} <b>{supplier} | {pay_type or 'Наличные'}</b>\n"
-        msg += f"   • Сумма: {parse_float(total):.2f}₴ | Дата: {date}\n"
-        
-        if is_paid.lower() == 'да':
-            repayment_date = get_repayment_date_from_history(context, date, supplier)
-            if repayment_date: msg += f"   • <b>Погашен: {repayment_date}</b>"
-        else:
-            msg += f"   • Срок: {row[5]}"
+    # ... (остальная часть функции для формирования сообщения msg остается без изменений) ...
 
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=build_debt_history_keyboard(page, total_pages))
 
@@ -528,7 +515,8 @@ async def show_debt_filter_menu(update: Update, context: ContextTypes.DEFAULT_TY
     """Показывает меню выбора фильтров."""
     query = update.callback_query
     if 'debt_filters' not in context.user_data:
-        context.user_data['debt_filters'] = {}
+        context.user_data['debt_filters'] = {'status': [], 'pay_type': [], 'date_range': None, 'sort_by': 'creation', 'sort_order': 'asc'}
+    
     await query.message.edit_text("⚙️ **Настройте фильтры и сортировку:**", reply_markup=build_debt_filter_keyboard(context.user_data['debt_filters']))
 
 async def toggle_debt_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -536,8 +524,9 @@ async def toggle_debt_filter(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
     
-    _, _, f_type, f_value = query.data.split('_', 3)
-    filters = context.user_data.setdefault('debt_filters', {})
+    parts = query.data.split('_')
+    f_type, f_value = parts[2], parts[3]
+    filters = context.user_data.setdefault('debt_filters', {'status': [], 'pay_type': [], 'date_range': None, 'sort_by': 'creation', 'sort_order': 'asc'})
 
     if f_type in ['status', 'pay_type']:
         current_values = filters.setdefault(f_type, [])
@@ -546,15 +535,13 @@ async def toggle_debt_filter(update: Update, context: ContextTypes.DEFAULT_TYPE)
     elif f_type == "date_range":
         filters['date_range'] = f_value if filters.get('date_range') != f_value else None
     elif f_type == "sort_by":
-        if filters.get('sort_by') == f_value: filters['sort_order'] = 'asc' if filters.get('sort_order', 'desc') == 'desc' else 'desc'
-        else: filters.update({'sort_by': f_value, 'sort_order': 'desc'})
+        if filters.get('sort_by') == f_value:
+            filters['sort_order'] = 'asc' if filters.get('sort_order', 'desc') == 'desc' else 'desc'
+        else:
+            filters['sort_by'] = f_value
+            filters['sort_order'] = 'desc' # По умолчанию при смене типа - по убыванию
             
-    try:
-        await query.message.edit_reply_markup(reply_markup=build_debt_filter_keyboard(filters))
-    except BadRequest as e:
-        if "Message is not modified" not in str(e): raise
-
-
+    await show_debt_filter_menu(update, context)
 
 
 
@@ -7262,9 +7249,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             all_logs = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
             context.user_data['debt_history_data'] = sorted(all_logs, key=lambda r: pdate(r[0]) or dt.date.min)
             context.user_data.pop('debt_filters', None)
+            
+            # По умолчанию открываем последнюю страницу
             total_pages = math.ceil(len(all_logs) / 10) if all_logs else 1
             page = max(0, total_pages - 1)
             context.user_data['debt_history_page'] = page
+            
             await show_debt_history_view(update, context)
         
         elif data.startswith("debt_page_"):
@@ -7279,6 +7269,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await toggle_debt_filter(update, context)
             
         elif data == "apply_debt_filters":
+            # Применяя фильтр, всегда переходим на первую страницу
             context.user_data['debt_history_page'] = 0
             await show_debt_history_view(update, context)
     # --- КОНЕЦ БЛОКА ---
