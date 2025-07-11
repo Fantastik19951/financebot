@@ -538,19 +538,36 @@ async def show_debt_filter_menu(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data['debt_filters'] = {}
     await query.message.edit_text("⚙️ **Настройте фильтры и сортировку:**", reply_markup=build_debt_filter_keyboard(context.user_data['debt_filters']))
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def toggle_debt_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Переключает выбранный фильтр и обновляет меню."""
+    """
+    Умный обработчик, который корректно переключает любой фильтр
+    и обновляет меню.
+    """
     query = update.callback_query
     await query.answer()
     
-    parts = query.data.split('_')
-    f_type, f_value = parts[2], parts[3]
+    # --- НОВАЯ, НАДЕЖНАЯ ЛОГИКА ИЗВЛЕЧЕНИЯ ДАННЫХ ---
+    prefix = "toggle_filter_"
+    data_part = query.data[len(prefix):]
+    
+    # Находим, где заканчивается тип фильтра и начинается его значение
+    # Например, в "status_Оплаченные", разделитель - первый '_'
+    try:
+        f_type, f_value = data_part.split('_', 1)
+    except ValueError:
+        logging.error(f"Неверный формат callback_data в toggle_debt_filter: {query.data}")
+        return
+    # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
+
     filters = context.user_data.setdefault('debt_filters', {})
 
     if f_type in ['status', 'pay_type']:
         current_values = filters.setdefault(f_type, [])
-        if f_value in current_values: current_values.remove(f_value)
-        else: current_values.append(f_value)
+        if f_value in current_values:
+            current_values.remove(f_value)
+        else:
+            current_values.append(f_value)
     elif f_type == "date_range":
         filters['date_range'] = f_value if filters.get('date_range') != f_value else None
     elif f_type == "sort_by":
@@ -559,10 +576,12 @@ async def toggle_debt_filter(update: Update, context: ContextTypes.DEFAULT_TYPE)
         else:
             filters.update({'sort_by': f_value, 'sort_order': 'desc'})
             
+    # Пытаемся отредактировать меню фильтров, игнорируя ошибку, если ничего не изменилось
     try:
         await query.message.edit_reply_markup(reply_markup=build_debt_filter_keyboard(filters))
     except BadRequest as e:
-        if "Message is not modified" not in str(e): raise
+        if "Message is not modified" not in str(e):
+            raise
 
 
 
