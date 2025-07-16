@@ -518,7 +518,7 @@ async def show_debt_history_view(update: Update, context: ContextTypes.DEFAULT_T
         date, supplier, total, _, _, due_date, is_paid, pay_type = (row + [""] * 8)[:8]
         status_icon = "✅" if is_paid.lower() == 'да' else "🟠"
         
-        msg += "\n" + "─" * 28 + "\n"
+        msg += "\n" + "─" * 20 + "\n"
         msg += f"{status_icon} <b>{supplier} | {pay_type or 'Наличные'}</b>\n"
         msg += f"   • Сумма: {parse_float(total):.2f}₴ | Дата: {date}\n"
         
@@ -539,28 +539,35 @@ async def show_debt_filter_menu(update: Update, context: ContextTypes.DEFAULT_TY
 
 # --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 
+# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 async def toggle_debt_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Надежно переключает выбранный фильтр и обновляет меню."""
+    """Надежно переключает любой фильтр и обновляет меню."""
     query = update.callback_query
     await query.answer()
     
-    # Убираем префикс, чтобы работать с чистыми данными
-    prefix = "toggle_filter_"
-    data_part = query.data[len(prefix):]
-    
-    # Надежный способ разделить тип фильтра и его значение
-    # Находим последний символ '_', все что до него - тип, все что после - значение
-    try:
-        last_underscore_index = data_part.rfind('_')
-        f_type = data_part[:last_underscore_index]
-        f_value = data_part[last_underscore_index + 1:]
-    except Exception:
-        logging.error(f"Неверный формат callback_data в toggle_debt_filter: {query.data}")
-        return
-
+    data = query.data
     filters = context.user_data.setdefault('debt_filters', {})
 
-    # Логика переключения (остается простой и понятной)
+    # --- НОВАЯ, НАДЕЖНАЯ ЛОГИКА ПАРСИНГА ---
+    prefix_map = {
+        "status": "toggle_filter_status_",
+        "pay_type": "toggle_filter_pay_type_",
+        "date_range": "toggle_filter_date_range_",
+        "sort_by": "toggle_filter_sort_by_"
+    }
+
+    f_type, f_value = None, None
+    for key, prefix in prefix_map.items():
+        if data.startswith(prefix):
+            f_type = key
+            f_value = data[len(prefix):]
+            break
+    
+    if not f_type:
+        logging.error(f"Неизвестный тип фильтра в toggle_debt_filter: {data}")
+        return
+    # --- КОНЕЦ НОВОЙ ЛОГИКИ ---
+
     if f_type in ['status', 'pay_type']:
         current_values = filters.setdefault(f_type, [])
         if f_value in current_values:
@@ -571,8 +578,11 @@ async def toggle_debt_filter(update: Update, context: ContextTypes.DEFAULT_TYPE)
         filters['date_range'] = f_value if filters.get('date_range') != f_value else None
     elif f_type == "sort_by":
         if filters.get('sort_by') == f_value:
-            filters['sort_order'] = 'asc' if filters.get('sort_order', 'desc') == 'desc' else 'desc'
+            # Переключаем порядок сортировки для того же поля
+            current_order = filters.get('sort_order', 'desc')
+            filters['sort_order'] = 'asc' if current_order == 'desc' else 'desc'
         else:
+            # Устанавливаем новый тип сортировки, по умолчанию - по убыванию
             filters.update({'sort_by': f_value, 'sort_order': 'desc'})
             
     # Обновляем клавиатуру, игнорируя ошибку, если ничего не изменилось
