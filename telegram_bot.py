@@ -419,15 +419,7 @@ def generate_expense_pie_chart(context: ContextTypes.DEFAULT_TYPE, start_date: d
     plt.close(fig)
     return buf
 
-# --- НОВЫЙ БЛОК ДЛЯ ИСТОРИИ ДОЛГОВ ---
 
-# --- НОВЫЙ БЛОК ДЛЯ ИСТОРИИ ДОЛГОВ ---
-
-# --- ЗАМЕНИТЕ ВЕСЬ СТАРЫЙ БЛОК ИСТОРИИ ДОЛГОВ НА ЭТОТ ---
-
-# --- НОВЫЙ БЛОК ДЛЯ ИСТОРИИ ДОЛГОВ ---
-
-# --- НОВЫЙ БЛОК ДЛЯ ИСТОРИИ ДОЛГОВ ---
 
 def build_debt_history_keyboard(page: int, total_pages: int):
     """Создает основную клавиатуру для навигации в истории долгов."""
@@ -545,35 +537,50 @@ async def show_debt_filter_menu(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data['debt_filters'] = {}
     await query.message.edit_text("⚙️ **Настройте фильтры и сортировку:**", reply_markup=build_debt_filter_keyboard(context.user_data['debt_filters']))
 
+# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
+
 async def toggle_debt_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Переключает выбранный фильтр и обновляет меню."""
+    """Надежно переключает выбранный фильтр и обновляет меню."""
     query = update.callback_query
     await query.answer()
     
+    # Убираем префикс, чтобы работать с чистыми данными
     prefix = "toggle_filter_"
     data_part = query.data[len(prefix):]
+    
+    # Надежный способ разделить тип фильтра и его значение
+    # Находим последний символ '_', все что до него - тип, все что после - значение
     try:
-        f_type, f_value = data_part.split('_', 1)
-    except ValueError:
+        last_underscore_index = data_part.rfind('_')
+        f_type = data_part[:last_underscore_index]
+        f_value = data_part[last_underscore_index + 1:]
+    except Exception:
         logging.error(f"Неверный формат callback_data в toggle_debt_filter: {query.data}")
         return
 
     filters = context.user_data.setdefault('debt_filters', {})
 
+    # Логика переключения (остается простой и понятной)
     if f_type in ['status', 'pay_type']:
         current_values = filters.setdefault(f_type, [])
-        if f_value in current_values: current_values.remove(f_value)
-        else: current_values.append(f_value)
+        if f_value in current_values:
+            current_values.remove(f_value)
+        else:
+            current_values.append(f_value)
     elif f_type == "date_range":
         filters['date_range'] = f_value if filters.get('date_range') != f_value else None
     elif f_type == "sort_by":
-        if filters.get('sort_by') == f_value: filters['sort_order'] = 'asc' if filters.get('sort_order', 'desc') == 'desc' else 'desc'
-        else: filters.update({'sort_by': f_value, 'sort_order': 'desc'})
+        if filters.get('sort_by') == f_value:
+            filters['sort_order'] = 'asc' if filters.get('sort_order', 'desc') == 'desc' else 'desc'
+        else:
+            filters.update({'sort_by': f_value, 'sort_order': 'desc'})
             
+    # Обновляем клавиатуру, игнорируя ошибку, если ничего не изменилось
     try:
         await query.message.edit_reply_markup(reply_markup=build_debt_filter_keyboard(filters))
     except BadRequest as e:
-        if "Message is not modified" not in str(e): raise
+        if "Message is not modified" not in str(e):
+            raise
 
 
 
