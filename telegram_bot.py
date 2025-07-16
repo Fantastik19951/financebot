@@ -60,6 +60,8 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s",
     handlers=[logging.StreamHandler()]
 )
+
+
 def push_nav(context, target):
     stack = context.user_data.get('nav_stack', [])
     stack.append(target)
@@ -1076,7 +1078,22 @@ def save_plan_fact(context: ContextTypes.DEFAULT_TYPE, date_str: str, supplier: 
 
     # 2. Вызываем модуль самообучения
     update_supplier_schedule(context, date_str, supplier)
-        
+
+def get_avg_markup_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_name: str) -> float | None:
+    """Считает средний процент наценки для поставщика."""
+    rows = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
+    markups = []
+    for row in rows:
+        if len(row) > 5 and row[1] == supplier_name:
+            to_pay = parse_float(row[4])
+            after_markup = parse_float(row[5])
+            if to_pay > 0:
+                markup_percent = ((after_markup / to_pay) - 1) * 100
+                markups.append(markup_percent)
+    if markups:
+        return sum(markups) / len(markups)
+    return None
+
 def get_tomorrow_planning_details():
     """Собирает данные из ПланФакт для отчета и возвращает форматированную строку."""
     tomorrow_str = (dt.date.today() + dt.timedelta(days=1)).strftime(DATE_FMT)
@@ -2231,25 +2248,30 @@ async def handle_supplier_return_amount(update: Update, context: ContextTypes.DE
     except ValueError:
         await update.message.reply_text("❌ Введите сумму числом!")
 
-async def handle_supplier_writeoff_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает сумму списания и переходит к сумме после наценки."""
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+async def handle_supplier_writeoff(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        writeoff_amount = parse_float(update.message.text)
-        context.user_data['supplier']['writeoff'] = writeoff_amount
+        writeoff = parse_float(update.message.text)
+        context.user_data['supplier']['writeoff'] = writeoff
         context.user_data['supplier']['step'] = 'invoice_total_markup'
         
-        # Сразу же делаем списание с остатка магазина
-        if writeoff_amount > 0:
-            supplier_name = context.user_data['supplier'].get('name', 'Неизвестный')
-            user = update.effective_user
-            who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
-            add_inventory_operation("Списание", writeoff_amount, f"Списание по накладной от {supplier_name}", who)
-            await update.message.reply_text(f"✅ Сумма {writeoff_amount:.2f}₴ списана с остатка магазина.")
+        supplier_name = context.user_data['supplier']['name']
+        amount_to_pay = context.user_data['supplier']['amount_income'] - writeoff
+        
+        avg_markup = get_avg_markup_for_supplier(context, supplier_name)
+        suggested_amount = None
+        
+        msg = "📑 Введите сумму накладной после наценки:"
+        kb = []
 
-        await update.message.reply_text(
-            "📑 Теперь введите сумму накладной после наценки:",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]])
-        )
+        if avg_markup is not None:
+            suggested_amount = amount_to_pay * (1 + avg_markup / 100)
+            msg += f"\n\n<i>(Подсказка: средняя наценка ~{avg_markup:.1f}%. Рекомендуемая сумма: {suggested_amount:.2f}₴)</i>"
+            kb.append([InlineKeyboardButton(f"✅ Использовать {suggested_amount:.2f}₴", callback_data=f"use_suggested_markup_{suggested_amount}")])
+        
+        kb.append([InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")])
+        
+        await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
     except ValueError:
         await update.message.reply_text("❌ Введите сумму числом!")
 
@@ -6711,7 +6733,6 @@ async def safe_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page:
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="safe_menu")])
     
     await query.message.edit_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
-    
 
 
 
@@ -7080,6 +7101,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parts = data.split('_')
             filter_by, page = parts[3], int(parts[4])
             await show_current_debts(update, context, page=page, filter_by=filter_by)
+
+        elif data.startswith("use_suggested_markup_"):
+            amount = float(data.split('_')[-1])
+            # Имитируем ввод этой суммы пользователем
+            update.message = await context.bot.send_message(chat_id=query.message.chat_id, text=str(amount))
+            await query.message.delete()
+            await handle_supplier_invoice_total_markup(update, context)
 
         
         
