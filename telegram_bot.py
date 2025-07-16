@@ -537,7 +537,7 @@ async def show_debt_filter_menu(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     if 'debt_filters' not in context.user_data:
         context.user_data['debt_filters'] = {}
-    await query.message.edit_text("⚙️ **Настройте фильтры и сортировку:**", reply_markup=build_debt_filter_keyboard(context.user_data['debt_filters']))
+    await query.message.edit_text("⚙️ Настройте фильтры и сортировку:", reply_markup=build_debt_filter_keyboard(context.user_data['debt_filters']))
 
 # --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 
@@ -1917,18 +1917,18 @@ async def check_financial_shield(context: ContextTypes.DEFAULT_TYPE):
 
     # --- 3. Формируем и отправляем отчет, ТОЛЬКО если есть на что обратить внимание ---
     if shortage > 0 or overdue_debts_list:
-        msg = "🔔 **ФИНАНСОВЫЙ ЩИТ:**\n"
+        msg = "🔔 ФИНАНСОВЫЙ ЩИТ:\n"
         
         if shortage > 0:
             msg += (
-                f"\n⚠️ **Внимание: возможен кассовый разрыв завтра!**\n"
+                f"\n⚠️ Внимание: возможен кассовый разрыв завтра!\n"
                 f"   • Запланировано к оплате: {total_needed_cash:,.2f}₴\n"
                 f"   • В сейфе сейчас: {safe_balance:,.2f}₴\n"
-                f"   🔴 **Нужно пополнить на: {shortage:,.2f}₴**\n"
+                f"   🔴 Нужно пополнить на: {shortage:,.2f}₴\n"
             ).replace(',', ' ')
             
         if overdue_debts_list:
-            msg += "\n❗️ **Обнаружены просроченные долги:**\n"
+            msg += "\n❗️ Обнаружены просроченные долги:\n"
             msg += "\n".join(overdue_debts_list)
             
         # Отправляем уведомление всем админам
@@ -2927,7 +2927,7 @@ async def confirm_delete_invoice(update: Update, context: ContextTypes.DEFAULT_T
     amount_str = invoice_row[4]
 
     text = (f"❗️<b>Подтвердите действие</b>❗️\n\n"
-            f"Вы уверены, что хотите **ПОЛНОСТЬЮ УДАЛИТЬ** накладную от поставщика "
+            f"Вы уверены, что хотите ПОЛНОСТЬЮ УДАЛИТЬ накладную от поставщика "
             f"<b>{supplier_name}</b> на сумму <b>{amount_str}₴</b>?\n\n"
             f"Это действие отменит все связанные финансовые и складские операции. "
             f"<b>Отменить его будет невозможно.</b>")
@@ -3055,21 +3055,22 @@ async def quick_safe_balance(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def send_shift_closed_notification(context: ContextTypes.DEFAULT_TYPE):
-    """Отправляет информативное уведомление о закрытии смены всем пользователям."""
+    """Отправляет КРАСИВОЕ и ИНФОРМАТИВНОЕ уведомление о закрытии смены."""
     job_data = context.job.data
     seller_name = job_data.get('seller_name', 'Неизвестный')
+    report_date_str = job_data.get('report_date_str', 'сегодня')
     total_sales = job_data.get('total_sales', 0.0)
     cash_balance = job_data.get('cash_balance', 0.0)
     safe_balance = job_data.get('safe_balance', 0.0)
-
-    # --- НОВЫЙ ИНФОРМАТИВНЫЙ ТЕКСТ ---
-    text = (f"🔔 **{seller_name}** сдал(а) смену!\n"
-            f"   • Выручка: {total_sales:,.2f}₴\n"
-            f"   • Касса в сейф: {cash_balance:,.2f}₴\n"
-            f"   • Итог в сейфе: {safe_balance:,.2f}₴").replace(',', ' ')
     
-    # --- Клавиатура остается прежней ---
-    kb = [[InlineKeyboardButton("🔎 Открыть детальный отчет", callback_data=f"show_report_from_notification_{job_data.get('report_date_str')}")]]
+    # --- НОВЫЙ КРАСИВЫЙ ТЕКСТ ---
+    text = (f"🔔 Смена сдана!\n\n"
+            f"👤 Продавец: {seller_name}\n"
+            f"💰 Выручка общая: {total_sales:,.2f}₴\n"
+            f"💵 Наличные в сейф: {cash_balance:,.2f}₴\n"
+            f"🗄️ Итог в сейфе: {safe_balance:,.2f}₴").replace(',', ' ')
+            
+    kb = [[InlineKeyboardButton("🔎 Открыть детальный отчет", callback_data=f"show_report_from_notification_{report_date_str}")]]
     markup = InlineKeyboardMarkup(kb)
 
     for chat_id in USER_ID_TO_NAME.keys():
@@ -4542,7 +4543,7 @@ async def debts_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total_debt_amount = get_total_unpaid_debt(context)
     
     # Формируем сообщение
-    msg = "🏦 **Управление долгами**\n\n"
+    msg = "🏦 Управление долгами\n\n"
     if total_debt_amount > 0:
         msg += f"Общая сумма неоплаченных долгов: <b>{total_debt_amount:,.2f}₴</b>".replace(',', ' ')
     else:
@@ -5906,32 +5907,23 @@ async def handle_supplier_amount_income(update: Update, context: ContextTypes.DE
 
 # 4. Сумма накладной после наценки
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_supplier_invoice_total_markup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запрашивает сумму после наценки, показывая умную подсказку."""
-    supplier_data = context.user_data['supplier']
-    supplier_name = supplier_data['name']
-    
-    # Рассчитываем сумму к оплате для подсказки
-    amount_to_pay = parse_float(supplier_data['amount_income']) - parse_float(supplier_data['writeoff'])
-    
-    avg_markup = get_avg_markup_for_supplier(context, supplier_name)
-    suggested_amount = None
-    
-    msg = "📑 Введите сумму накладной после наценки (итоговая сумма, которая добавится в остаток магазина):"
-    kb = []
-
-    if avg_markup is not None:
-        suggested_amount = amount_to_pay * (1 + avg_markup / 100)
-        msg += f"\n\n<i>(Подсказка: средняя наценка ~{avg_markup:.1f}%. Рекомендуемая сумма: {suggested_amount:.2f}₴)</i>"
-        kb.append([InlineKeyboardButton(f"✅ Использовать {suggested_amount:.2f}₴", callback_data=f"use_suggested_markup_{suggested_amount}")])
-    
-    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")])
-    
-    # Устанавливаем следующий ожидаемый шаг
-    context.user_data['supplier']['step'] = 'payment_type'
-    
-    # Отправляем сообщение
-    await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+    """Обрабатывает ввод суммы после наценки и переходит к выбору типа оплаты."""
+    try:
+        invoice_total = parse_float(update.message.text)
+        context.user_data['supplier']['invoice_total_markup'] = invoice_total
+        context.user_data['supplier']['step'] = 'payment_type'
+        
+        kb = [
+            [InlineKeyboardButton("💵 Наличные", callback_data="pay_Наличные")],
+            [InlineKeyboardButton("💳 Карта", callback_data="pay_Карта")],
+            [InlineKeyboardButton("📆 Долг", callback_data="pay_Долг_init")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]
+        ]
+        await update.message.reply_text("💳 Выберите тип оплаты:", reply_markup=InlineKeyboardMarkup(kb))
+    except ValueError:
+        await update.message.reply_text("❌ Введите сумму числом!")
 
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 async def handle_debt_type_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6275,12 +6267,13 @@ async def save_shift(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- ДОЛГИ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def show_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0, filter_by: str = None):
-    """Показывает страничный список АКТУАЛЬНЫХ долгов с кнопками быстрого погашения."""
+    """Показывает страничный список АКТУАЛЬНЫХ долгов в виде текста."""
     query = update.callback_query
     if query:
         await query.message.edit_text("⏳ Загружаю список текущих долгов...")
-    
+
     try:
         rows = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
         unpaid_debts = []
@@ -6289,7 +6282,7 @@ async def show_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE,
                 if len(row) >= 7 and row[6].strip().lower() != "да" and parse_float(row[4]) > 0:
                     pay_type = row[7] if len(row) > 7 else "Наличные"
                     if filter_by is None or filter_by == pay_type:
-                        unpaid_debts.append(row + [i+2])
+                        unpaid_debts.append(row)
             except (IndexError, ValueError):
                 continue
         unpaid_debts.sort(key=lambda x: pdate(x[5]) or dt.date.max)
@@ -6297,35 +6290,31 @@ async def show_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await query.message.edit_text(f"❌ Ошибка чтения таблицы долгов: {e}")
         return
 
-    # Пагинация
-    per_page = 5 # Уменьшаем количество на странице для читаемости
-    total_records = len(unpaid_debts)
-    total_pages = math.ceil(total_records / per_page) if total_records > 0 else 1
+    per_page = 10
+    total_pages = math.ceil(len(unpaid_debts) / per_page) if unpaid_debts else 1
     page = max(0, min(page, total_pages - 1))
     start_index = page * per_page
     page_debts = unpaid_debts[start_index : start_index + per_page]
 
     filter_title = f" (Фильтр: {filter_by})" if filter_by else ""
-    msg = f"<b>📋 Текущие долги{filter_title} (Стр. {page + 1}/{total_pages}):</b>"
-    
-    kb = []
+    msg = f"<b>📋 Текущие долги{filter_title} (Стр. {page + 1}/{total_pages}):</b>\n"
+
     if not page_debts:
-        msg += "\n\n✅ Отлично! Текущих долгов нет."
+        msg += "\n✅ Отлично! Текущих долгов нет."
     else:
         for debt in page_debts:
-            row_index, supplier, to_pay, due_date = debt[-1], debt[1], parse_float(debt[4]), debt[5]
-            pay_type_short = "(К)" if (len(debt) > 7 and debt[7] == 'Карта') else "(Н)"
-            
-            btn_text = f"{supplier} - {to_pay:.2f}₴ {pay_type_short} (до {due_date})"
-            kb.append([
-                InlineKeyboardButton(btn_text, callback_data=f"noop_debt_{row_index}"),
-                InlineKeyboardButton("✅ Погасить", callback_data=f"repay_confirm_{row_index}")
-            ])
+            date_created, supplier, _, _, to_pay, due_date, _, pay_type = (debt + [""] * 8)[:8]
+            msg += "\n──────────────────\n"
+            msg += f"<b>Поставщик:</b> {supplier}\n"
+            msg += f"   • 💰 <b>Сумма долга:</b> {parse_float(to_pay):.2f}₴\n"
+            msg += f"   • 🗓 <b>Дата долга:</b> {date_created}\n"
+            msg += f"   • ❗️ <b>Срок погашения:</b> {due_date}\n"
+            msg += f"   • 💳 <b>Тип оплаты:</b> {pay_type or 'Наличные'}\n"
 
-    # Кнопки фильтрации и навигации
+    kb = []
     filter_row = [
         InlineKeyboardButton("Фильтр: Наличные", callback_data=f"current_debts_filter_Наличные_0"),
-        InlineKeyboardButton("Фильтр: Карта", callback_data=f"current_debts_filter_Карта_0")
+        InlineKeyboardButton("Фильтр: Карта", callback_data=f"current_debts_filter_Карта_0"),
     ]
     if filter_by:
         filter_row.append(InlineKeyboardButton("❌ Сбросить", callback_data="current_debts_0"))
@@ -6340,8 +6329,9 @@ async def show_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if nav_row:
         kb.append(nav_row)
 
+    kb.append([InlineKeyboardButton("✅ Погасить долг", callback_data="close_debt")])
     kb.append([InlineKeyboardButton("🔙 В меню Долги", callback_data="debts_menu")])
-    
+
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
 async def show_upcoming_payments(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6798,33 +6788,27 @@ async def handle_safe_amount(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # --- ГРАФИКИ И ЭКСПОРТ ---
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_supplier_writeoff_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Обрабатывает сумму списания, делает запись в остаток
-    И показывает умную подсказку для суммы после наценки.
-    """
+    """Обрабатывает сумму списания и СРАЗУ запрашивает сумму после наценки с подсказкой."""
     try:
         writeoff_amount = parse_float(update.message.text)
         context.user_data['supplier']['writeoff'] = writeoff_amount
         
-        # Сразу же делаем списание с остатка магазина, если оно есть
         if writeoff_amount > 0:
             supplier_name = context.user_data['supplier'].get('name', 'Неизвестный')
             user = update.effective_user
             who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
             add_inventory_operation("Списание", writeoff_amount, f"Списание по накладной от {supplier_name}", who)
-            # Отправляем подтверждение списания отдельным сообщением
             await update.message.reply_text(f"✅ Сумма {writeoff_amount:.2f}₴ списана с остатка магазина.")
 
-        # --- НАЧАЛО ЛОГИКИ УМНОЙ ПОДСКАЗКИ ---
-        supplier_name = context.user_data['supplier']['name']
-        # Рассчитываем сумму к оплате на основе прихода и ВОЗВРАТА
-        amount_to_pay = context.user_data['supplier']['amount_income'] - context.user_data['supplier']['return_amount']
+        # --- ТЕПЕРЬ ЗАДАЕМ СЛЕДУЮЩИЙ ВОПРОС ---
+        supplier_data = context.user_data['supplier']
+        supplier_name = supplier_data['name']
+        amount_to_pay = supplier_data['amount_income'] - supplier_data['return_amount']
         
         avg_markup = get_avg_markup_for_supplier(context, supplier_name)
-        suggested_amount = None
-        
-        msg = "📑 Теперь введите сумму накладной после наценки:"
+        msg = "📑 Введите сумму накладной после наценки:"
         kb = []
 
         if avg_markup is not None:
@@ -6833,13 +6817,10 @@ async def handle_supplier_writeoff_amount(update: Update, context: ContextTypes.
             kb.append([InlineKeyboardButton(f"✅ Использовать {suggested_amount:.2f}₴", callback_data=f"use_suggested_markup_{suggested_amount}")])
         
         kb.append([InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")])
-        # --- КОНЕЦ ЛОГИКИ УМНОЙ ПОДСКАЗКИ ---
         
-        # Устанавливаем следующий шаг
-        context.user_data['supplier']['step'] = 'invoice_total_markup'
-        
+        context.user_data['supplier']['step'] = 'invoice_total_markup' # <-- Устанавливаем следующий шаг
         await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
-
+        
     except ValueError:
         await update.message.reply_text("❌ Введите сумму числом!")
         
