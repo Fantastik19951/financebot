@@ -5887,18 +5887,6 @@ async def handle_supplier_amount_income(update: Update, context: ContextTypes.DE
     except ValueError:
         await update.message.reply_text("❌ Введите сумму числом!")
 
-# 3. Возврат/Списание
-async def handle_supplier_writeoff(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        writeoff = float(update.message.text.replace(',', '.'))
-        context.user_data['supplier']['writeoff'] = writeoff
-        context.user_data['supplier']['step'] = 'invoice_total_markup'
-        await update.message.reply_text(
-            "📑 Введите сумму накладной после наценки (итоговая сумма, которая должна добавиться в остаток магазина):",
-            reply_markup=back_kb()
-        )
-    except ValueError:
-        await update.message.reply_text("❌ Введите сумму числом!")
 
 # 4. Сумма накладной после наценки
 async def handle_supplier_invoice_total_markup(update: Update, context: ContextTypes.DEFAULT_TYPE):
