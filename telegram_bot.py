@@ -2215,6 +2215,9 @@ async def handle_analytics_end_date(update: Update, context: ContextTypes.DEFAUL
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
+
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_return_or_writeoff_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает ответ на вопрос "Был ли возврат/списание?"."""
     query = update.callback_query
@@ -2227,12 +2230,12 @@ async def handle_return_or_writeoff_choice(update: Update, context: ContextTypes
             "↩️ Введите сумму ВОЗВРАТА по накладной (влияет на сумму к оплате):",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]])
         )
-    else: # Если нет, пропускаем этот шаг
-        context.user_data['supplier']['return_amount'] = 0.0
-        context.user_data['supplier']['writeoff'] = 0.0
-        # Сразу вызываем нашу новую функцию-помощник, чтобы задать следующий вопрос
-        await _ask_for_invoice_markup(update, context)
+    else: # Если "Нет", устанавливаем нули и сразу переходим к следующему шагу
+        context.user_data['supplier'].update({'return_amount': 0.0, 'writeoff': 0.0})
+        # Сразу вызываем функцию, которая задаст следующий вопрос
+        await handle_supplier_writeoff_amount(update, context)
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_supplier_return_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает сумму возврата и запрашивает сумму списания."""
     try:
@@ -2246,13 +2249,43 @@ async def handle_supplier_return_amount(update: Update, context: ContextTypes.DE
         await update.message.reply_text("❌ Введите сумму числом!")
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-async def handle_supplier_writeoff(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает сумму возврата/списания и переходит к запросу суммы после наценки."""
+async def handle_supplier_writeoff_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает сумму списания и запрашивает сумму после наценки с подсказкой."""
     try:
-        writeoff = parse_float(update.message.text)
-        context.user_data['supplier']['writeoff'] = writeoff
-        # Сразу переходим к следующему шагу
-        await handle_supplier_invoice_total_markup(update, context)
+        # Эта функция вызывается и после ввода списания, и когда списания не было
+        # Если `update.message.text` существует, значит, мы получили сумму списания
+        if update.message:
+            writeoff_amount = parse_float(update.message.text)
+            context.user_data['supplier']['writeoff'] = writeoff_amount
+            
+            if writeoff_amount > 0:
+                supplier_name = context.user_data['supplier'].get('name', 'Неизвестный')
+                user = update.effective_user
+                who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
+                add_inventory_operation("Списание", writeoff_amount, f"Списание по накладной от {supplier_name}", who)
+
+        # --- Теперь задаем вопрос о сумме после наценки ---
+        supplier_data = context.user_data['supplier']
+        supplier_name = supplier_data['name']
+        amount_to_pay = parse_float(supplier_data['amount_income']) - parse_float(supplier_data.get('return_amount', 0))
+        
+        avg_markup = get_avg_markup_for_supplier(context, supplier_name)
+        msg = "📑 Теперь введите сумму накладной после наценки:"
+        kb = []
+
+        if avg_markup is not None:
+            suggested_amount = amount_to_pay * (1 + avg_markup / 100)
+            msg += f"\n\n<i>(Подсказка: средняя наценка ~{avg_markup:.1f}%. Рекомендуемая сумма: {suggested_amount:.2f}₴)</i>"
+            kb.append([InlineKeyboardButton(f"✅ Использовать {suggested_amount:.2f}₴", callback_data=f"use_suggested_markup_{suggested_amount}")])
+        
+        kb.append([InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")])
+        
+        context.user_data['supplier']['step'] = 'invoice_total_markup'
+        
+        # Редактируем или отправляем новое сообщение
+        target_message = update.callback_query.message if update.callback_query else update.message
+        await target_message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
     except ValueError:
         await update.message.reply_text("❌ Введите сумму числом!")
 
@@ -3083,40 +3116,31 @@ async def quick_safe_balance(update: Update, context: ContextTypes.DEFAULT_TYPE)
 # --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def send_shift_closed_notification(context: ContextTypes.DEFAULT_TYPE):
-    """Отправляет уведомление о закрытии смены, избегая дублирования."""
+    """Отправляет уведомление о закрытии смены всем пользователям, КРОМЕ инициатора."""
     job_data = context.job.data
     seller_name = job_data.get('seller_name', 'Неизвестный')
     report_date_str = job_data.get('report_date_str', 'сегодня')
+    initiator_id = job_data.get('initiator_id')
 
-    # --- ЗАЩИТА ОТ ДУБЛИРОВАНИЯ ---
-    # Создаем уникальный ключ для этого уведомления
-    notification_key = f"sent_notification_{report_date_str}_{seller_name}"
+    # --- ИЗМЕНЕНИЕ: Убрана защита от дублей, так как она не нужна, и улучшен текст ---
     
-    # Если мы уже отправляли это уведомление, выходим
-    if context.bot_data.get(notification_key, False):
-        logging.warning(f"Попытка дублирующей отправки уведомления для {seller_name}. Отменено.")
-        return
-        
-    # Если нет - помечаем, что сейчас отправим
-    context.bot_data[notification_key] = True
-    # --- КОНЕЦ ЗАЩИТЫ ---
-
-    total_sales = job_data.get('total_sales', 0.0)
-    cash_balance = job_data.get('cash_balance', 0.0)
-    safe_balance = job_data.get('safe_balance', 0.0)
-    
-    text = (f"🔔 Смена сдана!\n\n"
+    text = (f"🔔 Смена сдана! \n\n"
             f"👤 Продавец: {seller_name}\n"
-            f"💰 Выручка: {total_sales:,.2f}₴\n"
-            f"💵 Касса в сейф: {cash_balance:,.2f}₴\n"
-            f"🗄️ Итог в сейфе: {safe_balance:,.2f}₴").replace(',', ' ')
+            f"💰 Выручка: {job_data.get('total_sales', 0.0):,.2f}₴\n"
+            f"💵 Касса в сейф: {job_data.get('cash_balance', 0.0):,.2f}₴\n"
+            f"🗄️ Итог в сейфе: {job_data.get('safe_balance', 0.0):,.2f}₴").replace(',', ' ')
             
     kb = [[InlineKeyboardButton("🔎 Открыть детальный отчет", callback_data=f"show_report_from_notification_{report_date_str}")]]
     markup = InlineKeyboardMarkup(kb)
 
-    # Рассылка всем пользователям
+    # Рассылаем сообщение каждому пользователю из справочника
     for chat_id in USER_ID_TO_NAME.keys():
+        # --- ГЛАВНОЕ ИСПРАВЛЕНИЕ: Пропускаем пользователя, который сдал отчет ---
+        if str(chat_id) == str(initiator_id):
+            continue
+
         try:
             await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=ParseMode.HTML, reply_markup=markup)
         except Exception as e:
@@ -5433,8 +5457,11 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'report_date_str': today_str,
             'total_sales': total_sales,
             'cash_balance': cash_balance,
-            'safe_balance': safe_bal_after_shift
+            'safe_balance': safe_bal_after_shift,
+            # --- ДОБАВЬТЕ ЭТУ СТРОКУ ---
+            'initiator_id': update.effective_user.id
         }
+        
         context.job_queue.run_once(
             send_shift_closed_notification, 
             15, 
@@ -6987,14 +7014,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif state_key == 'supplier':
         step = user_data['supplier'].get('step')
         if step == 'search': return await handle_supplier_search(update, context)
-        elif step == 'name': return await handle_supplier_name(update, context)
         elif step == 'amount_income': return await handle_supplier_amount_income(update, context)
-        # --- НОВЫЕ СТРОКИ ---
         elif step == 'return_amount': return await handle_supplier_return_amount(update, context)
         elif step == 'writeoff_amount': return await handle_supplier_writeoff_amount(update, context)
-        # ---------------------
         elif step == 'invoice_total_markup': return await handle_supplier_invoice_total_markup(update, context)
-        elif step == 'due_date': return await handle_due_date_selection(update, context)
         elif step == 'comment': return await save_supplier(update, context)
 
     elif state_key == 'seller_expense':
