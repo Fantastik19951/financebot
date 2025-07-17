@@ -5951,8 +5951,8 @@ async def handle_supplier_writeoff_amount(update: Update, context: ContextTypes.
             user = update.effective_user
             who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
             add_inventory_operation("Списание", writeoff_amount, f"Списание по накладной от {supplier_name}", who)
-            await update.message.reply_text(f"✅ Сумма {writeoff_amount:.2f}₴ списана с остатка магазина.")
 
+        # Вызываем функцию, которая задаст следующий вопрос
         await _ask_for_invoice_markup(update, context)
         
     except ValueError:
@@ -5978,7 +5978,7 @@ async def _ask_for_invoice_markup(update: Update, context: ContextTypes.DEFAULT_
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")])
     
     context.user_data['supplier']['step'] = 'invoice_total_markup'
-    await target_message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+    await target_message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
 async def handle_supplier_invoice_total_markup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Шаг 6: Обрабатывает ввод суммы после наценки и переходит к выбору типа оплаты."""
@@ -6939,7 +6939,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif state_key == 'supplier':
         step = user_data['supplier'].get('step')
-        if step == 'amount_income': return await handle_supplier_amount_income(update, context)
+        if step == 'search': return await handle_supplier_search(update, context)
+        elif step == 'name': return await handle_supplier_name(update, context)
+        elif step == 'amount_income': return await handle_supplier_amount_income(update, context)
         elif step == 'return_amount': return await handle_supplier_return_amount(update, context)
         elif step == 'writeoff_amount': return await handle_supplier_writeoff_amount(update, context)
         elif step == 'invoice_total_markup': return await handle_supplier_invoice_total_markup(update, context)
@@ -7256,19 +7258,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await execute_delete_invoice(update, context)
 
         # --- 5. ДОБАВЛЕНИЕ НАКЛАДНОЙ ---
+        # --- БЛОК ДЛЯ НАКЛАДНЫХ ---
         elif data == "add_supplier": await start_supplier(update, context)
         elif data.startswith("add_sup_"): await handle_add_supplier_choice(update, context)
         elif data.startswith("dir_add_new_sup_"): await add_new_supplier_directory_and_continue(update, context)
         elif data == "sup_return_yes" or data == "sup_return_no": await handle_return_or_writeoff_choice(update, context)
         elif data.startswith("use_suggested_markup_"):
             amount = float(data.split('_')[-1])
+            # Записываем сумму и вызываем следующий шаг
             context.user_data['supplier']['invoice_total_markup'] = amount
-            # Сразу вызываем функцию, которая задаст следующий вопрос
             await _ask_for_payment_type(update, context)
         elif data == "pay_Долг_init": await handle_debt_type_choice(update, context)
         elif data.startswith("pay_"): await handle_supplier_pay_type(update, context)
         elif data.startswith("due_date_select_"): await handle_due_date_selection(update, context)
-        # Вызов save_supplier теперь будет только после выбора типа оплаты
+        # Вызов save_supplier теперь будет только после выбора типа оплаты или даты долга
 
         # --- 6. СДАЧА СМЕНЫ ---
         elif data == "add_report": await start_report(update, context)
