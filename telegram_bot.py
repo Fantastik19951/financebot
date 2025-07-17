@@ -3399,7 +3399,7 @@ def is_date(string):
     except:
         return False
     
-def stock_safe_menu_kb(is_adnin:False):
+def stock_safe_menu_kb(is_admin=False):
     """Новое главное меню для раздела."""
     kb = [
         [InlineKeyboardButton("🗄️ Сейф", callback_data="safe_menu")],
