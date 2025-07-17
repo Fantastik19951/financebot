@@ -4110,7 +4110,7 @@ async def save_seller_expense(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await update.message.reply_text(
         f"✅ Расход '{comment}' на сумму {amount:.2f}₴ успешно добавлен.",
-        reply_markup=stock_safe_menu(is_admin=False)
+        reply_markup=stock_safe_menu
     )
     context.user_data.pop('seller_expense', None)
 
