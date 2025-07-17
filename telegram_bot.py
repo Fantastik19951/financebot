@@ -7297,6 +7297,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --- БЛОК ДЛЯ НАКЛАДНЫХ ---
         elif data == "add_supplier": await start_supplier(update, context)
         elif data.startswith("add_sup_"): await handle_add_supplier_choice(update, context)
+        elif data.startswith("dir_add_new_sup_"): await add_new_supplier_directory_and_continue(update, context)
         elif data == "sup_return_yes" or data == "sup_return_no": await handle_return_or_writeoff_choice(update, context)
         elif data.startswith("use_suggested_markup_"):
             amount = float(data.split('_')[-1])
