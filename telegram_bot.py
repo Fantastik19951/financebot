@@ -5913,10 +5913,10 @@ async def handle_supplier_amount_income(update: Update, context: ContextTypes.DE
         await update.message.reply_text("❌ Введите сумму числом!")
 
 async def handle_return_or_writeoff_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Шаг 3: Обрабатывает ответ на вопрос 'Был ли возврат/списание?'."""
+    """Шаг 3: Обрабатывает ответ на вопрос "Был ли возврат/списание?"."""
     query = update.callback_query
     await query.answer()
-    
+
     if query.data == "sup_return_yes":
         context.user_data['supplier']['step'] = 'return_amount'
         await query.message.edit_text(
@@ -5926,9 +5926,9 @@ async def handle_return_or_writeoff_choice(update: Update, context: ContextTypes
     else: # Если "Нет"
         context.user_data['supplier']['return_amount'] = 0.0
         context.user_data['supplier']['writeoff'] = 0.0
-        # Сразу переходим к запросу суммы после наценки, РЕДАКТИРУЯ сообщение
-        await _ask_for_invoice_markup(query, context)
-
+        # --- ИСПРАВЛЕНИЕ: Передаем полный объект 'update' ---
+        await _ask_for_invoice_markup(update, context)
+        
 async def handle_supplier_return_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Шаг 4 (опциональный): Обрабатывает сумму возврата и запрашивает списание."""
     try:
@@ -5962,6 +5962,7 @@ async def handle_supplier_writeoff_amount(update: Update, context: ContextTypes.
 
 async def _ask_for_invoice_markup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Единая функция, которая запрашивает сумму после наценки и показывает подсказку."""
+    # --- ИСПРАВЛЕНИЕ: Правильно определяем сообщение для редактирования ---
     target_message = update.callback_query.message if update.callback_query else update.message
     
     supplier_data = context.user_data['supplier']
@@ -5981,11 +5982,8 @@ async def _ask_for_invoice_markup(update: Update, context: ContextTypes.DEFAULT_
     
     context.user_data['supplier']['step'] = 'invoice_total_markup'
     
-    # Редактируем сообщение, если оно пришло от кнопки, иначе отправляем новое
-    if update.callback_query:
-        await target_message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
-    else:
-        await target_message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+    # Редактируем сообщение, которое точно существует
+    await target_message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
 
 async def handle_supplier_invoice_total_markup(update: Update, context: ContextTypes.DEFAULT_TYPE):
