@@ -5873,27 +5873,23 @@ async def handle_supplier_name(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # 2. Сумма прихода
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-async def handle_supplier_amount_income(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает сумму прихода и спрашивает про возврат/списание."""
-    try:
-        amount_income = parse_float(update.message.text)
-        context.user_data['supplier']['amount_income'] = amount_income
-        context.user_data['supplier']['step'] = 'return_or_writeoff_choice'
-        
-        kb = [
-            [InlineKeyboardButton("✅ Да", callback_data="sup_return_yes")],
-            [InlineKeyboardButton("❌ Нет", callback_data="sup_return_no")]
-        ]
-        await update.message.reply_text(
-            "Был ли возврат или списания по этому поставщику?",
-            reply_markup=InlineKeyboardMarkup(kb)
-        )
-    except ValueError:
-        await update.message.reply_text("❌ Введите сумму числом!")
 
-# --- НОВЫЙ ИСПРАВЛЕННЫЙ БЛОК ДИАЛОГА ---
 
-# --- ЗАМЕНИТЕ ВЕСЬ СТАРЫЙ БЛОК ДИАЛОГА ДОБАВЛЕНИЯ НАКЛАДНОЙ НА ЭТОТ ---
+
+
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+async def handle_debt_type_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает выбор типа долга (Наличные или Карта)."""
+    query = update.callback_query
+    await query.answer()
+    
+    kb = [
+        [InlineKeyboardButton("💵 Долг (Наличные)", callback_data="pay_Долг")],
+        [InlineKeyboardButton("💳 Долг (Карта)", callback_data="pay_Долг (Карта)")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]
+    ]
+    
+    await query.message.edit_text("Выберите тип долга:", reply_markup=InlineKeyboardMarkup(kb))
 
 # --- ЗАМЕНИТЕ ВЕСЬ СТАРЫЙ БЛОК ДИАЛОГА ДОБАВЛЕНИЯ НАКЛАДНОЙ НА ЭТОТ ---
 
@@ -5930,88 +5926,78 @@ async def handle_return_or_writeoff_choice(update: Update, context: ContextTypes
     else: # Если "Нет"
         context.user_data['supplier']['return_amount'] = 0.0
         context.user_data['supplier']['writeoff'] = 0.0
-        # Сразу переходим к запросу суммы после наценки
-        await handle_supplier_writeoff_amount(update, context)
+        # Сразу вызываем функцию, которая задаст следующий вопрос о наценке
+        await _ask_for_invoice_markup(query.message, context)
 
 async def handle_supplier_return_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Шаг 4 (опциональный): Обрабатывает сумму возврата и запрашивает списание."""
     try:
         context.user_data['supplier']['return_amount'] = parse_float(update.message.text)
         context.user_data['supplier']['step'] = 'writeoff_amount'
-        await update.message.reply_text("🗑️ Теперь введите сумму СПИСАНИЯ с остатка магазина (если нет - 0):")
+        await update.message.reply_text(
+            "🗑️ Теперь введите сумму СПИСАНИЯ с остатка магазина (если нет - 0):",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]])
+        )
     except ValueError:
         await update.message.reply_text("❌ Введите сумму числом!")
 
 async def handle_supplier_writeoff_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Шаг 5: Обрабатывает списание и запрашивает сумму ПОСЛЕ НАЦЕНКИ с подсказкой."""
+    """Шаг 5 (опциональный): Обрабатывает списание и вызывает следующий шаг."""
     try:
-        # Эта функция вызывается и после ввода списания, и когда списания не было
-        # Если update.message существует, значит, мы получили сумму списания
-        if update.message:
-            writeoff_amount = parse_float(update.message.text)
-            context.user_data['supplier']['writeoff'] = writeoff_amount
-            
-            if writeoff_amount > 0:
-                supplier_name = context.user_data['supplier'].get('name', 'Неизвестный')
-                user = update.effective_user
-                who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
-                add_inventory_operation("Списание", writeoff_amount, f"Списание по накладной от {supplier_name}", who)
+        writeoff_amount = parse_float(update.message.text)
+        context.user_data['supplier']['writeoff'] = writeoff_amount
+        
+        if writeoff_amount > 0:
+            supplier_name = context.user_data['supplier'].get('name', 'Неизвестный')
+            user = update.effective_user
+            who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
+            add_inventory_operation("Списание", writeoff_amount, f"Списание по накладной от {supplier_name}", who)
+            await update.message.reply_text(f"✅ Сумма {writeoff_amount:.2f}₴ списана с остатка магазина.")
 
-        # --- Теперь задаем вопрос о сумме после наценки ---
-        supplier_data = context.user_data['supplier']
-        supplier_name = supplier_data['name']
-        amount_to_pay = parse_float(supplier_data['amount_income']) - parse_float(supplier_data.get('return_amount', 0))
-        
-        avg_markup = get_avg_markup_for_supplier(context, supplier_name)
-        msg = "📑 Введите сумму накладной после наценки:"
-        kb = []
-
-        if avg_markup is not None:
-            suggested_amount = amount_to_pay * (1 + avg_markup / 100)
-            msg += f"\n\n<i>(Подсказка: средняя наценка ~{avg_markup:.1f}%. Рекомендуемая сумма: {suggested_amount:.2f}₴)</i>"
-            kb.append([InlineKeyboardButton(f"✅ Использовать {suggested_amount:.2f}₴", callback_data=f"use_suggested_markup_{suggested_amount}")])
-        
-        context.user_data['supplier']['step'] = 'invoice_total_markup'
-        
-        # Редактируем или отправляем новое сообщение
-        target_message = update.callback_query.message if update.callback_query else update.message
-        await target_message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+        # Вызываем функцию, которая задаст следующий вопрос
+        await _ask_for_invoice_markup(update.message, context)
         
     except ValueError:
         await update.message.reply_text("❌ Введите сумму числом!")
 
+async def _ask_for_invoice_markup(message: Update.message, context: ContextTypes.DEFAULT_TYPE):
+    """Единая функция, которая запрашивает сумму после наценки и показывает подсказку."""
+    supplier_data = context.user_data['supplier']
+    supplier_name = supplier_data['name']
+    amount_to_pay = parse_float(supplier_data.get('amount_income', 0)) - parse_float(supplier_data.get('return_amount', 0))
+    
+    avg_markup = get_avg_markup_for_supplier(context, supplier_name)
+    msg = "📑 Введите сумму накладной после наценки:"
+    kb = []
+
+    if avg_markup is not None:
+        suggested_amount = amount_to_pay * (1 + avg_markup / 100)
+        msg += f"\n\n<i>(Подсказка: средняя наценка ~{avg_markup:.1f}%. Рекомендуемая сумма: {suggested_amount:.2f}₴)</i>"
+        kb.append([InlineKeyboardButton(f"✅ Использовать {suggested_amount:.2f}₴", callback_data=f"use_suggested_markup_{suggested_amount}")])
+    
+    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")])
+    
+    context.user_data['supplier']['step'] = 'invoice_total_markup'
+    await message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
 async def handle_supplier_invoice_total_markup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Шаг 6: Обрабатывает ввод суммы после наценки и переходит к выбору типа оплаты."""
     try:
-        invoice_total = parse_float(update.message.text)
-        context.user_data['supplier']['invoice_total_markup'] = invoice_total
-        context.user_data['supplier']['step'] = 'payment_type'
-        
-        kb = [
-            [InlineKeyboardButton("💵 Наличные", callback_data="pay_Наличные")],
-            [InlineKeyboardButton("💳 Карта", callback_data="pay_Карта")],
-            [InlineKeyboardButton("📆 Оформить как долг", callback_data="pay_Долг_init")]
-        ]
-        await update.message.reply_text("💳 Выберите тип оплаты:", reply_markup=InlineKeyboardMarkup(kb))
+        context.user_data['supplier']['invoice_total_markup'] = parse_float(update.message.text)
+        await _ask_for_payment_type(update.message, context)
     except ValueError:
         await update.message.reply_text("❌ Ошибка. Пожалуйста, введите сумму числом.")
 
-
-
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-async def handle_debt_type_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает выбор типа долга (Наличные или Карта)."""
-    query = update.callback_query
-    await query.answer()
-    
+async def _ask_for_payment_type(message: Update.message, context: ContextTypes.DEFAULT_TYPE):
+    """Шаг 7: Запрашивает тип оплаты."""
+    context.user_data['supplier']['step'] = 'payment_type'
     kb = [
-        [InlineKeyboardButton("💵 Долг (Наличные)", callback_data="pay_Долг")],
-        [InlineKeyboardButton("💳 Долг (Карта)", callback_data="pay_Долг (Карта)")],
+        [InlineKeyboardButton("💵 Наличные", callback_data="pay_Наличные")],
+        [InlineKeyboardButton("💳 Карта", callback_data="pay_Карта")],
+        [InlineKeyboardButton("📆 Долг", callback_data="pay_Долг_init")],
         [InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]
     ]
-    
-    await query.message.edit_text("Выберите тип долга:", reply_markup=InlineKeyboardMarkup(kb))
-
+    await message.reply_text("💳 Выберите тип оплаты:", reply_markup=InlineKeyboardMarkup(kb))
 
 # 5. Тип оплаты (callback)
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
@@ -6984,8 +6970,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif state_key == 'supplier':
         step = user_data['supplier'].get('step')
-        if step == 'search': return await handle_supplier_search(update, context)
-        elif step == 'amount_income': return await handle_supplier_amount_income(update, context)
+        if step == 'amount_income': return await handle_supplier_amount_income(update, context)
         elif step == 'return_amount': return await handle_supplier_return_amount(update, context)
         elif step == 'writeoff_amount': return await handle_supplier_writeoff_amount(update, context)
         elif step == 'invoice_total_markup': return await handle_supplier_invoice_total_markup(update, context)
@@ -7302,18 +7287,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # --- 5. ДОБАВЛЕНИЕ НАКЛАДНОЙ ---
         # --- БЛОК ДЛЯ НАКЛАДНЫХ ---
+        # --- БЛОК ДЛЯ НАКЛАДНЫХ ---
         elif data == "add_supplier": await start_supplier(update, context)
         elif data.startswith("add_sup_"): await handle_add_supplier_choice(update, context)
-        elif data.startswith("dir_add_new_sup_"): await add_new_supplier_directory_and_continue(update, context)
         elif data == "sup_return_yes" or data == "sup_return_no": await handle_return_or_writeoff_choice(update, context)
         elif data.startswith("use_suggested_markup_"):
             amount = float(data.split('_')[-1])
             context.user_data['supplier']['invoice_total_markup'] = amount
-            # Имитируем, что пользователь ввел сумму, вызывая следующий шаг
-            await handle_supplier_invoice_total_markup(update, context)
+            await _ask_for_payment_type(update.callback_query.message, context)
         elif data == "pay_Долг_init": await handle_debt_type_choice(update, context)
         elif data.startswith("pay_"): await handle_supplier_pay_type(update, context)
         elif data.startswith("due_date_select_"): await handle_due_date_selection(update, context)
+        # Убираем старый обработчик комментария
         elif data == "skip_comment_supplier": await save_supplier(update, context)
 
         # --- 6. СДАЧА СМЕНЫ ---
