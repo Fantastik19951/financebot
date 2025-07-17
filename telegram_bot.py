@@ -6972,10 +6972,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     elif state_key == 'supplier':
         step = user_data['supplier'].get('step')
-        if step == 'amount_income': return await handle_supplier_amount_income(update, context)
-        elif step == 'return_amount': return await handle_supplier_return_amount(update, context)
-        elif step == 'writeoff_amount': return await handle_supplier_writeoff_amount(update, context)
-        elif step == 'invoice_total_markup': return await handle_supplier_invoice_total_markup(update, context)
+        if step == 'search': 
+            return await handle_supplier_search(update, context)
+        elif step == 'amount_income': 
+            return await handle_supplier_amount_income(update, context)
+        elif step == 'return_amount': 
+            return await handle_supplier_return_amount(update, context)
+        elif step == 'writeoff_amount': 
+            return await handle_supplier_writeoff_amount(update, context)
+        elif step == 'invoice_total_markup': 
+            return await handle_supplier_invoice_total_markup(update, context)
 
     elif state_key == 'seller_expense':
         step = user_data['seller_expense'].get('step')
