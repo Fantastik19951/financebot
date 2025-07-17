@@ -65,7 +65,7 @@ logging.basicConfig(
 
 
 
-# -------ФУКНЦИИ--------
+# -------ФУКНЦИИ-------
 def generate_business_insights(context: ContextTypes.DEFAULT_TYPE, days_period: int = 30) -> str:
     """Анализирует данные за период и формирует отчет с бизнес-инсайтами."""
     today = dt.date.today()
