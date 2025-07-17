@@ -139,12 +139,12 @@ def generate_business_insights(context: ContextTypes.DEFAULT_TYPE, days_period: 
     msg = f"<b>🕵️‍♂️ Бизнес-Инсайты за последние {days_period} дней:</b>\n"
     
     if seller_insights:
-        msg += "\n" + "─" * 28 + "\n"
+        msg += "\n" + "─" * 20 + "\n"
         msg += "💡 <b>Анализ по Продавцам (средняя наценка):</b>\n"
         msg += "\n".join(seller_insights)
     
     if avg_debt_markup > 0 or avg_direct_markup > 0:
-        msg += "\n\n" + "─" * 28 + "\n"
+        msg += "\n\n" + "─" * 20 + "\n"
         msg += "💡 <b>Анализ по Условиям Закупок:</b>\n"
         msg += f"  • Средняя наценка при оплате <b>в долг</b>: <b>{avg_debt_markup:.1f}%</b>\n"
         msg += f"  • Средняя наценка при оплате <b>сразу</b>: <b>{avg_direct_markup:.1f}%</b>"
@@ -152,7 +152,7 @@ def generate_business_insights(context: ContextTypes.DEFAULT_TYPE, days_period: 
             msg += "\n<i>✍️ Вывод: Поставщики с немедленной оплатой, как правило, предлагают более выгодные условия.</i>"
     
     if dow_insights:
-        msg += "\n\n" + "─" * 28 + "\n"
+        msg += "\n\n" + "─" * 20 + "\n"
         msg += "💡 <b>Анализ по Дням Недели (средняя наценка):</b>\n"
         msg += "\n".join(dow_insights)
         if len(dow_insights) > 1 and ("Пятница" in dow_insights[-1] or "Суббота" in dow_insights[-1]):
