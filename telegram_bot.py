@@ -22,18 +22,19 @@ import math
 import numpy as np
 from matplotlib.ticker import MaxNLocator
 
+
+
 # --- КОНФИГ ----
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DATE_FMT = "%d.%m.%Y"
-ADMINS = {"5144039813", "476179186"}  # ID администратор
+ADMINS = {"5144039813", "476179186"}  # ID администраторов
 USER_ID_TO_NAME = {
     "5144039813": "Наталия",  # Админ
     "476179186": "Евгений",   # Админ
     "5276110033": "Сергей",
     "6851274022": "Людмила",
     "7777240213": "Евгений Тест",
-
     "7880600411": "Мария"
 }
 SELLERS = ["Сергей", "Наталия", "Людмила", "Мария"]
@@ -62,13 +63,111 @@ logging.basicConfig(
 )
 
 
+
+
+# -------ФУКНЦИИ--------
+def generate_business_insights(context: ContextTypes.DEFAULT_TYPE, days_period: int = 30) -> str:
+    """Анализирует данные за период и формирует отчет с бизнес-инсайтами."""
+    today = dt.date.today()
+    start_date = today - dt.timedelta(days=days_period)
+
+    suppliers_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []
+    
+    # --- 1. Анализ эффективности продавцов по маржинальности ---
+    seller_markup_data = defaultdict(list)
+    for row in suppliers_rows:
+        if len(row) > 11 and (d := pdate(row[0])) and start_date <= d <= today:
+            try:
+                # Колонка L (индекс 11) - "Кто внёс"
+                seller_name = row[11] or "Не указан"
+                to_pay = parse_float(row[4])
+                after_markup = parse_float(row[5])
+                if to_pay > 0:
+                    markup = ((after_markup / to_pay) - 1) * 100
+                    seller_markup_data[seller_name].append(markup)
+            except (ValueError, IndexError):
+                continue
+    
+    seller_insights = []
+    sorted_sellers = sorted(seller_markup_data.items(), key=lambda item: sum(item[1])/len(item[1]) if item[1] else 0, reverse=True)
+    for seller, markups in sorted_sellers:
+        if markups:
+            avg_markup = sum(markups) / len(markups)
+            seller_insights.append(f"  • <b>{seller}</b> в среднем работает с наценкой <b>{avg_markup:.1f}%</b>")
+
+    # --- 2. Анализ наценки по типу оплаты ---
+    debt_markups, direct_payment_markups = [], []
+    for row in suppliers_rows:
+        if len(row) > 6 and (d := pdate(row[0])) and start_date <= d <= today:
+            try:
+                to_pay = parse_float(row[4])
+                after_markup = parse_float(row[5])
+                if to_pay > 0:
+                    markup = ((after_markup / to_pay) - 1) * 100
+                    if row[6].startswith("Долг"):
+                        debt_markups.append(markup)
+                    else:
+                        direct_payment_markups.append(markup)
+            except (ValueError, IndexError):
+                continue
+    
+    avg_debt_markup = sum(debt_markups) / len(debt_markups) if debt_markups else 0
+    avg_direct_markup = sum(direct_payment_markups) / len(direct_payment_markups) if direct_payment_markups else 0
+
+    # --- 3. Анализ по дням недели ---
+    dow_markup_data = defaultdict(list)
+    for row in suppliers_rows:
+        if len(row) > 5 and (d := pdate(row[0])) and start_date <= d <= today:
+            try:
+                to_pay = parse_float(row[4])
+                after_markup = parse_float(row[5])
+                if to_pay > 0:
+                    markup = ((after_markup / to_pay) - 1) * 100
+                    dow_name = DAYS_OF_WEEK_RU[d.weekday()].capitalize()
+                    dow_markup_data[dow_name].append(markup)
+            except (ValueError, IndexError):
+                continue
+    
+    dow_insights = []
+    sorted_dow = sorted(dow_markup_data.items(), key=lambda item: sum(item[1])/len(item[1]) if item[1] else 0, reverse=True)
+    for day, markups in sorted_dow:
+        if markups:
+            avg_markup = sum(markups) / len(markups)
+            dow_insights.append(f"  • <b>{day}</b>: {avg_markup:.1f}%")
+
+    # --- 4. Формирование итогового сообщения ---
+    msg = f"<b>🕵️‍♂️ Бизнес-Инсайты за последние {days_period} дней:</b>\n"
+    
+    if seller_insights:
+        msg += "\n" + "─" * 28 + "\n"
+        msg += "💡 <b>Анализ по Продавцам (средняя наценка):</b>\n"
+        msg += "\n".join(seller_insights)
+    
+    if avg_debt_markup > 0 or avg_direct_markup > 0:
+        msg += "\n\n" + "─" * 28 + "\n"
+        msg += "💡 <b>Анализ по Условиям Закупок:</b>\n"
+        msg += f"  • Средняя наценка при оплате <b>в долг</b>: <b>{avg_debt_markup:.1f}%</b>\n"
+        msg += f"  • Средняя наценка при оплате <b>сразу</b>: <b>{avg_direct_markup:.1f}%</b>"
+        if avg_direct_markup > avg_debt_markup + 2:
+            msg += "\n<i>✍️ Вывод: Поставщики с немедленной оплатой, как правило, предлагают более выгодные условия.</i>"
+    
+    if dow_insights:
+        msg += "\n\n" + "─" * 28 + "\n"
+        msg += "💡 <b>Анализ по Дням Недели (средняя наценка):</b>\n"
+        msg += "\n".join(dow_insights)
+        if len(dow_insights) > 1 and ("Пятница" in dow_insights[-1] or "Суббота" in dow_insights[-1]):
+             msg += "\n<i>✍️ Гипотеза: В выходные дни может продаваться больше низкомаржинальных товаров (напитки, сигареты).</i>"
+
+    return msg
+
+
 def push_nav(context, target):
     stack = context.user_data.get('nav_stack', [])
     stack.append(target)
     context.user_data['nav_stack'] = stack
 
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+
+
 def get_avg_daily_costs(context: ContextTypes.DEFAULT_TYPE) -> float:
     """Считает среднюю сумму всех расходов (закупка + прочие) в день за последние 30 дней."""
     today = dt.date.today()
@@ -90,7 +189,7 @@ def get_avg_daily_costs(context: ContextTypes.DEFAULT_TYPE) -> float:
 
     return total_costs / 30 if total_costs > 0 else 0
 
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+
 def get_avg_order_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_name: str) -> float | None:
     """Считает среднюю сумму заказа для поставщика за последний месяц."""
     rows = get_cached_sheet_data(context, SHEET_SUPPLIERS)
@@ -115,7 +214,7 @@ def get_avg_order_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_name
         
     return None
     
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+
 def get_total_unpaid_debt(context: ContextTypes.DEFAULT_TYPE) -> float:
     """Считает общую сумму всех неоплаченных долгов."""
     rows = get_cached_sheet_data(context, SHEET_DEBTS)
@@ -133,7 +232,7 @@ def get_total_unpaid_debt(context: ContextTypes.DEFAULT_TYPE) -> float:
             continue
             
     return total_debt
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+
 def get_sales_forecast_for_today(context: ContextTypes.DEFAULT_TYPE) -> float | None:
     """Анализирует продажи за последние 8 недель для этого дня недели и выдает среднее значение."""
     today = dt.date.today()
@@ -161,8 +260,6 @@ def get_sales_forecast_for_today(context: ContextTypes.DEFAULT_TYPE) -> float | 
     
     return None
 
-
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 def normalize_text(text: str) -> str:
     """Приводит текст к нижнему регистру и заменяет похожие буквы для 'умного' поиска."""
     text = text.lower()
@@ -192,7 +289,7 @@ def generate_due_date_buttons() -> InlineKeyboardMarkup:
         
     kb.append([InlineKeyboardButton("❌ Отмена", callback_data="suppliers_menu")])
     return InlineKeyboardMarkup(kb)
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+
 def generate_sales_trend_chart(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> io.BytesIO | None:
     """Собирает данные о продажах и рисует линейный график динамики."""
     from matplotlib.ticker import FuncFormatter
@@ -271,7 +368,7 @@ def abc_analysis_period_kb():
         [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
     ])
 
-# --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
+
 
 def expense_chart_period_kb():
     """Клавиатура для выбора периода для диаграммы расходов."""
@@ -304,7 +401,7 @@ def pop_nav(context):
     context.user_data['nav_stack'] = stack
     return stack[-1] if stack else "main_menu"
 
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+
 def generate_financial_summary(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> str:
     """Собирает данные из разных таблиц и формирует текстовый финансовый отчет."""
     
@@ -356,7 +453,7 @@ def generate_financial_summary(context: ContextTypes.DEFAULT_TYPE, start_date: d
     )
     return summary.replace(',', ' ') # Заменяем запятые на пробелы для красоты
 
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+
 def generate_expense_pie_chart(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> io.BytesIO | None:
     """Собирает данные о расходах, группирует по категориям и рисует круговую диаграмму."""
     rows = get_cached_sheet_data(context, SHEET_EXPENSES)
@@ -539,9 +636,6 @@ async def show_debt_filter_menu(update: Update, context: ContextTypes.DEFAULT_TY
         context.user_data['debt_filters'] = {}
     await query.message.edit_text("⚙️ Настройте фильтры и сортировку:", reply_markup=build_debt_filter_keyboard(context.user_data['debt_filters']))
 
-# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
-
-# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 async def toggle_debt_filter(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Надежно переключает любой фильтр и обновляет меню."""
     query = update.callback_query
@@ -549,8 +643,6 @@ async def toggle_debt_filter(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     data = query.data
     filters = context.user_data.setdefault('debt_filters', {})
-
-    # --- НОВАЯ, НАДЕЖНАЯ ЛОГИКА ПАРСИНГА ---
     prefix_map = {
         "status": "toggle_filter_status_",
         "pay_type": "toggle_filter_pay_type_",
@@ -594,9 +686,6 @@ async def toggle_debt_filter(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if "Message is not modified" not in str(e):
             raise
 
-
-
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 def perform_abc_analysis(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> dict | None:
     """Проводит ABC-анализ поставщиков по сумме закупок за период."""
     suppliers_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS)
@@ -659,7 +748,7 @@ async def show_expense_pie_chart_menu(update: Update, context: ContextTypes.DEFA
             reply_markup=keyboard
         )
         
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
 async def process_expense_chart_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает выбор периода, генерирует и отправляет диаграмму."""
     query = update.callback_query
@@ -688,7 +777,6 @@ async def process_expense_chart_period(update: Update, context: ContextTypes.DEF
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_expense_pie_chart")]])
     )
 
-# --- И ЭТУ ФУНКЦИЮ ТОЖЕ ЗАМЕНИТЕ ---
 async def process_financial_dashboard_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает выбор периода, генерирует и отправляет фин. отчет."""
     query = update.callback_query
@@ -708,7 +796,7 @@ async def process_financial_dashboard_period(update: Update, context: ContextTyp
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_financial_dashboard")]])
     )
     
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
 def now(): 
     return dt.datetime.now().strftime("%d.%m.%Y %H:%M:%S")
 def sdate(d=None): 
@@ -742,7 +830,6 @@ def get_all_supplier_names(context: ContextTypes.DEFAULT_TYPE, force_update: boo
         return [row[0] for row in rows if row and row[0] and len(row) > 1 and row[1] == "Активный"]
 
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 def clear_conversation_state(context: ContextTypes.DEFAULT_TYPE):
     """Очищает все возможные ключи состояния диалога из user_data, используя глобальный список."""
     key_found = False
@@ -817,7 +904,7 @@ def get_planning_details_for_date(context: ContextTypes.DEFAULT_TYPE, report_dat
     report_text = "\n\n<b>📋 План оплат на " + report_date_str + ":</b>\n" + "\n".join(details)
     total_amount = total_cash + total_card
     return report_text, total_cash, total_card, total_amount
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
 def get_debts_for_date(context: ContextTypes.DEFAULT_TYPE, report_date: dt.date):
     """Собирает данные о долгах на заданную дату, используя кэш."""
     rows = get_cached_sheet_data(context, SHEET_DEBTS)
@@ -1037,11 +1124,7 @@ def month_buttons(start_date, end_date):
         [InlineKeyboardButton("🔙 К отчетам", callback_data="view_reports_menu")]
     ]
 
-# <<< НАЧАЛО: НОВЫЙ КОД ДЛЯ ДОБАВЛЕНИЯ >>>
 
-# --- ФУНКЦИИ ДЛЯ ПЛАНИРОВАНИЯ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 def get_planned_suppliers(date_str: str):
     """
     Получает поставщиков, которые уже были спланированы на заданную дату, 
@@ -1064,7 +1147,7 @@ def get_planned_suppliers(date_str: str):
         logging.error(f"Ошибка получения спланированных поставщиков на '{date_str}': {e}")
         return []
         
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
 def save_plan_fact(context: ContextTypes.DEFAULT_TYPE, date_str: str, supplier: str, amount, pay_type, user_name):
     """Сохраняет план и вызывает модуль самообучения для обновления еженедельного графика."""
     # 1. Основное действие: сохраняем план на конкретный день
@@ -1140,7 +1223,7 @@ def clear_planning_sheet():
     except Exception as e:
         logging.error(f"Ошибка очистки листа ПланФактНаЗавтра: {e}")
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
 def update_invoice_in_sheet(row_index: int, field_to_update: str, new_value):
     """Обновляет одно поле в строке накладной в листе Поставщики."""
     try:
@@ -1186,7 +1269,6 @@ def week_buttons(start_date, end_date):
         [InlineKeyboardButton("🔙 К отчетам", callback_data="view_reports_menu")]
     ]
 
-# --- И ЭТУ ФУНКЦИЮ ТОЖЕ ЗАМЕНИТЕ ---
 def month_buttons(start_date, end_date):
     prev_month_date = start_date - dt.timedelta(days=1)
     prev_start, _ = month_range(prev_month_date)
@@ -1236,7 +1318,6 @@ def get_repayment_date_from_history(context: ContextTypes.DEFAULT_TYPE, invoice_
         logging.error(f"Ошибка получения даты погашения: {e}")
         return ""
 
-# --- И ЭТУ ФУНКЦИЮ ТОЖЕ ЗАМЕНИТЕ ---
 def get_inventory_balance(context: ContextTypes.DEFAULT_TYPE, as_of_date: dt.date = None) -> float:
     """
     Считает баланс остатка магазина на определенную дату (as_of_date).
@@ -1335,19 +1416,15 @@ def build_debts_history_keyboard(rows, page=0, per_page=10):
 def add_safe_operation(user: Update.effective_user, op_type: str, amount: float, comment: str):
     """Добавляет операцию в сейф и немедленно логирует это действие."""
     user_name = USER_ID_TO_NAME.get(str(user.id), user.first_name)
-    
-    # Сначала выполняем основное действие
     ws = GSHEET.worksheet("Сейф")
     ws.append_row([sdate(), op_type, amount, comment, user_name])
-    
-    # --- ДОБАВЛЕНА ЛОГИКА ---
-    # Сразу после этого логируем то, что сделали
     log_action(
         user=user,
         category="Сейф",
         action=op_type,
         comment=f"Сумма: {amount:.2f}₴. ({comment})"
     )
+    
 def get_sellers_comparison_data(context: ContextTypes.DEFAULT_TYPE, sellers_list: list, days_period: int = 30):
     """Собирает данные для сравнения средних продаж продавцов по дням недели."""
     today = dt.date.today()
@@ -1431,7 +1508,7 @@ def get_safe_balance(context: ContextTypes.DEFAULT_TYPE):
             continue
     return balance
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
 def build_edit_invoice_keyboard(invoice_data: list, selected_fields: dict, row_index: int):
     """Строит клавиатуру для режима редактирования накладной."""
     fields = {
@@ -1443,9 +1520,7 @@ def build_edit_invoice_keyboard(invoice_data: list, selected_fields: dict, row_i
     kb = []
     for field_key, field_name in fields.items():
         current_pay_type = selected_fields.get('pay_type', invoice_data[6])
-        
-        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-        # Сначала проверяем, что current_pay_type - это строка, и только потом вызываем .startswith()
+
         if field_key == 'due_date' and not (isinstance(current_pay_type, str) and current_pay_type.startswith("Долг")):
             continue
             
@@ -1474,7 +1549,7 @@ def update_plan_in_sheet(row_num: int, field: str, new_value) -> bool:
         logging.error(f"Ошибка обновления ячейки ({row_num}, {col_num}): {e}")
         return False
 
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+
 def get_todays_actual_invoices():
     """Эффективно получает словарь с фактическими данными накладных за сегодня."""
     if not GSHEET: return {}
@@ -1496,7 +1571,6 @@ def get_todays_actual_invoices():
         logging.error(f"Ошибка получения фактических накладных за сегодня: {e}")
         return {}
 #Управление зарплатами
-# <<< НАЧАЛО БЛОКА ДЛЯ ВСТАВКИ: УПРАВЛЕНИЕ ЗАРПЛАТАМИ >>>
 
 def get_current_payroll_period():
     """Определяет начальную и конечную дату текущего зарплатного периода."""
@@ -1518,7 +1592,7 @@ def get_current_payroll_period():
             
     return start_date, end_date
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+
 def calculate_accrued_bonus(seller_name: str, all_reports=None, all_salaries=None):
     """
     Считает остаток бонуса к выплате по формуле: (Все начисления) - (Все выплаты).
@@ -1579,7 +1653,7 @@ def calculate_accrued_bonus(seller_name: str, all_reports=None, all_salaries=Non
 
     return bonus_to_pay, bonus_days
 
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+
 async def show_planning_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает меню действий (править/удалить) для выбранного плана."""
     query = update.callback_query
@@ -1644,8 +1718,6 @@ async def staff_management_menu(update: Update, context: ContextTypes.DEFAULT_TY
     await query.message.edit_text("<b>Управление персоналом</b>\n\nВыберите продавца для просмотра деталей по зарплате:",
                                   parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
-# --- ДОБАВЬТЕ ВЕСЬ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 async def show_inventory_balance_with_dynamics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает текущий остаток магазина и его изменение за последнюю неделю."""
     query = update.callback_query
@@ -1758,7 +1830,7 @@ async def edit_invoice_toggle_field(update: Update, context: ContextTypes.DEFAUL
                                   parse_mode=ParseMode.HTML, reply_markup=kb)
 
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+
 async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выполняет сохранение и ВСЕ необходимые пересчеты, включая сейф и долги."""
     query = update.callback_query
@@ -1882,12 +1954,6 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.message.edit_text("✅ Накладная успешно обновлена! Все связанные данные, включая сейф, пересчитаны.",
                                   reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Продолжить просмотр", callback_data=f"edit_invoice_cancel_{row_index}")]]))
 
-
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-
-
-# --- ДОБАВЬТЕ И ЭТУ НОВУЮ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ СТАРУЮ ФУНКЦИЮ НА ЭТУ ---
 async def check_financial_shield(context: ContextTypes.DEFAULT_TYPE):
     """
     Проверяет, хватает ли денег в сейфе на завтрашние оплаты наличными (планы + долги),
@@ -1937,7 +2003,6 @@ async def check_financial_shield(context: ContextTypes.DEFAULT_TYPE):
     else:
         logging.info("FINANCIAL SHIELD: Проблем не обнаружено.")
         
-
 async def show_seller_salary_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает детализацию бонусов и кнопку для просмотра истории."""
     query = update.callback_query
@@ -1999,7 +2064,6 @@ async def show_sellers_comparison(update: Update, context: ContextTypes.DEFAULT_
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="seller_stats")]])
     )
 
-
 async def confirm_payout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запрашивает подтверждение выплаты зарплаты."""
     query = update.callback_query
@@ -2018,8 +2082,6 @@ async def confirm_payout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]]
     await query.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-
 async def safe_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -2033,8 +2095,6 @@ async def safe_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")]])
     )
 
-# --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
-
 async def show_financial_dashboard_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает меню выбора периода для финансового отчета."""
     query = update.callback_query
@@ -2044,7 +2104,7 @@ async def show_financial_dashboard_menu(update: Update, context: ContextTypes.DE
         reply_markup=analytics_period_kb() # Используем существующую клавиатуру
     )
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
 async def show_financial_dashboard_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает меню выбора периода для финансового отчета."""
     query = update.callback_query
@@ -2053,8 +2113,6 @@ async def show_financial_dashboard_menu(update: Update, context: ContextTypes.DE
         "🧮 Пожалуйста, выберите период для финансового отчета:",
         reply_markup=financial_dashboard_period_kb()
     )
-
-# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
 
 async def start_custom_period_analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинает диалог выбора произвольного периода для аналитики."""
@@ -2121,7 +2179,7 @@ async def process_abc_analysis(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_abc_suppliers")]])
     )
 
-# --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
+
 
 async def show_log_categories_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает меню с категориями логов."""
@@ -2136,7 +2194,7 @@ async def show_log_categories_menu(update: Update, context: ContextTypes.DEFAULT
     ]
     await query.message.edit_text("🗂️ Выберите категорию для просмотра журнала действий:", reply_markup=InlineKeyboardMarkup(kb))
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
 async def show_log_for_category(update: Update, context: ContextTypes.DEFAULT_TYPE, category: str, page: int = 0):
     """Показывает страничный лог для выбранной категории с улучшенным форматированием."""
     query = update.callback_query
@@ -2211,20 +2269,6 @@ async def handle_analytics_end_date(update: Update, context: ContextTypes.DEFAUL
     finally:
         context.user_data.pop('custom_analytics_period', None)
 
-# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
-
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-
-
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-
-
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-
-
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-
 
 async def execute_payout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выполняет выплату и записывает данные."""
@@ -2251,7 +2295,7 @@ async def execute_payout(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+
 async def show_salary_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает страничный просмотр истории ТОЛЬКО ВЫПЛАЧЕННЫХ БОНУСОВ для продавца."""
     query = update.callback_query
@@ -2319,11 +2363,6 @@ async def show_salary_history(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
 
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-
-
-    
-# Функция для обновления данных у поставщика
 def update_supplier_payment(supplier_name, amount, user_name, debt_closed, debt_id=None):
     ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
     try:
@@ -2461,8 +2500,6 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE, start_
         else:
             raise
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def show_daily_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Формирует и показывает умную и полную оперативную панель на текущий день."""
     query = update.callback_query
@@ -2496,7 +2533,6 @@ async def show_daily_dashboard(update: Update, context: ContextTypes.DEFAULT_TYP
     paid_suppliers = {inv[1].strip() for inv in todays_cash_invoices}
     remaining_to_pay_list = [f"  • {p[1]} ({parse_float(p[2]):.2f}₴)" for p in todays_cash_plans if p[1].strip() not in paid_suppliers]
     
-    # --- ИСПРАВЛЕНИЕ ЛОГИЧЕСКОЙ ОШИБКИ ---
     remaining_cash_to_pay = max(0, total_cash_planned - total_cash_paid)
 
     # --- 3. Собираем итоговое сообщение ---
@@ -2538,7 +2574,7 @@ async def show_daily_dashboard(update: Update, context: ContextTypes.DEFAULT_TYP
     except BadRequest as e:
         if "Message is not modified" not in str(e):
             logging.error(f"Ошибка при обновлении сводки: {e}")
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+
 async def ask_for_invoice_edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Эта функция теперь ТОЛЬКО задает вопросы, основываясь на текущем состоянии."""
     query = update.callback_query
@@ -2597,9 +2633,6 @@ async def ask_for_invoice_edit_value(update: Update, context: ContextTypes.DEFAU
         await message.edit_text(prompt_text, reply_markup=kb)
     else:
         await message.reply_text(prompt_text, reply_markup=kb)
-
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-
 
 async def repay_debt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -2676,10 +2709,6 @@ async def repay_debt(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Ошибка погашения долга: {str(e)}")
 
 
-# далее стандартная логика handle_planning_amount и handle_planning_paytype
-# <<< НАЧАЛО: НОВЫЙ КОД ДЛЯ ДОБАВЛЕНИЯ >>>
-
-# --- ЛОГИКА ПЛАНИРОВАНИЯ ---
 DAYS_OF_WEEK_RU = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 
 # 1. Нажатие на кнопку "Планирование"
@@ -2797,9 +2826,6 @@ async def show_invoices_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="suppliers_menu")])
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
-
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def show_single_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE, date_str: str = None, list_index: int = None):
     """
     Показывает детальный вид ОДНОЙ накладной.
@@ -2882,10 +2908,6 @@ async def show_single_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
     
-# 2. Выбор поставщика из списка или ввод нового
-
-# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
-
 async def confirm_delete_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запрашивает подтверждение перед удалением накладной."""
     query = update.callback_query
@@ -2909,7 +2931,6 @@ async def confirm_delete_invoice(update: Update, context: ContextTypes.DEFAULT_T
     ]]
     await query.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def execute_delete_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выполняет полное удаление накладной и всех связанных операций."""
     query = update.callback_query
@@ -2965,7 +2986,6 @@ async def execute_delete_invoice(update: Update, context: ContextTypes.DEFAULT_T
         await query.message.edit_text(f"❌ Произошла критическая ошибка при удалении: {e}")
         logging.error(f"Ошибка при удалении накладной (строка {row_index}): {e}", exc_info=True)
         
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ НА ИСПРАВЛЕННУЮ ВЕРСИЮ ---
 async def handle_planning_supplier_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает выбор поставщика при планировании и добавляет умную подсказку."""
     query = update.callback_query
@@ -3006,8 +3026,6 @@ async def handle_planning_supplier_choice(update: Update, context: ContextTypes.
             parse_mode=ParseMode.HTML
         )
         
-
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 async def quick_safe_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отправляет текущий баланс сейфа в ответ на команду 'сейф'."""
     user_id = str(update.effective_user.id)
@@ -3022,19 +3040,12 @@ async def quick_safe_balance(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Отправляем ответ личным сообщением
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
         
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def send_shift_closed_notification(context: ContextTypes.DEFAULT_TYPE):
     """Отправляет уведомление о закрытии смены всем пользователям, КРОМЕ инициатора."""
     job_data = context.job.data
     seller_name = job_data.get('seller_name', 'Неизвестный')
     report_date_str = job_data.get('report_date_str', 'сегодня')
-    initiator_id = job_data.get('initiator_id')
-
-    # --- ИЗМЕНЕНИЕ: Убрана защита от дублей, так как она не нужна, и улучшен текст ---
-    
+    initiator_id = job_data.get('initiator_id')    
     text = (f"🔔 Смена сдана! \n\n"
             f"👤 Продавец: {seller_name}\n"
             f"💰 Выручка: {job_data.get('total_sales', 0.0):,.2f}₴\n"
@@ -3046,7 +3057,6 @@ async def send_shift_closed_notification(context: ContextTypes.DEFAULT_TYPE):
 
     # Рассылаем сообщение каждому пользователю из справочника
     for chat_id in USER_ID_TO_NAME.keys():
-        # --- ГЛАВНОЕ ИСПРАВЛЕНИЕ: Пропускаем пользователя, который сдал отчет ---
         if str(chat_id) == str(initiator_id):
             continue
 
@@ -3088,8 +3098,6 @@ async def send_shift_closed_notification(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.error(f"Не удалось отправить уведомление о смене админу {chat_id}: {e}")
 
-
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 def update_supplier_schedule(context: ContextTypes.DEFAULT_TYPE, date_str: str, supplier_name: str):
     """
     Проверяет, есть ли поставщик в графике на этот день недели. 
@@ -3173,9 +3181,9 @@ async def handle_planning_pay_type(update: Update, context: ContextTypes.DEFAULT
     )
     context.user_data.pop('planning', None)
     
+
+
 # --- ПЕРЕУЧЕТ ---
-
-
 async def start_revision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинает процесс переучета."""
     query = update.callback_query
@@ -3196,9 +3204,6 @@ async def start_revision(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML)
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-
 async def add_new_supplier_to_directory(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Добавляет нового поставщика в справочник и переходит к вводу суммы."""
     query = update.callback_query
@@ -3206,12 +3211,9 @@ async def add_new_supplier_to_directory(update: Update, context: ContextTypes.DE
 
     # Формат: add_new_supplier_ДАТА_ИмяНовогоПоставщика
     try:
-        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Правильно разделяем строку ---
-        # Мы ожидаем 5 частей, поэтому лимит для split должен быть 4
         parts = query.data.split('_', 4)
         target_date_str = parts[3]
         new_supplier_name = parts[4]
-        # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
     except IndexError:
         logging.error(f"Ошибка парсинга callback_data в add_new_supplier_to_directory: {query.data}")
         return await query.message.edit_text("❌ Ошибка: не удалось получить имя нового поставщика.")
@@ -3274,8 +3276,6 @@ async def save_revision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
     context.user_data.pop('revision', None)
     
-
-
 async def show_invoice_edit_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает экран с подтверждением изменений 'Было/Станет'."""
     query = update.callback_query
@@ -3365,7 +3365,6 @@ async def view_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.message.edit_text(response, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
     context.user_data['current_debts_page'] = page
 
-
 def get_week_debts(start, end):
     ws = GSHEET.worksheet(SHEET_DEBTS)
     rows = ws.get_all_values()[1:]
@@ -3381,36 +3380,17 @@ def get_week_debts(start, end):
             debts.append(row)
     return debts
 
-
-
-
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 def add_revision(calc_sum, fact_sum, comment, user):
     """
     Записывает данные о переучете в лист "Переучеты" и КОРРЕКТНО
     обновляет баланс в листе "Остаток магазина".
     """
-    # 1. Запись в архив переучетов - эта часть у вас работала правильно.
     ws_revisions = GSHEET.worksheet("Переучеты")
     diff = fact_sum - calc_sum
     ws_revisions.append_row([sdate(), calc_sum, fact_sum, diff, comment, user])
     
-    # 2. Корректировка баланса в "Остаток магазина" - здесь была ошибка.
     ws_inv = GSHEET.worksheet("Остаток магазина")
-    # Создаем новую строку, где в столбце "Сумма" (третий столбец)
-    # мы НЕ пишем старый остаток, а в столбце "Комментарий" (четвертый столбец)
-    # мы записываем фактическую сумму, как вы и просили.
-    # Это эффективно сбрасывает баланс до fact_sum.
     
-    # --- ГЛАВНОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ ---
-    # Тип операции "Переучет" говорит функции get_inventory_balance,
-    # что нужно взять сумму из 4-го столбца и установить ее как новый баланс.
-    # Поэтому 3-й столбец (сумма операции) мы оставляем пустым.
-    # В 4-й столбец (комментарий) мы записываем фактическую сумму для get_inventory_balance.
-    # Ваш комментарий к переучету будет в листе "Переучеты".
-    
-    # Мы сделаем еще лучше: запишем фактическую сумму в столбец "Сумма",
-    # а в комментарий - пояснение. И обновим get_inventory_balance.
     ws_inv.append_row([sdate(), "Переучет", fact_sum, f"Новый остаток: {fact_sum}", user])
 def is_date(string):
     try:
@@ -3419,9 +3399,6 @@ def is_date(string):
     except:
         return False
     
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-# --- УДАЛИТЕ СТАРУЮ stock_safe_kb И ДОБАВЬТЕ ЭТИ ТРИ НОВЫЕ ФУНКЦИИ ---
-
 def stock_safe_menu_kb():
     """Новое главное меню для раздела."""
     return InlineKeyboardMarkup([
@@ -3433,6 +3410,7 @@ def stock_safe_menu_kb():
     
 def analytics_menu_kb():
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🕵️‍♂️ Бизнес-Инсайты", callback_data="analytics_insights")],
         [InlineKeyboardButton("📊 Финансовая Панель", callback_data="analytics_financial_dashboard")],
         [InlineKeyboardButton("🍰 Расходы по категориям", callback_data="analytics_expense_pie_chart")],
         [InlineKeyboardButton("📈 Динамика Продаж", callback_data="analytics_sales_trends")],
@@ -3484,14 +3462,6 @@ def get_tomorrow_debts():
     return total, suppliers
 
 
-# --- FAQ ---
-FAQ = [
-    ("📝 Как сдать смену?", "Нажмите «➕ Новый отчёт», выберите себя, заполните суммы и расходы, следуйте подсказкам."),
-    ("💸 Как добавить расход?", "В главном меню выберите «💰 Добавить расход», укажите сумму и комментарий."),
-    ("📦 Как добавить поставщика?", "Выберите «📦 Добавить поставщика» и следуйте шагам. Для отсрочек укажите дату."),
-    ("📆 Как посмотреть смены?", "Выберите «🗓 График смен»."),
-    ("❓ Возникли вопросы?", "Пишите администратору — Наталия или Женя.")
-]
 
 # --- КЛАВИАТУРЫ ---
 def main_kb(is_admin=False):
@@ -3503,14 +3473,12 @@ def main_kb(is_admin=False):
          InlineKeyboardButton("🏦 Долги", callback_data="debts_menu")],
     ]
     
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Кнопки только для админов ---
     if is_admin:
         kb.append([InlineKeyboardButton("📈 Аналитика", callback_data="analytics_menu")])
         kb.append([InlineKeyboardButton("🔐 Админ-панель", callback_data="admin_panel")])
 
     kb.append([InlineKeyboardButton("❌ Закрыть", callback_data="close")])
     return InlineKeyboardMarkup(kb)
-
 
 def finance_menu_kb():
     return InlineKeyboardMarkup([
@@ -3557,8 +3525,6 @@ def admin_system_settings_kb():
         [InlineKeyboardButton("🔙 Назад в админ-панель", callback_data="admin_panel")]
     ])
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 def calculate_detailed_salary(context: ContextTypes.DEFAULT_TYPE, user_name: str) -> dict:
     """Собирает и рассчитывает детальную информацию по ЗП, разделяя ставку и премию."""
     start_period, end_period = get_current_payroll_period()
@@ -3575,7 +3541,6 @@ def calculate_detailed_salary(context: ContextTypes.DEFAULT_TYPE, user_name: str
             pay_type = row[2]
             amount = parse_float(row[3])
             
-            # --- ИСПРАВЛЕНИЕ ЛОГИКИ ---
             if pay_type == "Ставка":
                 base_pay_earned += amount
                 shifts_worked += 1
@@ -3609,7 +3574,6 @@ def suppliers_menu_kb():
 
 def debts_menu_kb():
     return InlineKeyboardMarkup([
-        # ИСПРАВЛЕНИЕ: Указываем начальную страницу 0 для пагинации
         [InlineKeyboardButton("📋 Текущие долги", callback_data="current_debts_0")],
         [InlineKeyboardButton("📆 Предстоящие платежи", callback_data="upcoming_payments")],
         [InlineKeyboardButton("✅ Погасить долг", callback_data="close_debt")],
@@ -3627,7 +3591,7 @@ def settings_menu_kb():
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
 def admin_panel_kb():
     return InlineKeyboardMarkup([
         # Кнопка "Добавить расход" убрана
@@ -3643,7 +3607,6 @@ def back_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔙 Назад", callback_data="back")]
     ])
-
 
 def cancel_kb():
     return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="main_menu")]])
@@ -3719,7 +3682,7 @@ async def save_inventory_expense(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data.pop('inventory_expense', None)
 
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     is_admin = str(query.from_user.id) in ADMINS
@@ -3745,7 +3708,7 @@ async def close_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.delete()
     await query.answer("Меню закрыто")
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+
 async def show_planned_arrivals(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает интерактивный журнал с планами на СЕГОДНЯ и на ЗАВТРА."""
     query = update.callback_query
@@ -3802,10 +3765,6 @@ async def show_planned_arrivals(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             raise e
         
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
-# --- ЗАМЕНИТЕ ФУНКЦИЮ show_planned_arrivals НА ЭТУ ---
-# --- ЗАМЕНИТЕ ФУНКЦИЮ show_arrivals_journal НА ЭТУ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TYPE, target_date: dt.date = None):
     """Показывает обновленный, красивый и устойчивый журнал прибытия (План/Факт)."""
     query = update.callback_query
@@ -3894,7 +3853,6 @@ async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TY
     if query:
         await query.message.edit_text(final_msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
         
-
 async def toggle_arrival_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключает статус прибытия товара."""
     query = update.callback_query
@@ -3911,8 +3869,6 @@ async def toggle_arrival_status(update: Update, context: ContextTypes.DEFAULT_TY
         return
         
     await show_arrivals_journal(update, context)
-
-# --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
 
 async def edit_plan_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинает процесс редактирования плана."""
@@ -3945,22 +3901,18 @@ async def edit_plan_choose_field(update: Update, context: ContextTypes.DEFAULT_T
         ]
         await query.message.edit_text("Выберите новый тип оплаты:", reply_markup=InlineKeyboardMarkup(kb))
 
-# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
-
 async def start_admin_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинает диалог добавления расхода из админ-панели."""
     query = update.callback_query
     await query.answer()
     context.user_data['admin_expense'] = {'step': 'amount'}
-    
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Кнопка отмены теперь ведет в меню сейфа ---
     await query.message.edit_text(
         "💸 Введите сумму расхода:",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="safe_menu")]])
     )
 
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
+
 async def start_expense_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Запускает правильный диалог добавления расхода в зависимости от роли пользователя.
@@ -3979,13 +3931,10 @@ async def start_expense_flow(update: Update, context: ContextTypes.DEFAULT_TYPE)
     # Если это продавец, запускаем упрощенный сценарий
     else:
         context.user_data['seller_expense'] = {'step': 'amount'}
-        # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Добавлен недостающий вызов edit_text ---
         await query.message.edit_text(
             "💸 Введите сумму расхода (наличные из сейфа):",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="safe_menu")]])
         )
-
-# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
 
 async def handle_seller_expense_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает сумму расхода от продавца и запрашивает комментарий."""
@@ -4044,8 +3993,8 @@ async def handle_admin_expense_comment(update: Update, context: ContextTypes.DEF
     ]
     await update.message.reply_text("Выберите тип оплаты:", reply_markup=InlineKeyboardMarkup(kb))
 
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
+
 async def show_expense_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     """Показывает страничный просмотр истории расходов с полной детализацией."""
     query = update.callback_query
@@ -4055,7 +4004,6 @@ async def show_expense_history(update: Update, context: ContextTypes.DEFAULT_TYP
     if not rows:
         return await query.message.edit_text("История расходов пуста.", reply_markup=admin_panel_kb())
 
-    # --- НОВАЯ ЛОГИКА ПАГИНАЦИИ ---
     rows.reverse() # Новые записи в начало списка
 
     per_page = 10
@@ -4075,8 +4023,7 @@ async def show_expense_history(update: Update, context: ContextTypes.DEFAULT_TYP
         msg += f"🗓 <b>{date}</b> - <b>{amount}₴</b>\n"
         msg += f"   • {comment} (<i>{user}</i>)\n"
         msg += f"   • Тип: {pay_type or 'Наличные'}, Источник: {data_type or 'Не указан'}"
-    
-    # --- НОВЫЕ КНОПКИ НАВИГАЦИИ ---
+
     nav_row = []
     if page > 0:
         nav_row.append(InlineKeyboardButton("◀️ Назад", callback_data=f"expense_history_{page - 1}"))
@@ -4120,8 +4067,6 @@ async def show_my_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += "<i>У вас нет назначенных смен в ближайшее время.</i>"
 
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=staff_settings_menu_kb())
-
-# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
 
 async def start_seller_expense_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинает простой диалог добавления расхода для продавца."""
@@ -4167,7 +4112,7 @@ async def save_seller_expense(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     context.user_data.pop('seller_expense', None)
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+
 async def show_my_salary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает пользователю его персональную детализацию по ЗП с корректными формулировками."""
     query = update.callback_query
@@ -4268,6 +4213,10 @@ async def edit_plan_save_value(update: Update, context: ContextTypes.DEFAULT_TYP
     context.user_data.pop('edit_plan', None)
     await show_arrivals_journal(update, context)
 
+
+
+
+
 # --- МЕНЮ РАЗДЕЛОВ ---
 async def finance_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     push_nav(context, "finance_menu")
@@ -4276,10 +4225,6 @@ async def finance_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.edit_text(
         "💰 Управление финансами\nВыберите действие:",
         reply_markup=finance_menu_kb())
-
-# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
-
-# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
 
 async def show_supplier_directory_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинает диалог управления справочником, запрашивая имя для поиска."""
@@ -4310,8 +4255,8 @@ async def list_suppliers_for_editing(update: Update, context: ContextTypes.DEFAU
     
     await update.message.reply_text("Выберите поставщика для переименования:", reply_markup=InlineKeyboardMarkup(kb))
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
+
 async def prompt_for_new_supplier_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает меню действий для выбранного поставщика."""
     query = update.callback_query
@@ -4328,7 +4273,6 @@ async def prompt_for_new_supplier_name(update: Update, context: ContextTypes.DEF
     ]
     await query.message.edit_text(f"Выбран поставщик: <b>{old_name}</b>\n\nВыберите действие:", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
-# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
 async def confirm_archive_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запрашивает подтверждение перед архивацией поставщика."""
     query = update.callback_query
@@ -4397,9 +4341,6 @@ async def save_edited_supplier_name(update: Update, context: ContextTypes.DEFAUL
         await processing_message.edit_text(f"❌ Произошла ошибка при обновлении таблиц: {e}")
     finally:
         context.user_data.pop('supplier_edit', None)
-# ... и другие новые функции для этого шага, которые будут ниже
-
-# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
 
 async def show_supplier_dossier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Собирает и показывает полную сводку по выбранному поставщику."""
@@ -4492,7 +4433,7 @@ async def staff_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "👥 Управление персоналом\nВыберите действие:",
         reply_markup=staff_menu_kb(is_admin))
     
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+
 async def suppliers_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -4555,7 +4496,7 @@ async def settings_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⚙️ Настройки системы\nВыберите действие:",
         reply_markup=settings_menu_kb())
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
 async def stock_safe_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -4565,7 +4506,7 @@ async def stock_safe_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=stock_safe_menu_kb()
     )
     
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if str(query.from_user.id) not in ADMINS:
@@ -4576,6 +4517,8 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔐 Админ-панель\nВыберите действие:",
         reply_markup=admin_panel_kb())
 
+
+
 # --- ОТЧЕТЫ ---
 async def view_reports_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -4583,8 +4526,6 @@ async def view_reports_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.edit_text(
         "📋 Просмотр отчетов\nВыберите период:",
         reply_markup=reports_menu_kb())
-
-# --- ЗАМЕНИТЕ ЭТИ ДВЕ ФУНКЦИИ ---
 
 async def get_report_week(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -4647,7 +4588,7 @@ async def handle_report_end_date(update: Update, context: ContextTypes.DEFAULT_T
         
         
 # --- ОТЧЕТ О СМЕНЕ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
 async def start_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинает процесс сдачи отчета, автоматически определяя продавца."""
     query = update.callback_query
@@ -4680,9 +4621,6 @@ async def handle_report_seller(update: Update, context: ContextTypes.DEFAULT_TYP
          ])
     )
 
-# --- ДОБАВЬТЕ ВЕСЬ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
-
-# --- ЛОГИКА УПРАВЛЕНИЯ СМЕНАМИ ---
 
 def generate_calendar_keyboard(year: int, month: int, shifts_data: dict, mode: str = 'view'):
     """Генерирует красивую клавиатуру с календарем на русском и с инициалами продавцов."""
@@ -4729,8 +4667,6 @@ def generate_calendar_keyboard(year: int, month: int, shifts_data: dict, mode: s
         
     kb.append([InlineKeyboardButton("🔙 Назад в меню", callback_data="staff_menu")])
     return InlineKeyboardMarkup(kb)
-
-# --- ДОБАВЬТЕ ВЕСЬ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
 
 def get_seller_stats_data(context: ContextTypes.DEFAULT_TYPE, seller_name: str, days_period: int = 30):
     """Собирает статистику продаж для продавца за указанный период."""
@@ -4799,7 +4735,7 @@ def generate_seller_stats_image(seller_name: str, stats_data: dict) -> io.BytesI
     plt.close(fig)
     return buf
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+
 async def show_seller_stats_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает меню выбора продавца или запускает сравнение."""
     query = update.callback_query
@@ -4868,7 +4804,7 @@ async def view_shifts_calendar(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.message.edit_text("🗓️ <b>График смен</b>\nНажмите на дату, чтобы увидеть детали.",
                                   parse_mode=ParseMode.HTML, reply_markup=kb)
 
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+
 async def show_shift_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает детали смены для выбранной даты."""
     query = update.callback_query
@@ -4970,14 +4906,11 @@ async def toggle_seller_for_shift(update: Update, context: ContextTypes.DEFAULT_
     if seller_name in edit_state['sellers']:
         edit_state['sellers'].remove(seller_name)
     else:
-        # Можно добавить ограничение, например, не больше 2 продавцов
         if len(edit_state['sellers']) < 2:
             edit_state['sellers'].append(seller_name)
         else:
             await query.answer("🚫 Нельзя назначить больше двух продавцов на смену.", show_alert=True)
             return
-            
-    # Обновляем клавиатуру, не отправляя новое сообщение
     kb = []
     for seller in SELLERS:
         icon = "✅" if seller in edit_state['sellers'] else "❌"
@@ -5026,14 +4959,11 @@ async def save_shift_changes(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except Exception as e:
         await query.message.edit_text(f"❌ Ошибка сохранения смены: {e}")
 
-
 async def handle_report_cash(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         cash = float(update.message.text.replace(',', '.'))
         context.user_data['report']['cash'] = cash
         context.user_data['report']['step'] = 'terminal'
-        
-        # Создаем клавиатуру с кнопкой отмены - ИСПРАВЛЕННЫЙ ВАРИАНТ
         keyboard = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("🔙 Назад", callback_data="back_to_cash_input"),
@@ -5043,12 +4973,11 @@ async def handle_report_cash(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
         await update.message.reply_text(
             "💳 Введите сумму по терминалу:",
-            reply_markup=keyboard  # Передаем клавиатуру здесь
+            reply_markup=keyboard 
         )
     except ValueError:
         await update.message.reply_text("❌ Неверный формат суммы. Введите число:")
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_report_terminal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Обрабатывает ввод суммы по терминалу и СРАЗУ ЖЕ запускает сохранение отчета,
@@ -5057,14 +4986,8 @@ async def handle_report_terminal(update: Update, context: ContextTypes.DEFAULT_T
     try:
         terminal = parse_float(update.message.text)
         context.user_data['report']['terminal'] = terminal
-        
-        # --- ГЛАВНОЕ ИЗМЕНЕНИЕ ---
-        # Мы больше не спрашиваем про расходы и комментарии.
-        # Сразу устанавливаем пустые значения и вызываем функцию сохранения.
         context.user_data['report']['expenses'] = []
         context.user_data['report']['comment'] = ""
-        
-        # Вызываем save_report, передавая update от ТЕКУЩЕГО сообщения
         await save_report(update, context)
         
     except ValueError:
@@ -5098,8 +5021,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "❌ Текущая операция отменена",
         reply_markup=main_kb(is_admin)
     )
-
-# Добавьте в прилож
 
 async def handle_report_expenses_ask(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -5209,7 +5130,6 @@ async def handle_expense_more(update: Update, context: ContextTypes.DEFAULT_TYPE
             reply_markup=back_kb()
         )
     else:
-        # После всех расходов переходим к комментарию
         context.user_data['report']['step'] = 'comment'
         await query.message.edit_text(
             "📝 Добавьте комментарий к отчету (или нажмите 'Пропустить'):",
@@ -5224,14 +5144,10 @@ async def show_today_invoices(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     today_str = sdate()
-    
-    # Используем кэш для быстрой загрузки
     rows = get_cached_sheet_data(context, SHEET_SUPPLIERS)
     if rows is None:
         await query.message.edit_text("❌ Ошибка чтения данных о поставщиках.")
         return
-        
-    # Отбираем только те накладные, что были добавлены сегодня
     today_invoices = [row for row in rows if len(row) > 6 and row[0].strip() == today_str]
     
     msg = f"📄 <b>Накладные, добавленные сегодня ({today_str}):</b>\n"
@@ -5239,7 +5155,6 @@ async def show_today_invoices(update: Update, context: ContextTypes.DEFAULT_TYPE
         msg += "\n<i>За сегодня еще не было добавлено ни одной накладной.</i>"
     else:
         for invoice in today_invoices:
-            # Безопасно извлекаем данные
             supplier = invoice[1] if len(invoice) > 1 else "Не указан"
             to_pay_str = invoice[4] if len(invoice) > 4 else "0"
             pay_type = invoice[6] if len(invoice) > 6 else "Не указан"
@@ -5318,8 +5233,6 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             cash_balance, total_debts, planned_total, comment, safe_bal_after_shift
         ]
         ws_report.append_row(report_row_data)
-
-        # --- ВОТ ВОССТАНОВЛЕННЫЙ БЛОК ФОРМИРОВАНИЯ СООБЩЕНИЯ ---
         resp = (f"✅ <b>Смена полностью завершена!</b>\n\n"
                 f"📅 Дата: {today_str}\n"
                 f"👤 Продавец: {seller}\n"
@@ -5346,15 +5259,12 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         resp += "\n"
         if total_needed_cash > 0: resp += f"\n<b>ИТОГО на завтра наличными: {total_needed_cash:.2f}₴</b>"
         if total_needed_card > 0: resp += f"\n<b>ИТОГО на завтра картой: {total_needed_card:.2f}₴</b>"
-
-
         
         kb = [[
             InlineKeyboardButton("💸 Детально расходы", callback_data=f"details_exp_{today_str}_{today_str}"),
             InlineKeyboardButton("📦 Детально накладные", callback_data=f"details_sup_{today_str}_{today_str}_0")
         ], [InlineKeyboardButton("🔙 В главное меню", callback_data="main_menu")]]
         markup = InlineKeyboardMarkup(kb)
-        # --- КОНЕЦ БЛОКА ---
 
         await processing_message.edit_text(
             resp,
@@ -5367,7 +5277,6 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'total_sales': total_sales,
             'cash_balance': cash_balance,
             'safe_balance': safe_bal_after_shift,
-            # --- ДОБАВЬТЕ ЭТУ СТРОКУ ---
             'initiator_id': update.effective_user.id
         }
         
@@ -5399,10 +5308,6 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         context.user_data.pop('report', None)
 
-
-
-
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def generate_daily_report_text(context: ContextTypes.DEFAULT_TYPE, report_date_str: str):
     """Готовит текст детального отчета, правильно читая 10 столбцов."""
     reports = get_cached_sheet_data(context, SHEET_REPORT)
@@ -5453,8 +5358,7 @@ async def generate_daily_report_text(context: ContextTypes.DEFAULT_TYPE, report_
             if total_needed_card > 0: resp += f"\n<b>ИТОГО на след. день картой: {total_needed_card:.2f}₴</b>"
             
     return resp
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
 async def show_detailed_report(update: Update, context: ContextTypes.DEFAULT_TYPE, start_str: str = None, end_str: str = None, index_str: str = None):
     """Показывает страничный детальный отчет. Может принимать данные напрямую или из callback_data."""
     query = update.callback_query
@@ -5513,15 +5417,26 @@ async def show_detailed_report(update: Update, context: ContextTypes.DEFAULT_TYP
     kb.append([InlineKeyboardButton("⬅️ К общему отчету", callback_data=back_callback)])
     
     await query.message.edit_text(report_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
-# --- ЗАМЕНИТЕ ЭТИ ДВЕ ФУНКЦИИ ---
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def get_report_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today_str = sdate(dt.date.today())
     # Вызываем основную функцию для периода в один день (сегодня)
     await show_detailed_report(update, context, start_str=today_str, end_str=today_str, index_str="0")
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+async def show_business_insights(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запускает анализ и показывает бизнес-инсайты."""
+    query = update.callback_query
+    await query.message.edit_text("🕵️‍♂️ Анализирую данные за последний месяц, ищу закономерности...")
+
+    # Генерируем текст с инсайтами
+    insights_text = generate_business_insights(context, days_period=30)
+
+    await query.message.edit_text(
+        insights_text,
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]])
+    )
+
 async def get_report_yesterday(update: Update, context: ContextTypes.DEFAULT_TYPE):
     yesterday_str = sdate(dt.date.today() - dt.timedelta(days=1))
     # Вызываем основную функцию для периода в один день (вчера)
@@ -5571,6 +5486,8 @@ async def choose_details_date(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.message.edit_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
     
 
+
+
 # --- РАСХОДЫ ---
 async def start_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -5580,7 +5497,6 @@ async def start_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📝 Введите комментарий к расходу:",
         reply_markup=back_kb()
     )
-
 
 async def handle_expense_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
@@ -5606,10 +5522,11 @@ async def save_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"❌ Ошибка: {str(e)}")
 
+
+
+
+
 # --- ПОСТАВЩИКИ ---
-# --- START ADD SUPPLIER ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def start_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинает процесс добавления накладной, скрывая уже добавленных поставщиков."""
     query = update.callback_query
@@ -5649,10 +5566,6 @@ async def start_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
 
-
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def inventory_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     query = update.callback_query
     await query.message.edit_text("📦 Загружаю историю остатка...")
@@ -5700,10 +5613,6 @@ async def inventory_history(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     await query.message.edit_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 
-    
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_add_supplier_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает выбор поставщика при добавлении накладной."""
     query = update.callback_query
@@ -5727,7 +5636,6 @@ async def handle_add_supplier_choice(update: Update, context: ContextTypes.DEFAU
             parse_mode=ParseMode.HTML
         )
 
-# --- ДОБАВЬТЕ ЭТОТ БЛОК ИЗ ДВУХ ФУНКЦИЙ ---
 
 async def handle_add_invoice_supplier_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ищет поставщика для ДОБАВЛЕНИЯ НАКЛАДНОЙ и предлагает варианты."""
@@ -5762,9 +5670,7 @@ async def handle_add_invoice_supplier_search(update: Update, context: ContextTyp
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ ---
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_supplier_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Универсальный умный поиск поставщика по справочнику."""
     search_query = update.message.text.strip()
@@ -5821,7 +5727,6 @@ async def handle_supplier_search(update: Update, context: ContextTypes.DEFAULT_T
     kb.append([InlineKeyboardButton("❌ Отмена", callback_data=cancel_callback)])
     await update.message.reply_text("Вот что удалось найти:", reply_markup=InlineKeyboardMarkup(kb))
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def add_new_supplier_directory_and_continue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Добавляет поставщика в справочник и сразу переходит к созданию накладной/плана."""
     query = update.callback_query
@@ -5873,13 +5778,6 @@ async def handle_supplier_name(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=back_kb()
     )
 
-# 2. Сумма прихода
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-
-
-
-
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 async def handle_debt_type_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает выбор типа долга (Наличные или Карта)."""
     query = update.callback_query
@@ -5892,10 +5790,6 @@ async def handle_debt_type_choice(update: Update, context: ContextTypes.DEFAULT_
     ]
     
     await query.message.edit_text("Выберите тип долга:", reply_markup=InlineKeyboardMarkup(kb))
-
-# --- ЗАМЕНИТЕ ВЕСЬ СТАРЫЙ БЛОК ДИАЛОГА ДОБАВЛЕНИЯ НАКЛАДНОЙ НА ЭТОТ ---
-
-# --- НОВЫЙ БЛОК ДИАЛОГА ДОБАВЛЕНИЯ НАКЛАДНОЙ ---
 
 async def handle_supplier_amount_income(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Шаг 2: Обрабатывает сумму прихода и спрашивает про возврат/списание."""
@@ -5990,7 +5884,6 @@ async def _ask_for_invoice_markup(update: Update, context: ContextTypes.DEFAULT_
     except (BadRequest, AttributeError):
         await context.bot.send_message(chat_id=update.effective_chat.id, text=msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
-
 async def handle_supplier_invoice_total_markup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Шаг 6: Обрабатывает ввод суммы после наценки и переходит к выбору типа оплаты."""
     try:
@@ -6033,9 +5926,6 @@ async def handle_supplier_pay_type(update: Update, context: ContextTypes.DEFAULT
     else: # Если это Наличные или Карта, сразу сохраняем
         await save_supplier(update, context)
 
-
-
-# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 async def handle_due_date_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Сохраняет выбранную из календаря дату долга и СРАЗУ ЖЕ сохраняет накладную.
@@ -6196,7 +6086,6 @@ async def add_shift(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=back_kb()
     )
 
-# Изменяем show_expenses_detail
 async def show_expenses_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -6326,9 +6215,9 @@ async def save_shift(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await query.message.edit_text(f"❌ Ошибка сохранения смены: {str(e)}")
 
+
+
 # --- ДОЛГИ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def show_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0, filter_by: str = None):
     """Показывает страничный список АКТУАЛЬНЫХ долгов в виде текста."""
     query = update.callback_query
@@ -6437,7 +6326,6 @@ async def show_upcoming_payments(update: Update, context: ContextTypes.DEFAULT_T
     kb = [[InlineKeyboardButton("🔙 Назад в меню Долги", callback_data="debts_menu")]]
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
-# --- ДОБАВЬТЕ ЭТУ НЕДОСТАЮЩУЮ ФУНКЦИЮ ---
 async def repay_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, row_index: int):
     """Показывает сообщение с подтверждением погашения долга, используя ИНДЕКС СТРОКИ."""
     query = update.callback_query
@@ -6469,8 +6357,7 @@ async def repay_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, row_
         logging.error(f"Ошибка в repay_confirm для строки {row_index}: {e}")
         await query.message.edit_text(f"❌ Не удалось найти данные о долге. Возможно, он был удален.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="debts_menu")]]))
 
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ СТАРУЮ ФУНКЦИЮ НА ЭТУ ---
+
 async def generate_shift_protocol(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Собирает все действия за день и формирует структурированный протокол смены."""
     query = update.callback_query
@@ -6530,7 +6417,7 @@ async def generate_shift_protocol(update: Update, context: ContextTypes.DEFAULT_
         parse_mode=ParseMode.HTML,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 К отчету", callback_data=back_cb)]])
     )
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
 async def view_repayable_debts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает список долгов для погашения с указанием типа оплаты на кнопке."""
     query = update.callback_query
@@ -6560,9 +6447,6 @@ async def view_repayable_debts(update: Update, context: ContextTypes.DEFAULT_TYP
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="debts_menu")])
     await query.message.edit_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
-
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_index: int):
     """
     Окончательно закрывает долг с защитой от двойного нажатия 
@@ -6640,8 +6524,6 @@ async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_in
 
     log_action(query.from_user, "Долги", "Погашение долга", f"Поставщик: {supplier_name}, Сумма: {total_to_pay}")
         
-        
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def view_debts_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     query = update.callback_query
     await query.answer()
@@ -6699,8 +6581,10 @@ async def view_debts_history(update: Update, context: ContextTypes.DEFAULT_TYPE,
     await query.message.edit_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
     context.user_data['debts_history_page'] = page
 
-# --- ОБРАБОТЧИКИ СЕЙФОВ, ПЕРЕУЧЕТОВ И ЗП ---
 
+
+
+# --- ОБРАБОТЧИКИ СЕЙФОВ, ПЕРЕУЧЕТОВ И ЗП ---
 async def inventory_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     push_nav(context, "inventory_balance")  # <--- добавь!
     bal = get_inventory_balance()
@@ -6710,7 +6594,6 @@ async def inventory_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")]])
     )
 
-# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
 async def withdraw_daily_salary(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает изъятие дневной ставки ЗП из сейфа."""
     query = update.callback_query
@@ -6743,7 +6626,6 @@ async def withdraw_daily_salary(update: Update, context: ContextTypes.DEFAULT_TY
     
     await query.message.edit_text(f"✅ <b>{seller_name}</b>, ваша ставка (700₴) за смену успешно выплачена из сейфа.", parse_mode=ParseMode.HTML, reply_markup=stock_safe_menu_kb())
 
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def safe_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     query = update.callback_query
     await query.message.edit_text("🧾 Загружаю историю сейфа...")
@@ -6783,10 +6665,6 @@ async def safe_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page:
     
     await query.message.edit_text(text, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
-
-
-# --- ЗАМЕНИТЕ ЭТИ ДВЕ ФУНКЦИИ ---
-
 async def start_safe_deposit(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -6807,8 +6685,6 @@ async def start_safe_withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")]])
     )
     
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def handle_safe_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает ввод суммы для операций с сейфом и сбрасывает кэш."""
     try:
@@ -6847,8 +6723,6 @@ async def handle_safe_amount(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except (ValueError, KeyError):
         await update.message.reply_text("❌ Ошибка. Попробуйте снова или введите число.")
 
-
-        
 async def generate_chart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -6914,8 +6788,7 @@ async def export_to_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.reply_text(
         "📥 Экспорт в Excel временно недоступен. Функция в разработке.")
 
-# --- ОБРАБОТЧИКИ ТЕКСТА ---
-# --- ЗАМЕНИТЕ ВСЮ ФУНКЦИЮ НА ЭТУ ВЕРСИЮ ---
+
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
     
@@ -7090,8 +6963,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         step = user_data['report_period'].get('step')
         if step == 'start_date': return await handle_report_start_date(update, context)
         elif step == 'end_date': return await handle_report_end_date(update, context)
-
-
             
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -7250,11 +7121,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Очищаем состояние редактирования в любом случае
             context.user_data.pop('edit_invoice', None)
-            
-        # Внутри вашей основной функции handle_callback
-# Замените старый elif data.startswith("invoice_edit_value_") на этот новый блок
-
-        # ... (другие elif в handle_callback)
         
         elif data.startswith("invoice_edit_value_"):
             new_value = data.replace("invoice_edit_value_", "")
@@ -7284,7 +7150,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await ask_for_invoice_edit_value(update, context)
             return
 
-        # ... (остальные elif в handle_callback)
 
         elif data.startswith("execute_invoice_edit_"):
             await execute_invoice_edit(update, context)
@@ -7294,7 +7159,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await execute_delete_invoice(update, context)
 
         # --- 5. ДОБАВЛЕНИЕ НАКЛАДНОЙ ---
-        # --- БЛОК ДЛЯ НАКЛАДНЫХ ---
         elif data == "add_supplier": await start_supplier(update, context)
         elif data.startswith("add_sup_"): await handle_add_supplier_choice(update, context)
         elif data.startswith("dir_add_new_sup_"): await add_new_supplier_directory_and_continue(update, context)
@@ -7386,19 +7250,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "apply_debt_filters":
             context.user_data['debt_history_page'] = 0
             await show_debt_history_view(update, context)
-    # --- КОНЕЦ БЛОКА ---
-    
-    # ...
-    # --- ДОБАВЬТЕ ЭТОТ БЛОК ДЛЯ АРХИВАЦИИ ---
         elif data.startswith("archive_supplier_confirm_"):
             await confirm_archive_supplier(update, context)
         elif data.startswith("archive_supplier_execute_"):
             await execute_archive_supplier(update, context)
         
-
-        # ----------------------------------------------------
-        
-
         elif data == "debt_search_start":
             context.user_data['search_debt'] = {}
             await query.message.edit_text("🔎 Введите имя поставщика для поиска в истории долгов:")
@@ -7506,6 +7362,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_my_salary(update, context)
         elif data == "staff_my_schedule":
             await show_my_schedule(update, context)
+        elif data == "analytics_insights":
+            # Просто вызываем существующую функцию, она все сделает
+            await show_business_insights(update, context)
         elif data == "settings_system": # Для админских настроек
             await query.message.edit_text("🔐 Системные настройки:", reply_markup=admin_system_settings_kb())
         elif data == "action_log": await show_log_categories_menu(update, context)
@@ -7536,9 +7395,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logging.error(f"Ошибка обработки callback: {data}. Ошибка: {e}", exc_info=True)
         await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Произошла критическая ошибка: {e}")
         
-
-
-
 async def error_handler(update, context):
     import traceback
     tb = traceback.format_exc()
@@ -7551,10 +7407,9 @@ async def error_handler(update, context):
         )
 
 
-# --- ЗАПУСК ---
-# --- ЗАМЕНИТЕ ВАШУ ФУНКЦИЮ main() НА ЭТУ ---
-# --- ЗАМЕНИТЕ ВЕСЬ БЛОК ЗАПУСКА В КОНЦЕ ФАЙЛА НА ЭТОТ ---
 
+
+# --- ЗАПУСК ---
 def main():
     """Главная функция для настройки и запуска бота."""
     
