@@ -3639,11 +3639,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log_action(user, "Система", "Старт бота")
 
 async def start_inventory_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
     context.user_data['inventory_expense'] = {'step': 'amount'}
     await query.message.edit_text(
         "💸 Введите сумму списания:",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="stock_safe_menu")]])
     )
+
 
 async def handle_inventory_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
