@@ -3399,20 +3399,17 @@ def is_date(string):
     except:
         return False
     
-def stock_safe_menu_kb(is_admin=False):
+def stock_safe_menu_kb():
     """Новое главное меню для раздела."""
-    kb = [
+    return InlineKeyboardMarkup([
         [InlineKeyboardButton("🗄️ Сейф", callback_data="safe_menu")],
         [InlineKeyboardButton("📦 Остаток", callback_data="stock_menu")],
         [InlineKeyboardButton("💵 Изъятие З/П за день", callback_data="withdraw_salary")],
-        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
-    ]
-    
-    if is_admin:
-        kb.append([InlineKeyboardButton("💸 Добавить расход", callback_data="add_admin_expense")])
-    else:
-        # Для продавца кнопка будет вызывать сценарий продавца
-        kb.append([InlineKeyboardButton("💸 Добавить расход", callback_data="add_seller_expense")])
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")],
+        [InlineKeyboardButton("💸 Добавить расход (Стандартный) ", callback_data="add_seller_expense")],
+        [InlineKeyboardButton("➖ Списание с остатка", callback_data="add_inventory_expense")]
+    ])
+
     
 def analytics_menu_kb():
     return InlineKeyboardMarkup([
@@ -3435,10 +3432,7 @@ def safe_menu_kb(is_admin=False):
     if is_admin:
         kb.append([InlineKeyboardButton("➖ Снять из сейфа", callback_data="safe_withdraw")])
         # Для админа кнопка будет вызывать админский сценарий
-        kb.append([InlineKeyboardButton("💸 Добавить расход", callback_data="add_admin_expense")])
-    else:
-        # Для продавца кнопка будет вызывать сценарий продавца
-        kb.append([InlineKeyboardButton("💸 Добавить расход", callback_data="add_seller_expense")])
+        kb.append([InlineKeyboardButton("💸 Добавить расход (Административный)", callback_data="add_admin_expense")])
 
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")])
     return InlineKeyboardMarkup(kb)
@@ -3448,7 +3442,6 @@ def stock_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📦 Остаток магазина", callback_data="inventory_balance")],
         [InlineKeyboardButton("🧾 История остатка", callback_data="inventory_history")],
-        [InlineKeyboardButton("➖ Списание с остатка", callback_data="add_inventory_expense")],
         [InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")]
     ])
     
