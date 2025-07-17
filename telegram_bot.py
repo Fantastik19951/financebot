@@ -5962,7 +5962,7 @@ async def handle_supplier_writeoff_amount(update: Update, context: ContextTypes.
 
 async def _ask_for_invoice_markup(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Единая функция, которая запрашивает сумму после наценки и показывает подсказку."""
-    # --- ИСПРАВЛЕНИЕ: Правильно определяем сообщение для редактирования ---
+    # --- ИСПРАВЛЕНИЕ: Правильно определяем сообщение для редактирования/ответа ---
     target_message = update.callback_query.message if update.callback_query else update.message
     
     supplier_data = context.user_data['supplier']
@@ -5981,9 +5981,12 @@ async def _ask_for_invoice_markup(update: Update, context: ContextTypes.DEFAULT_
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")])
     
     context.user_data['supplier']['step'] = 'invoice_total_markup'
-    
-    # Редактируем сообщение, которое точно существует
-    await target_message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+    # Пытаемся отредактировать сообщение. Если не получается (например, это новый ответ) - отправляем новое.
+    try:
+        await target_message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+    except (BadRequest, AttributeError):
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
 
 async def handle_supplier_invoice_total_markup(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -7290,7 +7293,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("use_suggested_markup_"):
             amount = float(data.split('_')[-1])
             context.user_data['supplier']['invoice_total_markup'] = amount
-            # Сразу вызываем функцию, которая задаст следующий вопрос
+            # Сразу вызываем функцию, которая задаст следующий вопрос о типе оплаты
             await _ask_for_payment_type(update, context)
         elif data == "pay_Долг_init": await handle_debt_type_choice(update, context)
         elif data.startswith("pay_"): await handle_supplier_pay_type(update, context)
