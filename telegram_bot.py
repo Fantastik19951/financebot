@@ -3405,7 +3405,7 @@ def stock_safe_menu_kb():
         [InlineKeyboardButton("🗄️ Сейф", callback_data="safe_menu")],
         [InlineKeyboardButton("📦 Остаток", callback_data="stock_menu")],
         [InlineKeyboardButton("💵 Изъятие З/П за день", callback_data="withdraw_salary")],
-        [InlineKeyboardButton("💸 Добавить расход (Стандартный) ", callback_data="add_seller_expense")],
+        [InlineKeyboardButton("💸 Добавить расход ", callback_data="start_expense_flow")],
         [InlineKeyboardButton("➖ Списание с остатка", callback_data="add_inventory_expense")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")],
     ])
@@ -3432,7 +3432,6 @@ def safe_menu_kb(is_admin=False):
     if is_admin:
         kb.append([InlineKeyboardButton("➖ Снять из сейфа", callback_data="safe_withdraw")])
         # Для админа кнопка будет вызывать админский сценарий
-        kb.append([InlineKeyboardButton("💸 Добавить расход (Административный)", callback_data="add_admin_expense")])
 
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")])
     return InlineKeyboardMarkup(kb)
@@ -3671,7 +3670,7 @@ async def save_inventory_expense(update: Update, context: ContextTypes.DEFAULT_T
     add_inventory_operation("Списание", amount, comment, user_name)
     
     # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Добавляем клавиатуру с кнопкой "Назад" ---
-    kb = [[InlineKeyboardButton("🔙 Назад в меню 'Остаток'", callback_data="stock_menu")]]
+    kb = [[InlineKeyboardButton("🔙 Назад в меню 'Остаток'", callback_data="stock_safe_menu")]]
     markup = InlineKeyboardMarkup(kb)
     
     await update.message.reply_text(
@@ -4111,7 +4110,7 @@ async def save_seller_expense(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     await update.message.reply_text(
         f"✅ Расход '{comment}' на сумму {amount:.2f}₴ успешно добавлен.",
-        reply_markup=safe_menu_kb(is_admin=False)
+        reply_markup=stock_safe_menu(is_admin=False)
     )
     context.user_data.pop('seller_expense', None)
 
@@ -6101,18 +6100,20 @@ async def show_expenses_detail(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.message.edit_text("❌ Ошибка формата даты в навигации.")
         return
 
-    ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
     rows = get_cached_sheet_data(context, SHEET_EXPENSES) or []
+    
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Фильтруем расходы по типу ---
     exp_list = []
     for row in rows:
         # Убеждаемся, что в строке есть все 6 колонок
         if len(row) >= 6 and pdate(row[0].strip()) == report_date:
-            # Проверяем, что это расход, связанный со сдачей смены
-            if "Закрытие смены" in row[5]:
+            data_type = row[5] # Колонка F - "Тип данных"
+            # Показываем, только если это не админский расход
+            if data_type != "Админ. расход":
                 exp_list.append(row)
 
     if not exp_list:
-        msg = "💸 За этот день расходов не найдено."
+        msg = f"💸 Расходов по кассе за {report_date_str} не найдено."
     else:
         msg = f"<b>💸 Расходы по кассе за {report_date_str}:</b>\n\n"
         for row in exp_list:
@@ -7345,9 +7346,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "safe_withdraw": await start_safe_withdraw(update, context)
         elif data == "add_inventory_expense": await start_inventory_expense(update, context)
         elif data == "admin_revision": await start_revision(update, context)
-
-        elif data == "add_admin_expense": await start_admin_expense(update, context)
-        elif data == "add_seller_expense": await start_seller_expense_dialog(update, context)
+        elif data == "start_expense_flow":
+            # Эта функция сама определит, кто нажал на кнопку
+            await start_expense_flow(update, context)
         elif data.startswith("expense_history"):
             try:
                 # Пытаемся извлечь номер страницы из 'expense_history_2'
