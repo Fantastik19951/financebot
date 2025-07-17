@@ -6032,24 +6032,24 @@ async def handle_supplier_pay_type(update: Update, context: ContextTypes.DEFAULT
 
 
 
+# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 async def handle_due_date_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сохраняет выбранную из календаря дату долга и переходит к комментарию."""
+    """
+    Сохраняет выбранную из календаря дату долга и СРАЗУ ЖЕ сохраняет накладную.
+    """
     query = update.callback_query
     await query.answer()
     
     date_str = query.data.split('_')[-1]
-    # Сохраняем дату как объект datetime.date
-    context.user_data['supplier']['due_date'] = pdate(date_str)
-    context.user_data['supplier']['step'] = 'comment'
     
-    await query.message.edit_text(
-        f"✅ Срок долга установлен на: {date_str}\n\n"
-        "📝 Теперь добавьте комментарий (или нажмите 'Пропустить'):",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("⏭ Пропустить", callback_data="skip_comment_supplier")],
-            [InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]
-        ])
-    )
+    # 1. Сохраняем дату в состояние
+    context.user_data['supplier']['due_date'] = pdate(date_str)
+    
+    # 2. Устанавливаем пустой комментарий, так как мы его убрали
+    context.user_data['supplier']['comment'] = ""
+    
+    # 3. Сразу вызываем функцию сохранения
+    await save_supplier(update, context)
 
 async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сохраняет накладную и корректно проводит все финансовые операции."""
