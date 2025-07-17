@@ -3399,14 +3399,20 @@ def is_date(string):
     except:
         return False
     
-def stock_safe_menu_kb():
+def stock_safe_menu_kb(is_adnin:False):
     """Новое главное меню для раздела."""
-    return InlineKeyboardMarkup([
+    kb = [
         [InlineKeyboardButton("🗄️ Сейф", callback_data="safe_menu")],
         [InlineKeyboardButton("📦 Остаток", callback_data="stock_menu")],
         [InlineKeyboardButton("💵 Изъятие З/П за день", callback_data="withdraw_salary")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
-    ])
+    ]
+    
+    if is_admin:
+        kb.append([InlineKeyboardButton("💸 Добавить расход", callback_data="add_admin_expense")])
+    else:
+        # Для продавца кнопка будет вызывать сценарий продавца
+        kb.append([InlineKeyboardButton("💸 Добавить расход", callback_data="add_seller_expense")])
     
 def analytics_menu_kb():
     return InlineKeyboardMarkup([
