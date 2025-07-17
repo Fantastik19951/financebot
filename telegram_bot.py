@@ -3405,9 +3405,9 @@ def stock_safe_menu_kb():
         [InlineKeyboardButton("🗄️ Сейф", callback_data="safe_menu")],
         [InlineKeyboardButton("📦 Остаток", callback_data="stock_menu")],
         [InlineKeyboardButton("💵 Изъятие З/П за день", callback_data="withdraw_salary")],
-        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")],
         [InlineKeyboardButton("💸 Добавить расход (Стандартный) ", callback_data="add_seller_expense")],
-        [InlineKeyboardButton("➖ Списание с остатка", callback_data="add_inventory_expense")]
+        [InlineKeyboardButton("➖ Списание с остатка", callback_data="add_inventory_expense")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")],
     ])
 
     
@@ -3640,9 +3640,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start_inventory_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['inventory_expense'] = {'step': 'amount'}
-    await update.callback_query.message.edit_text(
+    await query.message.edit_text(
         "💸 Введите сумму списания:",
-        reply_markup=back_kb()
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="stock_safe_menu")]])
     )
 
 async def handle_inventory_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -4075,7 +4075,7 @@ async def start_seller_expense_dialog(update: Update, context: ContextTypes.DEFA
     context.user_data['seller_expense'] = {'step': 'amount'}
     await query.message.edit_text(
         "💸 Введите сумму расхода (будет списана из сейфа):",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="safe_menu")]])
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="stock_safe_menu")]])
     )
 
 async def handle_seller_expense_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
