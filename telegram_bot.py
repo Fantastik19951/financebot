@@ -5615,6 +5615,8 @@ async def start_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
+    await query.message.edit_text("⏳ Собираю информацию для создания накладной...")
+
     today_str = sdate()
     day_of_week = DAYS_OF_WEEK_RU[dt.date.today().weekday()]
 
