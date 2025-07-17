@@ -2406,7 +2406,15 @@ async def search_debts_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
     context.user_data['search_debt'] = {}
-    await query.message.edit_text("🔎 Введите СУММА или ИМЯ или ДАТУ поставщика для поиска:", reply_markup=back_kb())
+    
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ ---
+    # Создаем клавиатуру с кнопкой, которая ведет прямо в меню долгов
+    kb = [[InlineKeyboardButton("❌ Отмена", callback_data="debts_menu")]]
+    
+    await query.message.edit_text(
+        "🔎 Введите имя, дату или сумму для поиска в истории долгов:", 
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
 
 # --- ДОБАВЬТЕ ЭТУ ФУНКЦИЮ В ВАШ КОД ---
 async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE, start_date, end_date):
