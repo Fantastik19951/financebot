@@ -11,3 +11,6 @@ __pycache__/
 
 # Файлы логов
 *.log
+
+venv/
+.venv/
