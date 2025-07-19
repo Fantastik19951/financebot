@@ -1163,7 +1163,7 @@ def save_plan_fact(context: ContextTypes.DEFAULT_TYPE, date_str: str, supplier: 
 
 def get_avg_markup_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_name: str) -> float | None:
     """Считает средний процент наценки для поставщика."""
-    rows = await await get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
+    rows = await get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
     markups = []
     for row in rows:
         if len(row) > 5 and row[1] == supplier_name:
