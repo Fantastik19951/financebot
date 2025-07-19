@@ -68,12 +68,12 @@ logging.basicConfig(
 
 
 # -------ФУКНЦИИ-------
-def generate_business_insights(context: ContextTypes.DEFAULT_TYPE, days_period: int = 30) -> str:
+async def generate_business_insights(context: ContextTypes.DEFAULT_TYPE, days_period: int = 30) -> str:
     """Анализирует данные за период и формирует отчет с бизнес-инсайтами."""
     today = dt.date.today()
     start_date = today - dt.timedelta(days=days_period)
 
-    suppliers_rows = await get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []
+    suppliers_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []
     
     # --- 1. Анализ эффективности продавцов по маржинальности ---
     seller_markup_data = defaultdict(list)
@@ -170,13 +170,13 @@ def push_nav(context, target):
 
 
 
-def get_avg_daily_costs(context: ContextTypes.DEFAULT_TYPE) -> float:
+async def get_avg_daily_costs(context: ContextTypes.DEFAULT_TYPE) -> float:
     """Считает среднюю сумму всех расходов (закупка + прочие) в день за последние 30 дней."""
     today = dt.date.today()
     start_date_for_analysis = today - dt.timedelta(days=30)
     
-    suppliers_rows = await get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
-    expenses_rows = await get_cached_sheet_data(context, SHEET_EXPENSES) or []
+    suppliers_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
+    expenses_rows = get_cached_sheet_data(context, SHEET_EXPENSES) or []
     
     total_costs = 0.0
     # Суммируем затраты на закупку
@@ -192,7 +192,7 @@ def get_avg_daily_costs(context: ContextTypes.DEFAULT_TYPE) -> float:
     return total_costs / 30 if total_costs > 0 else 0
 
 
-def get_avg_order_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_name: str) -> float | None:
+async def get_avg_order_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_name: str) -> float | None:
     """Считает среднюю сумму заказа для поставщика за последний месяц."""
     rows = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
     if not rows:
@@ -217,7 +217,7 @@ def get_avg_order_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_name
     return None
     
 
-def get_total_unpaid_debt(context: ContextTypes.DEFAULT_TYPE) -> float:
+async def get_total_unpaid_debt(context: ContextTypes.DEFAULT_TYPE) -> float:
     """Считает общую сумму всех неоплаченных долгов."""
     rows = await get_cached_sheet_data(context, SHEET_DEBTS)
     if not rows:
@@ -235,7 +235,7 @@ def get_total_unpaid_debt(context: ContextTypes.DEFAULT_TYPE) -> float:
             
     return total_debt
 
-def get_sales_forecast_for_today(context: ContextTypes.DEFAULT_TYPE) -> float | None:
+async def get_sales_forecast_for_today(context: ContextTypes.DEFAULT_TYPE) -> float | None:
     """Анализирует продажи за последние 8 недель для этого дня недели и выдает среднее значение."""
     today = dt.date.today()
     target_weekday = today.weekday()
@@ -292,7 +292,7 @@ def generate_due_date_buttons() -> InlineKeyboardMarkup:
     kb.append([InlineKeyboardButton("❌ Отмена", callback_data="suppliers_menu")])
     return InlineKeyboardMarkup(kb)
 
-def generate_sales_trend_chart(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> io.BytesIO | None:
+async def generate_sales_trend_chart(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> io.BytesIO | None:
     """Собирает данные о продажах и рисует линейный график динамики."""
     from matplotlib.ticker import FuncFormatter
 
@@ -404,7 +404,7 @@ def pop_nav(context):
     return stack[-1] if stack else "main_menu"
 
 
-def generate_financial_summary(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> str:
+async def generate_financial_summary(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> str:
     """Собирает данные из разных таблиц и формирует текстовый финансовый отчет."""
     
     # 1. Собираем данные
@@ -456,7 +456,7 @@ def generate_financial_summary(context: ContextTypes.DEFAULT_TYPE, start_date: d
     return summary.replace(',', ' ') # Заменяем запятые на пробелы для красоты
 
 
-def generate_expense_pie_chart(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> io.BytesIO | None:
+async def generate_expense_pie_chart(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> io.BytesIO | None:
     """Собирает данные о расходах, группирует по категориям и рисует круговую диаграмму."""
     rows = await get_cached_sheet_data(context, SHEET_EXPENSES)
     if not rows:
