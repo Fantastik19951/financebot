@@ -947,7 +947,7 @@ def clear_plan_for_date(date_to_clear_str: str):
         logging.error(f"Ошибка очистки планов для даты {date_to_clear_str}: {e}")
 
 
-async def await get_cached_sheet_data(context: ContextTypes.DEFAULT_TYPE,
+async def get_cached_sheet_data(context: ContextTypes.DEFAULT_TYPE,
                                 sheet_name: str,
                                 cache_duration_seconds: int = 60,
                                 force_update: bool = False) -> list:
