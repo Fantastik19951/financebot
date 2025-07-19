@@ -17,6 +17,7 @@ thefuzz = "*"
 python-Levenshtein = "*"
 APScheduler = "*"
 pytz = "*"
+cachetools = "*"
 
 [build-system]
 requires = ["poetry-core"]
