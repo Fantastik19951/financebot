@@ -21,6 +21,9 @@ import asyncio
 import math
 import numpy as np
 from matplotlib.ticker import MaxNLocator
+from cachetools import TTLCache
+# Глобальный кеш для Google Sheets (10 листов, 60 секунд)
+sheet_cache = TTLCache(maxsize=10, ttl=60)
 
 
 
@@ -66,7 +69,7 @@ logging.basicConfig(
 
 
 # -------ФУКНЦИИ-------
-def generate_business_insights(context: ContextTypes.DEFAULT_TYPE, days_period: int = 30) -> str:
+async def generate_business_insights(context: ContextTypes.DEFAULT_TYPE, days_period: int = 30) -> str:
     """Анализирует данные за период и формирует отчет с бизнес-инсайтами."""
     today = dt.date.today()
     start_date = today - dt.timedelta(days=days_period)
@@ -161,14 +164,14 @@ def generate_business_insights(context: ContextTypes.DEFAULT_TYPE, days_period: 
     return msg
 
 
-def push_nav(context, target):
+async def push_nav(context, target):
     stack = context.user_data.get('nav_stack', [])
     stack.append(target)
     context.user_data['nav_stack'] = stack
 
 
 
-def get_avg_daily_costs(context: ContextTypes.DEFAULT_TYPE) -> float:
+async def get_avg_daily_costs(context: ContextTypes.DEFAULT_TYPE) -> float:
     """Считает среднюю сумму всех расходов (закупка + прочие) в день за последние 30 дней."""
     today = dt.date.today()
     start_date_for_analysis = today - dt.timedelta(days=30)
@@ -190,7 +193,7 @@ def get_avg_daily_costs(context: ContextTypes.DEFAULT_TYPE) -> float:
     return total_costs / 30 if total_costs > 0 else 0
 
 
-def get_avg_order_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_name: str) -> float | None:
+async def get_avg_order_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_name: str) -> float | None:
     """Считает среднюю сумму заказа для поставщика за последний месяц."""
     rows = get_cached_sheet_data(context, SHEET_SUPPLIERS)
     if not rows:
@@ -215,7 +218,7 @@ def get_avg_order_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_name
     return None
     
 
-def get_total_unpaid_debt(context: ContextTypes.DEFAULT_TYPE) -> float:
+async def get_total_unpaid_debt(context: ContextTypes.DEFAULT_TYPE) -> float:
     """Считает общую сумму всех неоплаченных долгов."""
     rows = get_cached_sheet_data(context, SHEET_DEBTS)
     if not rows:
@@ -233,7 +236,7 @@ def get_total_unpaid_debt(context: ContextTypes.DEFAULT_TYPE) -> float:
             
     return total_debt
 
-def get_sales_forecast_for_today(context: ContextTypes.DEFAULT_TYPE) -> float | None:
+async def get_sales_forecast_for_today(context: ContextTypes.DEFAULT_TYPE) -> float | None:
     """Анализирует продажи за последние 8 недель для этого дня недели и выдает среднее значение."""
     today = dt.date.today()
     target_weekday = today.weekday()
@@ -260,7 +263,7 @@ def get_sales_forecast_for_today(context: ContextTypes.DEFAULT_TYPE) -> float | 
     
     return None
 
-def normalize_text(text: str) -> str:
+async def normalize_text(text: str) -> str:
     """Приводит текст к нижнему регистру и заменяет похожие буквы для 'умного' поиска."""
     text = text.lower()
     # Приводим похожие буквы к одному "эталонному" виду
@@ -271,7 +274,7 @@ def normalize_text(text: str) -> str:
     text = text.replace('ґ', 'г') # Добавлено: ґ -> г
     return text
     
-def generate_due_date_buttons() -> InlineKeyboardMarkup:
+async def generate_due_date_buttons() -> InlineKeyboardMarkup:
     """Создает клавиатуру с выбором даты на 2 недели вперед с полными названиями дней."""
     kb = []
     today = dt.date.today()
@@ -290,7 +293,7 @@ def generate_due_date_buttons() -> InlineKeyboardMarkup:
     kb.append([InlineKeyboardButton("❌ Отмена", callback_data="suppliers_menu")])
     return InlineKeyboardMarkup(kb)
 
-def generate_sales_trend_chart(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> io.BytesIO | None:
+async def generate_sales_trend_chart(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> io.BytesIO | None:
     """Собирает данные о продажах и рисует линейный график динамики."""
     from matplotlib.ticker import FuncFormatter
 
@@ -326,7 +329,7 @@ def generate_sales_trend_chart(context: ContextTypes.DEFAULT_TYPE, start_date: d
     plt.xticks(rotation=45)
     
     # Форматируем ось Y, чтобы показывать "50k" вместо "50000"
-    def k_formatter(x, pos):
+    async def k_formatter(x, pos):
         return f'{int(x/1000)}k' if x > 0 else '0'
     ax.yaxis.set_major_formatter(FuncFormatter(k_formatter))
 
@@ -346,7 +349,7 @@ def generate_sales_trend_chart(context: ContextTypes.DEFAULT_TYPE, start_date: d
 
 # --- ДОБАВЬТЕ ЭТИ ДВЕ НОВЫЕ ФУНКЦИИ И ОДНУ КЛАВИАТУРУ ---
 
-def sales_trend_period_kb():
+async def sales_trend_period_kb():
     """Клавиатура для выбора периода для графика продаж."""
     return InlineKeyboardMarkup([
         [
@@ -357,7 +360,7 @@ def sales_trend_period_kb():
         [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
     ])
 
-def abc_analysis_period_kb():
+async def abc_analysis_period_kb():
     """Клавиатура для выбора периода для ABC-анализа."""
     return InlineKeyboardMarkup([
         [
@@ -370,7 +373,7 @@ def abc_analysis_period_kb():
 
 
 
-def expense_chart_period_kb():
+async def expense_chart_period_kb():
     """Клавиатура для выбора периода для диаграммы расходов."""
     return InlineKeyboardMarkup([
         [
@@ -382,7 +385,7 @@ def expense_chart_period_kb():
         [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
     ])
 
-def financial_dashboard_period_kb():
+async def financial_dashboard_period_kb():
     """Клавиатура для выбора периода для финансовой панели."""
     return InlineKeyboardMarkup([
         [
@@ -394,7 +397,7 @@ def financial_dashboard_period_kb():
         [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
     ])
     
-def pop_nav(context):
+async def pop_nav(context):
     stack = context.user_data.get('nav_stack', [])
     if stack:
         stack.pop()
@@ -402,7 +405,7 @@ def pop_nav(context):
     return stack[-1] if stack else "main_menu"
 
 
-def generate_financial_summary(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> str:
+async def generate_financial_summary(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> str:
     """Собирает данные из разных таблиц и формирует текстовый финансовый отчет."""
     
     # 1. Собираем данные
@@ -454,7 +457,7 @@ def generate_financial_summary(context: ContextTypes.DEFAULT_TYPE, start_date: d
     return summary.replace(',', ' ') # Заменяем запятые на пробелы для красоты
 
 
-def generate_expense_pie_chart(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> io.BytesIO | None:
+async def generate_expense_pie_chart(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> io.BytesIO | None:
     """Собирает данные о расходах, группирует по категориям и рисует круговую диаграмму."""
     rows = get_cached_sheet_data(context, SHEET_EXPENSES)
     if not rows:
@@ -520,7 +523,7 @@ def generate_expense_pie_chart(context: ContextTypes.DEFAULT_TYPE, start_date: d
 
 
 
-def build_debt_history_keyboard(page: int, total_pages: int):
+async def build_debt_history_keyboard(page: int, total_pages: int):
     """Создает основную клавиатуру для навигации в истории долгов."""
     kb = [
         [
@@ -540,7 +543,7 @@ def build_debt_history_keyboard(page: int, total_pages: int):
     kb.append([InlineKeyboardButton("🔙 В меню Долги", callback_data="debts_menu")])
     return InlineKeyboardMarkup(kb)
 
-def build_debt_filter_keyboard(filters: dict):
+async def build_debt_filter_keyboard(filters: dict):
     """Создает интерактивную клавиатуру для меню фильтров."""
     status = filters.get('status', [])
     pay_type = filters.get('pay_type', [])
@@ -686,7 +689,7 @@ async def toggle_debt_filter(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if "Message is not modified" not in str(e):
             raise
 
-def perform_abc_analysis(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> dict | None:
+async def perform_abc_analysis(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> dict | None:
     """Проводит ABC-анализ поставщиков по сумме закупок за период."""
     suppliers_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS)
     if not suppliers_rows:
@@ -797,13 +800,13 @@ async def process_financial_dashboard_period(update: Update, context: ContextTyp
     )
     
 
-def now(): 
+async def now(): 
     return dt.datetime.now().strftime("%d.%m.%Y %H:%M:%S")
-def sdate(d=None): 
+async def sdate(d=None): 
     d = d or dt.date.today()
     return d.strftime(DATE_FMT)
 
-def pdate(s):
+async def pdate(s):
     """Парсит дату из строк в формате ДД.ММ.ГГГГ, не вызывая ошибок на других строках."""
     if not isinstance(s, str):
         return None
@@ -812,13 +815,13 @@ def pdate(s):
     except ValueError:
         return None # Просто возвращаем None, если формат не совпал
     
-def week_range(date=None):
+async def week_range(date=None):
     date = date or dt.date.today()
     start = date - dt.timedelta(days=date.weekday())
     end = start + dt.timedelta(days=6)
     return start, end
 
-def get_all_supplier_names(context: ContextTypes.DEFAULT_TYPE, force_update: bool = False, include_archived: bool = False) -> list:
+async def get_all_supplier_names(context: ContextTypes.DEFAULT_TYPE, force_update: bool = False, include_archived: bool = False) -> list:
     """Возвращает список имен всех поставщиков. По умолчанию только активных."""
     rows = get_cached_sheet_data(context, "СправочникПоставщиков", force_update)
     if not rows: return []
@@ -830,7 +833,7 @@ def get_all_supplier_names(context: ContextTypes.DEFAULT_TYPE, force_update: boo
         return [row[0] for row in rows if row and row[0] and len(row) > 1 and row[1] == "Активный"]
 
 
-def clear_conversation_state(context: ContextTypes.DEFAULT_TYPE):
+async def clear_conversation_state(context: ContextTypes.DEFAULT_TYPE):
     """Очищает все возможные ключи состояния диалога из user_data, используя глобальный список."""
     key_found = False
     # Используем глобальную константу DIALOG_KEYS
@@ -841,7 +844,7 @@ def clear_conversation_state(context: ContextTypes.DEFAULT_TYPE):
             key_found = True
     return key_found
     
-def delete_plan_by_row_index(row_index: int) -> bool:
+async def delete_plan_by_row_index(row_index: int) -> bool:
     """Находит и удаляет строку в листе ПланФактНаЗавтра по ее номеру."""
     try:
         ws = GSHEET.worksheet(SHEET_PLAN_FACT)
@@ -852,13 +855,13 @@ def delete_plan_by_row_index(row_index: int) -> bool:
         logging.error(f"Ошибка удаления записи о плане в строке {row_index}: {e}")
         return False
 
-def month_range(date=None):
+async def month_range(date=None):
     date = date or dt.date.today()
     start = dt.date(date.year, date.month, 1)
     end = dt.date(date.year, date.month + 1, 1) - dt.timedelta(days=1)
     return start, end
 
-def parse_float(value):
+async def parse_float(value):
     """Преобразует строку с запятой в десятичном числе в float."""
     if isinstance(value, (int, float)):
         return float(value)
@@ -868,7 +871,7 @@ def parse_float(value):
         return 0.0
 
 # --- И ЭТУ ФУНКЦИЮ ТОЖЕ ЗАМЕНИТЕ ---
-def get_planning_details_for_date(context: ContextTypes.DEFAULT_TYPE, report_date: dt.date):
+async def get_planning_details_for_date(context: ContextTypes.DEFAULT_TYPE, report_date: dt.date):
     """Собирает данные из ПланФакт для отчета на ЗАДАННУЮ ДАТУ, используя кэш."""
     report_date_str = sdate(report_date)
     
@@ -905,7 +908,7 @@ def get_planning_details_for_date(context: ContextTypes.DEFAULT_TYPE, report_dat
     total_amount = total_cash + total_card
     return report_text, total_cash, total_card, total_amount
 
-def get_debts_for_date(context: ContextTypes.DEFAULT_TYPE, report_date: dt.date):
+async def get_debts_for_date(context: ContextTypes.DEFAULT_TYPE, report_date: dt.date):
     """Собирает данные о долгах на заданную дату, используя кэш."""
     rows = get_cached_sheet_data(context, SHEET_DEBTS)
     if rows is None:
@@ -925,7 +928,7 @@ def get_debts_for_date(context: ContextTypes.DEFAULT_TYPE, report_date: dt.date)
             except (ValueError, IndexError):
                 continue
     return total, suppliers
-def clear_plan_for_date(date_to_clear_str: str):
+async def clear_plan_for_date(date_to_clear_str: str):
     """Очищает записи в листе ПланФактНаЗавтра для указанной даты."""
     try:
         ws = GSHEET.worksheet(SHEET_PLAN_FACT)
@@ -945,36 +948,23 @@ def clear_plan_for_date(date_to_clear_str: str):
         logging.error(f"Ошибка очистки планов для даты {date_to_clear_str}: {e}")
 
 
-def get_cached_sheet_data(context: ContextTypes.DEFAULT_TYPE, sheet_name: str, cache_duration_seconds: int = 60, force_update: bool = False) -> list | None:
-    """Получает данные из листа, используя кэш, с возможностью принудительного обновления."""
-    if not GSHEET: return None
-    
-    now = dt.datetime.now()
-    cache = context.bot_data.setdefault('sheets_cache', {})
-    
-    # Если не требуется принудительное обновление, проверяем кэш
-    if not force_update and sheet_name in cache:
-        cached_data, timestamp = cache[sheet_name]
-        if (now - timestamp).total_seconds() < cache_duration_seconds:
-            logging.info(f"Данные для '{sheet_name}' взяты из кэша.")
-            return list(cached_data)
-            
-    # Читаем из таблицы, если кэш устарел, его нет или требуется обновление
+async def get_cached_sheet_data(context: ContextTypes.DEFAULT_TYPE, sheet_name: str, cache_duration_seconds: int = 60, force_update: bool = False) -> list:
+    """Синхронно получает данные из Google Sheets с TTL-кешем."""
+    if not GSHEET:
+        return []
+    if not force_update and sheet_name in sheet_cache:
+        return sheet_cache[sheet_name]
     try:
-        logging.info(f"Читаем данные для '{sheet_name}' из Google Sheets (обновляем кэш).")
         ws = GSHEET.worksheet(sheet_name)
         data = ws.get_all_values()[1:]
-        
-        cache[sheet_name] = (data, now)
-        context.bot_data['sheets_cache'] = cache
-        
-        return list(data)
+        sheet_cache[sheet_name] = data
+        return data
     except Exception as e:
-        logging.error(f"Не удалось прочитать или кэшировать лист '{sheet_name}': {e}")
-        return None
+        logging.error(f"Не удалось получить лист '{sheet_name}': {e}")
+        return []
     
 # --- GOOGLE SHEETS ---
-def get_gsheet():
+async def get_gsheet():
     try:
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         
@@ -1025,30 +1015,30 @@ def get_gsheet():
     except Exception as e:
         logging.critical(f"Критическая ошибка подключения к Google Таблицам: {e}")
         class DummyWorksheet:
-            def append_row(self, row): 
+            async def append_row(self, row): 
                 logging.warning(f"Заглушка: append_row({row})")
-            def get_all_values(self): 
+            async def get_all_values(self): 
                 logging.warning("Заглушка: get_all_values()")
                 return []
-            def update(self, *args, **kwargs): 
+            async def update(self, *args, **kwargs): 
                 logging.warning(f"Заглушка: update({args}, {kwargs})")
-            def find(self, *args, **kwargs):
+            async def find(self, *args, **kwargs):
                 return None
-            def update_cell(self, *args, **kwargs):
+            async def update_cell(self, *args, **kwargs):
                 pass
-            def row_values(self, row):
+            async def row_values(self, row):
                 return []
-            def col_values(self, col):
+            async def col_values(self, col):
                 return []
         class DummySpreadsheet:
-            def worksheet(self, title):
+            async def worksheet(self, title):
                 logging.warning(f"Заглушка: запрошен лист '{title}'")
                 return DummyWorksheet()
         return DummySpreadsheet()
 
 GSHEET = get_gsheet()
 
-def log_action(user: Update.effective_user, category: str, action: str, comment: str = ""):
+async def log_action(user: Update.effective_user, category: str, action: str, comment: str = ""):
     """Записывает действие пользователя в лог с указанием категории."""
     try:
         user_id = str(user.id)
@@ -1062,7 +1052,7 @@ def log_action(user: Update.effective_user, category: str, action: str, comment:
         logging.error(f"Ошибка логирования: {e}")
         
 
-def get_suppliers_for_day(day_of_week: str):
+async def get_suppliers_for_day(day_of_week: str):
     """Получает список всех поставщиков на заданный день недели из таблицы 'длинного' формата."""
     try:
         ws = GSHEET.worksheet("ПланированиеПоставщиков")
@@ -1089,17 +1079,17 @@ def get_suppliers_for_day(day_of_week: str):
         logging.error(f"Ошибка получения поставщиков на день '{day_of_week}': {e}")
         return []
 
-def save_fact(date, supplier, amount, pay_type, sheet):
+async def save_fact(date, supplier, amount, pay_type, sheet):
     ws = sheet.worksheet("ПланФакт")
     ws.append_row([date, supplier, amount, pay_type])
     
-def get_unplanned_suppliers(date, all_suppliers, sheet):
+async def get_unplanned_suppliers(date, all_suppliers, sheet):
     ws = sheet.worksheet("ПланФакт")
     rows = ws.get_all_values()
     planned = [row[1] for row in rows if row[0] == date]
     return [x for x in all_suppliers if x not in planned]
 
-def month_buttons(start_date, end_date):
+async def month_buttons(start_date, end_date):
     # prev/next month с учётом смены года
     prev_month = start_date.month - 1 or 12
     prev_year = start_date.year if start_date.month > 1 else start_date.year - 1
@@ -1125,7 +1115,7 @@ def month_buttons(start_date, end_date):
     ]
 
 
-def get_planned_suppliers(date_str: str):
+async def get_planned_suppliers(date_str: str):
     """
     Получает поставщиков, которые уже были спланированы на заданную дату, 
     вместе с деталями плана и номерами их строк.
@@ -1148,7 +1138,7 @@ def get_planned_suppliers(date_str: str):
         return []
         
 
-def save_plan_fact(context: ContextTypes.DEFAULT_TYPE, date_str: str, supplier: str, amount, pay_type, user_name):
+async def save_plan_fact(context: ContextTypes.DEFAULT_TYPE, date_str: str, supplier: str, amount, pay_type, user_name):
     """Сохраняет план и вызывает модуль самообучения для обновления еженедельного графика."""
     # 1. Основное действие: сохраняем план на конкретный день
     try:
@@ -1162,7 +1152,7 @@ def save_plan_fact(context: ContextTypes.DEFAULT_TYPE, date_str: str, supplier: 
     # 2. Вызываем модуль самообучения
     update_supplier_schedule(context, date_str, supplier)
 
-def get_avg_markup_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_name: str) -> float | None:
+async def get_avg_markup_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_name: str) -> float | None:
     """Считает средний процент наценки для поставщика."""
     rows = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
     markups = []
@@ -1177,7 +1167,7 @@ def get_avg_markup_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_nam
         return sum(markups) / len(markups)
     return None
 
-def get_tomorrow_planning_details():
+async def get_tomorrow_planning_details():
     """Собирает данные из ПланФакт для отчета и возвращает форматированную строку."""
     tomorrow_str = (dt.date.today() + dt.timedelta(days=1)).strftime(DATE_FMT)
     try:
@@ -1213,7 +1203,7 @@ def get_tomorrow_planning_details():
         logging.error(f"Ошибка получения деталей планирования на завтра: {e}")
         return "", 0, 0
 
-def clear_planning_sheet():
+async def clear_planning_sheet():
     """Очищает лист ПланФактНаЗавтра после сдачи отчета."""
     try:
         ws = GSHEET.worksheet("ПланФактНаЗавтра")
@@ -1224,7 +1214,7 @@ def clear_planning_sheet():
         logging.error(f"Ошибка очистки листа ПланФактНаЗавтра: {e}")
 
 
-def update_invoice_in_sheet(row_index: int, field_to_update: str, new_value):
+async def update_invoice_in_sheet(row_index: int, field_to_update: str, new_value):
     """Обновляет одно поле в строке накладной в листе Поставщики."""
     try:
         ws = GSHEET.worksheet(SHEET_SUPPLIERS)
@@ -1247,7 +1237,7 @@ def update_invoice_in_sheet(row_index: int, field_to_update: str, new_value):
         return False
 
 
-def week_buttons(start_date, end_date):
+async def week_buttons(start_date, end_date):
     prev_start = start_date - dt.timedelta(days=7)
     prev_end = end_date - dt.timedelta(days=7)
     next_start = start_date + dt.timedelta(days=7)
@@ -1269,7 +1259,7 @@ def week_buttons(start_date, end_date):
         [InlineKeyboardButton("🔙 К отчетам", callback_data="view_reports_menu")]
     ]
 
-def month_buttons(start_date, end_date):
+async def month_buttons(start_date, end_date):
     prev_month_date = start_date - dt.timedelta(days=1)
     prev_start, _ = month_range(prev_month_date)
     next_month_date = end_date + dt.timedelta(days=1)
@@ -1290,11 +1280,11 @@ def month_buttons(start_date, end_date):
         ],
         [InlineKeyboardButton("🔙 К отчетам", callback_data="view_reports_menu")]
     ]
-def add_inventory_operation(op_type, amount, comment, user):
+async def add_inventory_operation(op_type, amount, comment, user):
     ws = GSHEET.worksheet("Остаток магазина")
     ws.append_row([sdate(), op_type, amount, comment, user])
 
-def get_repayment_date_from_history(context: ContextTypes.DEFAULT_TYPE, invoice_date: str, supplier_name: str) -> str:
+async def get_repayment_date_from_history(context: ContextTypes.DEFAULT_TYPE, invoice_date: str, supplier_name: str) -> str:
     """
     Находит накладную в листе "Поставщики" и извлекает дату погашения из истории.
     """
@@ -1318,7 +1308,7 @@ def get_repayment_date_from_history(context: ContextTypes.DEFAULT_TYPE, invoice_
         logging.error(f"Ошибка получения даты погашения: {e}")
         return ""
 
-def get_inventory_balance(context: ContextTypes.DEFAULT_TYPE, as_of_date: dt.date = None) -> float:
+async def get_inventory_balance(context: ContextTypes.DEFAULT_TYPE, as_of_date: dt.date = None) -> float:
     """
     Считает баланс остатка магазина на определенную дату (as_of_date).
     Если дата не указана, считает на текущий момент.
@@ -1355,14 +1345,14 @@ def get_inventory_balance(context: ContextTypes.DEFAULT_TYPE, as_of_date: dt.dat
             
     return balance
 
-def get_debts_page(debts, page=0, page_size=10):
+async def get_debts_page(debts, page=0, page_size=10):
     total = len(debts)
     start = page * page_size
     end = start + page_size
     page_debts = debts[start:end]
     return page_debts, total
 
-def debts_message_and_keyboard(debts, page, page_size):
+async def debts_message_and_keyboard(debts, page, page_size):
     page_debts, total = get_debts_page(debts, page, page_size)
     msg = ""
     for idx, debt in enumerate(page_debts, start=1 + page * page_size):
@@ -1379,11 +1369,11 @@ def debts_message_and_keyboard(debts, page, page_size):
     
     return msg or "Записей пока нет.", keyboard
 
-def add_salary_record(seller, salary_type, amount, comment):
+async def add_salary_record(seller, salary_type, amount, comment):
     ws = GSHEET.worksheet(SHEET_SALARIES)
     ws.append_row([sdate(), seller, salary_type, amount, comment])
 
-def build_debts_history_keyboard(rows, page=0, per_page=10):
+async def build_debts_history_keyboard(rows, page=0, per_page=10):
     # rows — это все строки из таблицы долгов (без заголовка)
     paged_rows = rows[::-1][page*per_page:(page+1)*per_page]  # последние 10, новые сверху
     kb = []
@@ -1413,7 +1403,7 @@ def build_debts_history_keyboard(rows, page=0, per_page=10):
 
 
 # --- ОСТАТОК МАГАЗИНА, ПЕРЕУЧЕТЫ И СЕЙФ ---
-def add_safe_operation(user: Update.effective_user, op_type: str, amount: float, comment: str):
+async def add_safe_operation(user: Update.effective_user, op_type: str, amount: float, comment: str):
     """Добавляет операцию в сейф и немедленно логирует это действие."""
     user_name = USER_ID_TO_NAME.get(str(user.id), user.first_name)
     ws = GSHEET.worksheet("Сейф")
@@ -1425,7 +1415,7 @@ def add_safe_operation(user: Update.effective_user, op_type: str, amount: float,
         comment=f"Сумма: {amount:.2f}₴. ({comment})"
     )
     
-def get_sellers_comparison_data(context: ContextTypes.DEFAULT_TYPE, sellers_list: list, days_period: int = 30):
+async def get_sellers_comparison_data(context: ContextTypes.DEFAULT_TYPE, sellers_list: list, days_period: int = 30):
     """Собирает данные для сравнения средних продаж продавцов по дням недели."""
     today = dt.date.today()
     start_date = today - dt.timedelta(days=days_period)
@@ -1457,7 +1447,7 @@ def get_sellers_comparison_data(context: ContextTypes.DEFAULT_TYPE, sellers_list
             
     return avg_stats
 
-def generate_comparison_chart(stats_data: dict) -> io.BytesIO:
+async def generate_comparison_chart(stats_data: dict) -> io.BytesIO:
     """Генерирует сгруппированный график для сравнения продавцов."""
     sellers = list(stats_data.keys())
     days = DAYS_OF_WEEK_RU
@@ -1488,7 +1478,7 @@ def generate_comparison_chart(stats_data: dict) -> io.BytesIO:
     plt.close(fig)
     return buf
 
-def get_safe_balance(context: ContextTypes.DEFAULT_TYPE):
+async def get_safe_balance(context: ContextTypes.DEFAULT_TYPE):
     """Считает баланс сейфа, используя кэшированные данные."""
     rows = get_cached_sheet_data(context, "Сейф")
     if rows is None:
@@ -1509,7 +1499,7 @@ def get_safe_balance(context: ContextTypes.DEFAULT_TYPE):
     return balance
 
 
-def build_edit_invoice_keyboard(invoice_data: list, selected_fields: dict, row_index: int):
+async def build_edit_invoice_keyboard(invoice_data: list, selected_fields: dict, row_index: int):
     """Строит клавиатуру для режима редактирования накладной."""
     fields = {
         'amount_income': "Сумма прихода", 'writeoff': "Возврат/списание",
@@ -1533,7 +1523,7 @@ def build_edit_invoice_keyboard(invoice_data: list, selected_fields: dict, row_i
     ])
     return InlineKeyboardMarkup(kb)
     
-def update_plan_in_sheet(row_num: int, field: str, new_value) -> bool:
+async def update_plan_in_sheet(row_num: int, field: str, new_value) -> bool:
     """Простая функция для обновления одной ячейки в ПланФакт. Возвращает True/False."""
     try:
         ws = GSHEET.worksheet(SHEET_PLAN_FACT)
@@ -1550,7 +1540,7 @@ def update_plan_in_sheet(row_num: int, field: str, new_value) -> bool:
         return False
 
 
-def get_todays_actual_invoices():
+async def get_todays_actual_invoices():
     """Эффективно получает словарь с фактическими данными накладных за сегодня."""
     if not GSHEET: return {}
     try:
@@ -1572,7 +1562,7 @@ def get_todays_actual_invoices():
         return {}
 #Управление зарплатами
 
-def get_current_payroll_period():
+async def get_current_payroll_period():
     """Определяет начальную и конечную дату текущего зарплатного периода."""
     today = dt.date.today()
     # Зарплата выплачивается 24-го числа
@@ -1593,7 +1583,7 @@ def get_current_payroll_period():
     return start_date, end_date
 
 
-def calculate_accrued_bonus(seller_name: str, all_reports=None, all_salaries=None):
+async def calculate_accrued_bonus(seller_name: str, all_reports=None, all_salaries=None):
     """
     Считает остаток бонуса к выплате по формуле: (Все начисления) - (Все выплаты).
     """
@@ -2363,7 +2353,7 @@ async def show_salary_history(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
 
-def update_supplier_payment(supplier_name, amount, user_name, debt_closed, debt_id=None):
+async def update_supplier_payment(supplier_name, amount, user_name, debt_closed, debt_id=None):
     ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
     try:
         # Если есть debt_id, ищем по уникальному номеру, иначе — по имени
@@ -3106,7 +3096,7 @@ async def send_shift_closed_notification(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.error(f"Не удалось отправить уведомление о смене админу {chat_id}: {e}")
 
-def update_supplier_schedule(context: ContextTypes.DEFAULT_TYPE, date_str: str, supplier_name: str):
+async def update_supplier_schedule(context: ContextTypes.DEFAULT_TYPE, date_str: str, supplier_name: str):
     """
     Проверяет, есть ли поставщик в графике на этот день недели. 
     Если нет - добавляет его.
@@ -3373,7 +3363,7 @@ async def view_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.message.edit_text(response, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
     context.user_data['current_debts_page'] = page
 
-def get_week_debts(start, end):
+async def get_week_debts(start, end):
     ws = GSHEET.worksheet(SHEET_DEBTS)
     rows = ws.get_all_values()[1:]
     debts = []
@@ -3388,7 +3378,7 @@ def get_week_debts(start, end):
             debts.append(row)
     return debts
 
-def add_revision(calc_sum, fact_sum, comment, user):
+async def add_revision(calc_sum, fact_sum, comment, user):
     """
     Записывает данные о переучете в лист "Переучеты" и КОРРЕКТНО
     обновляет баланс в листе "Остаток магазина".
@@ -3400,14 +3390,14 @@ def add_revision(calc_sum, fact_sum, comment, user):
     ws_inv = GSHEET.worksheet("Остаток магазина")
     
     ws_inv.append_row([sdate(), "Переучет", fact_sum, f"Новый остаток: {fact_sum}", user])
-def is_date(string):
+async def is_date(string):
     try:
         dt.datetime.strptime(string, "%d.%m.%Y")
         return True
     except:
         return False
     
-def stock_safe_menu_kb():
+async def stock_safe_menu_kb():
     """Новое главное меню для раздела."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🗄️ Сейф", callback_data="safe_menu")],
@@ -3419,7 +3409,7 @@ def stock_safe_menu_kb():
     ])
 
     
-def analytics_menu_kb():
+async def analytics_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🕵️‍♂️ Бизнес-Инсайты", callback_data="analytics_insights")],
         [InlineKeyboardButton("📊 Финансовая Панель", callback_data="analytics_financial_dashboard")],
@@ -3429,7 +3419,7 @@ def analytics_menu_kb():
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
     
-def safe_menu_kb(is_admin=False):
+async def safe_menu_kb(is_admin=False):
     """Меню для операций с сейфом с разделением прав."""
     kb = [
         [InlineKeyboardButton("💵 Остаток в сейфе", callback_data="safe_balance")],
@@ -3444,7 +3434,7 @@ def safe_menu_kb(is_admin=False):
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")])
     return InlineKeyboardMarkup(kb)
     
-def stock_menu_kb():
+async def stock_menu_kb():
     """Меню для операций с остатком магазина."""
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📦 Остаток магазина", callback_data="inventory_balance")],
@@ -3452,7 +3442,7 @@ def stock_menu_kb():
         [InlineKeyboardButton("🔙 Назад", callback_data="stock_safe_menu")]
     ])
     
-def get_tomorrow_debts():
+async def get_tomorrow_debts():
     ws = GSHEET.worksheet(SHEET_DEBTS)
     rows = ws.get_all_values()[1:]
     tomorrow = (dt.date.today() + dt.timedelta(days=1)).strftime(DATE_FMT)
@@ -3470,7 +3460,7 @@ def get_tomorrow_debts():
 
 
 # --- КЛАВИАТУРЫ ---
-def main_kb(is_admin=False):
+async def main_kb(is_admin=False):
     kb = [
         [InlineKeyboardButton("💼 Работа с остатком и сейфом", callback_data="stock_safe_menu")],
         [InlineKeyboardButton("📊 Финансы", callback_data="finance_menu")],
@@ -3486,7 +3476,7 @@ def main_kb(is_admin=False):
     kb.append([InlineKeyboardButton("❌ Закрыть", callback_data="close")])
     return InlineKeyboardMarkup(kb)
 
-def finance_menu_kb():
+async def finance_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Сдать смену", callback_data="add_report")],
         [InlineKeyboardButton("📋 Просмотр отчётов", callback_data="view_reports_menu")],
@@ -3494,7 +3484,7 @@ def finance_menu_kb():
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
 
-def reports_menu_kb():
+async def reports_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📅 За сегодня", callback_data="report_today")],
         [InlineKeyboardButton("📅 За вчера", callback_data="report_yesterday")],
@@ -3505,7 +3495,7 @@ def reports_menu_kb():
         [InlineKeyboardButton("🔙 Финансы", callback_data="finance_menu")]
     ])
 
-def staff_menu_kb(is_admin=False):
+async def staff_menu_kb(is_admin=False):
     kb = [
         [InlineKeyboardButton("🗓 Общий график смен", callback_data="view_shifts")],
         [InlineKeyboardButton("⚙️ Персональные настройки", callback_data="staff_settings_menu")]
@@ -3517,21 +3507,21 @@ def staff_menu_kb(is_admin=False):
     kb.append([InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")])
     return InlineKeyboardMarkup(kb)
 
-def staff_settings_menu_kb():
+async def staff_settings_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("💰 Моя Зарплата", callback_data="staff_my_salary")],
         [InlineKeyboardButton("🗓 Мой График", callback_data="staff_my_schedule")],
         [InlineKeyboardButton("🔙 Назад в меню Персонал", callback_data="staff_menu")]
     ])
 
-def admin_system_settings_kb():
+async def admin_system_settings_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("⚙️ Управление Пользователями", callback_data="settings_user_management")],
         [InlineKeyboardButton("💰 Финансовые Параметры", callback_data="settings_financial_params")],
         [InlineKeyboardButton("🔙 Назад в админ-панель", callback_data="admin_panel")]
     ])
 
-def calculate_detailed_salary(context: ContextTypes.DEFAULT_TYPE, user_name: str) -> dict:
+async def calculate_detailed_salary(context: ContextTypes.DEFAULT_TYPE, user_name: str) -> dict:
     """Собирает и рассчитывает детальную информацию по ЗП, разделяя ставку и премию."""
     start_period, end_period = get_current_payroll_period()
     
@@ -3567,7 +3557,7 @@ def calculate_detailed_salary(context: ContextTypes.DEFAULT_TYPE, user_name: str
         "paid_out": bonus_paid_out,       # Выплачено премий
         "to_be_paid": bonus_to_be_paid    # Остаток премии к выплате
     }
-def suppliers_menu_kb():
+async def suppliers_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Добавить накладную", callback_data="add_supplier")],
         [InlineKeyboardButton("🚚 Журнал прибытия товаров", callback_data="view_suppliers")],
@@ -3578,7 +3568,7 @@ def suppliers_menu_kb():
     ])
 
 
-def debts_menu_kb():
+async def debts_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📋 Текущие долги", callback_data="current_debts_0")],
         [InlineKeyboardButton("📆 Предстоящие платежи", callback_data="upcoming_payments")],
@@ -3588,7 +3578,7 @@ def debts_menu_kb():
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
 
-def settings_menu_kb():
+async def settings_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("👤 Профиль", callback_data="profile_settings")],
         [InlineKeyboardButton("🔔 Уведомления", callback_data="notification_settings")],
@@ -3598,7 +3588,7 @@ def settings_menu_kb():
     ])
 
 
-def admin_panel_kb():
+async def admin_panel_kb():
     return InlineKeyboardMarkup([
         # Кнопка "Добавить расход" убрана
         [InlineKeyboardButton("🧾 История расходов", callback_data="expense_history")],
@@ -3609,15 +3599,15 @@ def admin_panel_kb():
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
     
-def back_kb():
+async def back_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔙 Назад", callback_data="back")]
     ])
 
-def cancel_kb():
+async def cancel_kb():
     return InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="main_menu")]])
 
-def faq_kb():
+async def faq_kb():
     return InlineKeyboardMarkup(
         [[InlineKeyboardButton(q, callback_data=f"faq_{i}")] for i, (q, _) in enumerate(FAQ)] + 
         [[InlineKeyboardButton("🔙 Назад", callback_data="main_menu")]]
@@ -4632,7 +4622,7 @@ async def handle_report_seller(update: Update, context: ContextTypes.DEFAULT_TYP
     )
 
 
-def generate_calendar_keyboard(year: int, month: int, shifts_data: dict, mode: str = 'view'):
+async def generate_calendar_keyboard(year: int, month: int, shifts_data: dict, mode: str = 'view'):
     """Генерирует красивую клавиатуру с календарем на русском и с инициалами продавцов."""
     # Словарь с русскими названиями месяцев
     RU_MONTHS = {
@@ -4678,7 +4668,7 @@ def generate_calendar_keyboard(year: int, month: int, shifts_data: dict, mode: s
     kb.append([InlineKeyboardButton("🔙 Назад в меню", callback_data="staff_menu")])
     return InlineKeyboardMarkup(kb)
 
-def get_seller_stats_data(context: ContextTypes.DEFAULT_TYPE, seller_name: str, days_period: int = 30):
+async def get_seller_stats_data(context: ContextTypes.DEFAULT_TYPE, seller_name: str, days_period: int = 30):
     """Собирает статистику продаж для продавца за указанный период."""
     today = dt.date.today()
     start_date = today - dt.timedelta(days=days_period)
@@ -4716,7 +4706,7 @@ def get_seller_stats_data(context: ContextTypes.DEFAULT_TYPE, seller_name: str, 
         'days_worked': len(days_worked)
     }
 
-def generate_seller_stats_image(seller_name: str, stats_data: dict) -> io.BytesIO:
+async def generate_seller_stats_image(seller_name: str, stats_data: dict) -> io.BytesIO:
     """Генерирует изображение с графиком продаж по дням недели."""
     days = DAYS_OF_WEEK_RU
     sales = [stats_data['sales_by_dow'].get(day, 0) for day in days]
@@ -7422,7 +7412,7 @@ async def error_handler(update, context):
 
 
 # --- ЗАПУСК ---
-def main():
+async def main():
     """Главная функция для настройки и запуска бота."""
     
     # 1. Создаем приложение
