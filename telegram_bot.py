@@ -74,7 +74,7 @@ async def generate_business_insights(context: ContextTypes.DEFAULT_TYPE, days_pe
     today = dt.date.today()
     start_date = today - dt.timedelta(days=days_period)
 
-    suppliers_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []
+    suppliers_rows = await get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []
     
     # --- 1. Анализ эффективности продавцов по маржинальности ---
     seller_markup_data = defaultdict(list)
@@ -176,8 +176,8 @@ async def get_avg_daily_costs(context: ContextTypes.DEFAULT_TYPE) -> float:
     today = dt.date.today()
     start_date_for_analysis = today - dt.timedelta(days=30)
     
-    suppliers_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
-    expenses_rows = get_cached_sheet_data(context, SHEET_EXPENSES) or []
+    suppliers_rows = await get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
+    expenses_rows = await get_cached_sheet_data(context, SHEET_EXPENSES) or []
     
     total_costs = 0.0
     # Суммируем затраты на закупку
@@ -195,7 +195,7 @@ async def get_avg_daily_costs(context: ContextTypes.DEFAULT_TYPE) -> float:
 
 async def get_avg_order_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_name: str) -> float | None:
     """Считает среднюю сумму заказа для поставщика за последний месяц."""
-    rows = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+    rows = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
     if not rows:
         return None
 
@@ -220,7 +220,7 @@ async def get_avg_order_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplie
 
 async def get_total_unpaid_debt(context: ContextTypes.DEFAULT_TYPE) -> float:
     """Считает общую сумму всех неоплаченных долгов."""
-    rows = get_cached_sheet_data(context, SHEET_DEBTS)
+    rows = await get_cached_sheet_data(context, SHEET_DEBTS)
     if not rows:
         return 0.0
 
@@ -243,7 +243,7 @@ async def get_sales_forecast_for_today(context: ContextTypes.DEFAULT_TYPE) -> fl
     # Анализируем данные за последние 60 дней
     start_date_for_analysis = today - dt.timedelta(days=60)
 
-    reports = get_cached_sheet_data(context, SHEET_REPORT)
+    reports = await get_cached_sheet_data(context, SHEET_REPORT)
     if not reports:
         return None
 
@@ -297,7 +297,7 @@ async def generate_sales_trend_chart(context: ContextTypes.DEFAULT_TYPE, start_d
     """Собирает данные о продажах и рисует линейный график динамики."""
     from matplotlib.ticker import FuncFormatter
 
-    reports = get_cached_sheet_data(context, SHEET_REPORT)
+    reports = await get_cached_sheet_data(context, SHEET_REPORT)
     if not reports:
         return None
 
@@ -409,10 +409,10 @@ async def generate_financial_summary(context: ContextTypes.DEFAULT_TYPE, start_d
     """Собирает данные из разных таблиц и формирует текстовый финансовый отчет."""
     
     # 1. Собираем данные
-    reports = get_cached_sheet_data(context, SHEET_REPORT) or []
-    expenses = get_cached_sheet_data(context, SHEET_EXPENSES) or []
-    suppliers = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
-    salaries = get_cached_sheet_data(context, SHEET_SALARIES) or []
+    reports = await get_cached_sheet_data(context, SHEET_REPORT) or []
+    expenses = await get_cached_sheet_data(context, SHEET_EXPENSES) or []
+    suppliers = await get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
+    salaries = await get_cached_sheet_data(context, SHEET_SALARIES) or []
 
     # 2. Считаем показатели за период
     total_revenue = 0
@@ -459,7 +459,7 @@ async def generate_financial_summary(context: ContextTypes.DEFAULT_TYPE, start_d
 
 async def generate_expense_pie_chart(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> io.BytesIO | None:
     """Собирает данные о расходах, группирует по категориям и рисует круговую диаграмму."""
-    rows = get_cached_sheet_data(context, SHEET_EXPENSES)
+    rows = await get_cached_sheet_data(context, SHEET_EXPENSES)
     if not rows:
         return None
 
@@ -691,7 +691,7 @@ async def toggle_debt_filter(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def perform_abc_analysis(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> dict | None:
     """Проводит ABC-анализ поставщиков по сумме закупок за период."""
-    suppliers_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+    suppliers_rows = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
     if not suppliers_rows:
         return None
 
@@ -823,7 +823,7 @@ async def week_range(date=None):
 
 async def get_all_supplier_names(context: ContextTypes.DEFAULT_TYPE, force_update: bool = False, include_archived: bool = False) -> list:
     """Возвращает список имен всех поставщиков. По умолчанию только активных."""
-    rows = get_cached_sheet_data(context, "СправочникПоставщиков", force_update)
+    rows = await get_cached_sheet_data(context, "СправочникПоставщиков", force_update)
     if not rows: return []
     
     if include_archived:
@@ -875,7 +875,7 @@ async def get_planning_details_for_date(context: ContextTypes.DEFAULT_TYPE, repo
     """Собирает данные из ПланФакт для отчета на ЗАДАННУЮ ДАТУ, используя кэш."""
     report_date_str = sdate(report_date)
     
-    rows = get_cached_sheet_data(context, SHEET_PLAN_FACT)
+    rows = await get_cached_sheet_data(context, SHEET_PLAN_FACT)
     if rows is None:
         logging.error("Не удалось получить данные из листа ПланФактНаЗавтра")
         return "", 0, 0, 0
@@ -910,7 +910,7 @@ async def get_planning_details_for_date(context: ContextTypes.DEFAULT_TYPE, repo
 
 async def get_debts_for_date(context: ContextTypes.DEFAULT_TYPE, report_date: dt.date):
     """Собирает данные о долгах на заданную дату, используя кэш."""
-    rows = get_cached_sheet_data(context, SHEET_DEBTS)
+    rows = await get_cached_sheet_data(context, SHEET_DEBTS)
     if rows is None:
         logging.error("Не удалось получить данные из листа Долги для get_debts_for_date")
         return 0, []
@@ -948,7 +948,7 @@ async def clear_plan_for_date(date_to_clear_str: str):
         logging.error(f"Ошибка очистки планов для даты {date_to_clear_str}: {e}")
 
 
-async def get_cached_sheet_data(context: ContextTypes.DEFAULT_TYPE, sheet_name: str, cache_duration_seconds: int = 60, force_update: bool = False) -> list:
+async def await get_cached_sheet_data(context: ContextTypes.DEFAULT_TYPE, sheet_name: str, cache_duration_seconds: int = 60, force_update: bool = False) -> list:
     """Синхронно получает данные из Google Sheets с TTL-кешем."""
     if not GSHEET:
         return []
@@ -1154,7 +1154,7 @@ async def save_plan_fact(context: ContextTypes.DEFAULT_TYPE, date_str: str, supp
 
 async def get_avg_markup_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_name: str) -> float | None:
     """Считает средний процент наценки для поставщика."""
-    rows = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
+    rows = await get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
     markups = []
     for row in rows:
         if len(row) > 5 and row[1] == supplier_name:
@@ -1289,7 +1289,7 @@ async def get_repayment_date_from_history(context: ContextTypes.DEFAULT_TYPE, in
     Находит накладную в листе "Поставщики" и извлекает дату погашения из истории.
     """
     try:
-        suppliers_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+        suppliers_rows = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
         if not suppliers_rows:
             return ""
 
@@ -1313,7 +1313,7 @@ async def get_inventory_balance(context: ContextTypes.DEFAULT_TYPE, as_of_date: 
     Считает баланс остатка магазина на определенную дату (as_of_date).
     Если дата не указана, считает на текущий момент.
     """
-    rows = get_cached_sheet_data(context, SHEET_INVENTORY)
+    rows = await get_cached_sheet_data(context, SHEET_INVENTORY)
     if not rows:
         return 0.0
 
@@ -1420,7 +1420,7 @@ async def get_sellers_comparison_data(context: ContextTypes.DEFAULT_TYPE, seller
     today = dt.date.today()
     start_date = today - dt.timedelta(days=days_period)
     
-    reports = get_cached_sheet_data(context, SHEET_REPORT)
+    reports = await get_cached_sheet_data(context, SHEET_REPORT)
     if not reports:
         return None
 
@@ -1480,7 +1480,7 @@ async def generate_comparison_chart(stats_data: dict) -> io.BytesIO:
 
 async def get_safe_balance(context: ContextTypes.DEFAULT_TYPE):
     """Считает баланс сейфа, используя кэшированные данные."""
-    rows = get_cached_sheet_data(context, "Сейф")
+    rows = await get_cached_sheet_data(context, "Сейф")
     if rows is None:
         logging.error("Не удалось получить данные для расчета баланса сейфа.")
         return 0
@@ -1753,7 +1753,7 @@ async def edit_invoice_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
         'new_values': {} # Новые значения для этих полей
     }
     
-    all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+    all_invoices = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
     invoice_data = all_invoices[row_index - 2]
     
     kb = build_edit_invoice_keyboard(invoice_data, {}, row_index)
@@ -1813,7 +1813,7 @@ async def edit_invoice_toggle_field(update: Update, context: ContextTypes.DEFAUL
     else:
         edit_state['selected_fields'][field_key] = None # Просто помечаем, что оно выбрано
 
-    all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+    all_invoices = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
     invoice_data = all_invoices[row_index - 2]
     kb = build_edit_invoice_keyboard(invoice_data, edit_state['selected_fields'], row_index)
     await query.message.edit_text("<b>✏️ Редактирование накладной</b>\n\nВыберите галочками поля, которые хотите изменить, и нажмите 'Сохранить'.",
@@ -1835,7 +1835,7 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     # 1. Получаем старые данные из кэша ДО изменений
-    all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+    all_invoices = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
     old_row = all_invoices[row_index - 2]
     old_to_pay = parse_float(old_row[4])
     old_markup = parse_float(old_row[5])
@@ -1848,8 +1848,8 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
         update_invoice_in_sheet(row_index, field, new_value)
     
     # 3. Принудительно сбрасываем кэш, чтобы прочитать новые данные
-    get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True)
-    all_invoices_new = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+    await get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True)
+    all_invoices_new = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
     new_row = all_invoices_new[row_index - 2]
     
     # 3.1. Пересчитываем и обновляем "К оплате"
@@ -1895,7 +1895,7 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
     # 5. Обновляем лист "Долги"
     ws_debts = GSHEET.worksheet(SHEET_DEBTS)
     # Принудительно читаем свежие данные, так как могли быть изменения
-    debts_rows = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) 
+    debts_rows = await get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) 
     found_debt_row_index = -1
     for i, debt_row in enumerate(debts_rows):
         if debt_row[0] == original_date and debt_row[1] == original_supplier:
@@ -1940,7 +1940,7 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Финальные действия
     context.user_data.pop('edit_invoice', None)
-    get_cached_sheet_data(context, "Сейф", force_update=True) # Сбрасываем кэш сейфа
+    await get_cached_sheet_data(context, "Сейф", force_update=True) # Сбрасываем кэш сейфа
     await query.message.edit_text("✅ Накладная успешно обновлена! Все связанные данные, включая сейф, пересчитаны.",
                                   reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Продолжить просмотр", callback_data=f"edit_invoice_cancel_{row_index}")]]))
 
@@ -1964,7 +1964,7 @@ async def check_financial_shield(context: ContextTypes.DEFAULT_TYPE):
     
     # --- 2. Проверка просроченных долгов ---
     today = dt.date.today()
-    all_debts = get_cached_sheet_data(context, SHEET_DEBTS) or []
+    all_debts = await get_cached_sheet_data(context, SHEET_DEBTS) or []
     overdue_debts_list = [
         f"  • {row[1]}: {parse_float(row[4]):.2f}₴ (срок: {row[5]})"
         for row in all_debts
@@ -2190,7 +2190,7 @@ async def show_log_for_category(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.message.edit_text(f"📖 Загружаю логи для категории '{category}'...")
     
-    all_logs = get_cached_sheet_data(context, SHEET_LOG, force_update=True) or []
+    all_logs = await get_cached_sheet_data(context, SHEET_LOG, force_update=True) or []
     filtered_logs = [row for row in all_logs if len(row) > 3 and row[3] == category]
 
     if not filtered_logs:
@@ -2418,9 +2418,9 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE, start_
         msg_func = update.message.reply_text
 
     # Используем кэширование для всех трех листов
-    report_rows = get_cached_sheet_data(context, SHEET_REPORT)
-    exp_rows = get_cached_sheet_data(context, SHEET_EXPENSES)
-    sup_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+    report_rows = await get_cached_sheet_data(context, SHEET_REPORT)
+    exp_rows = await get_cached_sheet_data(context, SHEET_EXPENSES)
+    sup_rows = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
 
     # Проверяем, что все данные загрузились
     if report_rows is None or exp_rows is None or sup_rows is None:
@@ -2508,7 +2508,7 @@ async def show_daily_dashboard(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # --- 1. Загружаем все необходимые данные ---
     all_data = {
-        sheet: get_cached_sheet_data(context, sheet, force_update=True) or []
+        sheet: await get_cached_sheet_data(context, sheet, force_update=True) or []
         for sheet in [SHEET_SHIFTS, SHEET_PLAN_FACT, SHEET_SUPPLIERS, SHEET_DEBTS, "Сейф", SHEET_EXPENSES, SHEET_INVENTORY]
     }
 
@@ -2603,7 +2603,7 @@ async def ask_for_invoice_edit_value(update: Update, context: ContextTypes.DEFAU
     
     # ... (остальная часть функции для получения prompts, kb и отправки сообщения остается БЕЗ ИЗМЕНЕНИЙ)
     row_index = edit_state.get('row_index')
-    all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+    all_invoices = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
     old_data_row = all_invoices[row_index - 2]
     column_map = {'amount_income': 2, 'writeoff': 3, 'markup_amount': 5, 'pay_type': 6, 'due_date': 9, 'comment': 10}
     old_value = old_data_row[column_map.get(current_field)] if len(old_data_row) > column_map.get(current_field, 99) else ""
@@ -2793,7 +2793,7 @@ async def show_invoices_list(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await query.message.edit_text("❌ Ошибка в данных для показа накладных.")
         return
 
-    all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+    all_invoices = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
     if all_invoices is None:
         await query.message.edit_text("❌ Не удалось загрузить данные о накладных.")
         return
@@ -2849,7 +2849,7 @@ async def show_single_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE
     # которые гарантированно имеют значение.
     
     day_invoice_rows_indices = context.user_data.get('day_invoice_rows', [])
-    all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+    all_invoices = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
 
     if not day_invoice_rows_indices or all_invoices is None:
         await query.message.edit_text("❌ Данные о накладных устарели, вернитесь назад и попробуйте снова.")
@@ -2958,7 +2958,7 @@ async def execute_delete_invoice(update: Update, context: ContextTypes.DEFAULT_T
         # Откат долга, если он был
         if pay_type.startswith("Долг"):
             ws_debts = GSHEET.worksheet(SHEET_DEBTS)
-            debts_rows = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
+            debts_rows = await get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
             for i, debt_row in enumerate(debts_rows, start=2):
                 if debt_row[0] == invoice_date and debt_row[1] == supplier_name:
                     ws_debts.delete_rows(i)
@@ -2969,10 +2969,10 @@ async def execute_delete_invoice(update: Update, context: ContextTypes.DEFAULT_T
         ws_sup.delete_rows(row_index)
         
         # 4. Сбрасываем кэши
-        get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True)
-        get_cached_sheet_data(context, SHEET_DEBTS, force_update=True)
-        get_cached_sheet_data(context, "Сейф", force_update=True)
-        get_cached_sheet_data(context, SHEET_INVENTORY, force_update=True)
+        await get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True)
+        await get_cached_sheet_data(context, SHEET_DEBTS, force_update=True)
+        await get_cached_sheet_data(context, "Сейф", force_update=True)
+        await get_cached_sheet_data(context, SHEET_INVENTORY, force_update=True)
 
         await query.message.edit_text(
             f"✅ Накладная для <b>{supplier_name}</b> от {invoice_date} была успешно удалена.",
@@ -3110,7 +3110,7 @@ async def update_supplier_schedule(context: ContextTypes.DEFAULT_TYPE, date_str:
         day_of_week = DAYS_OF_WEEK_RU[plan_date.weekday()]
         
         # Проверяем, есть ли уже такая запись в графике, чтобы избежать дублей
-        schedule_rows = get_cached_sheet_data(context, SHEET_PLANNING_SCHEDULE) or []
+        schedule_rows = await get_cached_sheet_data(context, SHEET_PLANNING_SCHEDULE) or []
         
         entry_exists = any(
             len(row) > 1 and row[0].strip().lower() == day_of_week and row[1].strip() == supplier_name
@@ -3122,7 +3122,7 @@ async def update_supplier_schedule(context: ContextTypes.DEFAULT_TYPE, date_str:
             ws_schedule.append_row([day_of_week, supplier_name])
             logging.info(f"Самообучение: Поставщик '{supplier_name}' добавлен в график на '{day_of_week}'.")
             # Сбрасываем кэш для этого листа, чтобы изменения сразу были видны
-            get_cached_sheet_data(context, SHEET_PLANNING_SCHEDULE, force_update=True)
+            await get_cached_sheet_data(context, SHEET_PLANNING_SCHEDULE, force_update=True)
         else:
             logging.info(f"Поставщик '{supplier_name}' уже в графике на '{day_of_week}'. Обучение не требуется.")
 
@@ -3290,7 +3290,7 @@ async def show_invoice_edit_confirmation(update: Update, context: ContextTypes.D
         await message.reply_text("❌ Ошибка: данные для редактирования утеряны.")
         return
 
-    all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+    all_invoices = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
     old_data_row = all_invoices[row_index - 2]
     
     field_names = {
@@ -3530,7 +3530,7 @@ async def calculate_detailed_salary(context: ContextTypes.DEFAULT_TYPE, user_nam
     bonus_paid_out = 0.0
     shifts_worked = 0
 
-    salaries_rows = get_cached_sheet_data(context, SHEET_SALARIES, force_update=True) or []
+    salaries_rows = await get_cached_sheet_data(context, SHEET_SALARIES, force_update=True) or []
     
     for row in salaries_rows:
         if len(row) > 3 and (d := pdate(row[0])) and start_period <= d <= end_period and row[1] == user_name:
@@ -3784,8 +3784,8 @@ async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TY
 
     # --- Получение данных ---
     try:
-        all_plans = get_cached_sheet_data(context, SHEET_PLAN_FACT, force_update=True) or []
-        all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []
+        all_plans = await get_cached_sheet_data(context, SHEET_PLAN_FACT, force_update=True) or []
+        all_invoices = await get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []
     except Exception as e:
         await query.message.edit_text(f"❌ Ошибка чтения данных: {e}")
         return
@@ -4000,7 +4000,7 @@ async def show_expense_history(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.message.edit_text("🧾 Загружаю историю расходов...")
 
-    rows = get_cached_sheet_data(context, SHEET_EXPENSES, force_update=True) or []
+    rows = await get_cached_sheet_data(context, SHEET_EXPENSES, force_update=True) or []
     if not rows:
         return await query.message.edit_text("История расходов пуста.", reply_markup=admin_panel_kb())
 
@@ -4048,7 +4048,7 @@ async def show_my_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user_name:
         return await query.message.edit_text("❌ Вашего ID нет в базе пользователей.", reply_markup=staff_settings_menu_kb())
 
-    shifts_rows = get_cached_sheet_data(context, SHEET_SHIFTS) or []
+    shifts_rows = await get_cached_sheet_data(context, SHEET_SHIFTS) or []
     my_upcoming_shifts = []
     today = dt.date.today()
     
@@ -4333,7 +4333,7 @@ async def save_edited_supplier_name(update: Update, context: ContextTypes.DEFAUL
             updated_count += len(cells_to_update)
             if len(cells_to_update) > 0:
                 # Сбрасываем кэш измененного листа
-                get_cached_sheet_data(context, sheet_name, force_update=True)
+                await get_cached_sheet_data(context, sheet_name, force_update=True)
         
         await processing_message.edit_text(f"✅ Готово! Всего обновлено {updated_count} записей.", reply_markup=suppliers_menu_kb())
 
@@ -4349,8 +4349,8 @@ async def show_supplier_dossier(update: Update, context: ContextTypes.DEFAULT_TY
     await query.message.edit_text(f"📂 Собираю досье на <b>{supplier_name}</b>...", parse_mode=ParseMode.HTML)
 
     # Собираем данные
-    suppliers = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
-    debts = get_cached_sheet_data(context, SHEET_DEBTS) or []
+    suppliers = await get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
+    debts = await get_cached_sheet_data(context, SHEET_DEBTS) or []
     
     total_spent = 0
     first_invoice_date = None
@@ -4420,7 +4420,7 @@ async def execute_delete_supplier(update: Update, context: ContextTypes.DEFAULT_
 
         # Сбрасываем кэши
         get_all_supplier_names(context, force_update=True)
-        get_cached_sheet_data(context, SHEET_PLANNING_SCHEDULE, force_update=True)
+        await get_cached_sheet_data(context, SHEET_PLANNING_SCHEDULE, force_update=True)
 
         await query.message.edit_text(f"✅ Поставщик '<b>{supplier_name}</b>' успешно удален из справочников.", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В меню", callback_data="supplier_directory_menu")]]))
     except Exception as e:
@@ -4673,7 +4673,7 @@ async def get_seller_stats_data(context: ContextTypes.DEFAULT_TYPE, seller_name:
     today = dt.date.today()
     start_date = today - dt.timedelta(days=days_period)
     
-    reports = get_cached_sheet_data(context, SHEET_REPORT)
+    reports = await get_cached_sheet_data(context, SHEET_REPORT)
     if not reports:
         return None
 
@@ -4797,7 +4797,7 @@ async def view_shifts_calendar(update: Update, context: ContextTypes.DEFAULT_TYP
         year, month = today.year, today.month
 
     # Загружаем данные о сменах
-    rows = get_cached_sheet_data(context, SHEET_SHIFTS)
+    rows = await get_cached_sheet_data(context, SHEET_SHIFTS)
     shifts_data = {row[0]: [seller for seller in row[1:] if seller] for row in rows} if rows else {}
     
     kb = generate_calendar_keyboard(year, month, shifts_data, mode='view')
@@ -4818,7 +4818,7 @@ async def show_shift_details(update: Update, context: ContextTypes.DEFAULT_TYPE)
         return
 
     # Используем кэш для быстрой загрузки данных
-    rows = get_cached_sheet_data(context, SHEET_SHIFTS)
+    rows = await get_cached_sheet_data(context, SHEET_SHIFTS)
     if rows is None:
         await query.message.edit_text("❌ Ошибка чтения данных о сменах.")
         return
@@ -4861,7 +4861,7 @@ async def edit_shifts_calendar(update: Update, context: ContextTypes.DEFAULT_TYP
         today = dt.date.today()
         year, month = today.year, today.month
         
-    rows = get_cached_sheet_data(context, SHEET_SHIFTS)
+    rows = await get_cached_sheet_data(context, SHEET_SHIFTS)
     shifts_data = {row[0]: [seller for seller in row[1:] if seller] for row in rows} if rows else {}
     
     kb = generate_calendar_keyboard(year, month, shifts_data, mode='edit')
@@ -4873,7 +4873,7 @@ async def edit_single_shift(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     date_str = query.data.split('_', 2)[2]
     
-    rows = get_cached_sheet_data(context, SHEET_SHIFTS)
+    rows = await get_cached_sheet_data(context, SHEET_SHIFTS)
     shifts_data = {row[0]: [seller for seller in row[1:] if seller] for row in rows} if rows else {}
     
     sellers_on_day = shifts_data.get(date_str, [])
@@ -5144,7 +5144,7 @@ async def show_today_invoices(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     today_str = sdate()
-    rows = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+    rows = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
     if rows is None:
         await query.message.edit_text("❌ Ошибка чтения данных о поставщиках.")
         return
@@ -5218,7 +5218,7 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if bonus > 0:
                 add_salary_record(seller, "Премия 2%", bonus, f"За {today_str} (продажи: {total_sales:.2f}₴)")
 
-        get_cached_sheet_data(context, "Сейф", force_update=True)
+        await get_cached_sheet_data(context, "Сейф", force_update=True)
         safe_bal_after_shift = get_safe_balance(context)
 
         total_debts, suppliers_debts = (0, [])
@@ -5310,7 +5310,7 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def generate_daily_report_text(context: ContextTypes.DEFAULT_TYPE, report_date_str: str):
     """Готовит текст детального отчета, правильно читая 10 столбцов."""
-    reports = get_cached_sheet_data(context, SHEET_REPORT)
+    reports = await get_cached_sheet_data(context, SHEET_REPORT)
     if reports is None: return "❌ Ошибка чтения отчетов."
     
     daily_report_row = next((row for row in reports if row and row[0].strip() == report_date_str), None)
@@ -5326,7 +5326,7 @@ async def generate_daily_report_text(context: ContextTypes.DEFAULT_TYPE, report_
     except (ValueError, IndexError) as e:
         return f"❌ Ошибка данных в отчете за {report_date_str}: {e}"
     
-    expenses = get_cached_sheet_data(context, SHEET_EXPENSES)
+    expenses = await get_cached_sheet_data(context, SHEET_EXPENSES)
     expenses_total = sum(float(row[1].replace(',', '.')) for row in expenses if row and row[0].strip() == date and len(row) > 1 and row[1]) if expenses else 0
 
     resp = (f"📖 <b>Детальный отчет за {date}</b>\n\n"
@@ -5374,7 +5374,7 @@ async def show_detailed_report(update: Update, context: ContextTypes.DEFAULT_TYP
     current_index = int(index_str)
     start_date, end_date = pdate(start_str), pdate(end_str)
     
-    report_rows = get_cached_sheet_data(context, SHEET_REPORT)
+    report_rows = await get_cached_sheet_data(context, SHEET_REPORT)
     if report_rows is None:
         return await query.message.edit_text("❌ Ошибка чтения отчетов.")
 
@@ -5570,7 +5570,7 @@ async def inventory_history(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     query = update.callback_query
     await query.message.edit_text("📦 Загружаю историю остатка...")
     
-    rows = get_cached_sheet_data(context, SHEET_INVENTORY, force_update=True) or []
+    rows = await get_cached_sheet_data(context, SHEET_INVENTORY, force_update=True) or []
     if not rows:
         return await query.message.edit_text("История операций с остатком пуста.", reply_markup=stock_menu_kb())
 
@@ -6040,7 +6040,7 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
             supplier_name_to_check = supplier_data['name']
             if supplier_name_to_check:
                 ws_plan = GSHEET.worksheet(SHEET_PLAN_FACT)
-                plan_rows = get_cached_sheet_data(context, SHEET_PLAN_FACT, force_update=True)
+                plan_rows = await get_cached_sheet_data(context, SHEET_PLAN_FACT, force_update=True)
                 for i, plan_row in enumerate(plan_rows, start=2):
                     if len(plan_row) > 5 and plan_row[0] == today_str and plan_row[1] == supplier_name_to_check and plan_row[5] != "Прибыл":
                         ws_plan.update_cell(i, 6, "Прибыл")
@@ -6098,7 +6098,7 @@ async def show_expenses_detail(update: Update, context: ContextTypes.DEFAULT_TYP
         await query.message.edit_text("❌ Ошибка формата даты в навигации.")
         return
 
-    rows = get_cached_sheet_data(context, SHEET_EXPENSES) or []
+    rows = await get_cached_sheet_data(context, SHEET_EXPENSES) or []
     
     # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Фильтруем расходы по типу ---
     exp_list = []
@@ -6227,7 +6227,7 @@ async def show_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await query.message.edit_text("⏳ Загружаю список текущих долгов...")
 
     try:
-        rows = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
+        rows = await get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
         unpaid_debts = []
         for i, row in enumerate(rows):
             try:
@@ -6367,11 +6367,11 @@ async def generate_shift_protocol(update: Update, context: ContextTypes.DEFAULT_
     await query.message.edit_text(f"📜 Собираю полный протокол смены за {date_str}...")
 
     # --- 1. Собираем данные из всех таблиц ---
-    supplier_rows = [r for r in (get_cached_sheet_data(context, SHEET_SUPPLIERS) or []) if r and r[0] == date_str]
-    expense_rows = [r for r in (get_cached_sheet_data(context, SHEET_EXPENSES) or []) if r and r[0] == date_str and "Закрытие смены" in r[5]]
-    safe_rows = [r for r in (get_cached_sheet_data(context, "Сейф") or []) if r and r[0].startswith(date_str)]
-    inventory_rows = [r for r in (get_cached_sheet_data(context, SHEET_INVENTORY) or []) if r and r[0] == date_str]
-    report_row = next((r for r in (get_cached_sheet_data(context, SHEET_REPORT) or []) if r and r[0] == date_str), None)
+    supplier_rows = [r for r in (await get_cached_sheet_data(context, SHEET_SUPPLIERS) or []) if r and r[0] == date_str]
+    expense_rows = [r for r in (await get_cached_sheet_data(context, SHEET_EXPENSES) or []) if r and r[0] == date_str and "Закрытие смены" in r[5]]
+    safe_rows = [r for r in (await get_cached_sheet_data(context, "Сейф") or []) if r and r[0].startswith(date_str)]
+    inventory_rows = [r for r in (await get_cached_sheet_data(context, SHEET_INVENTORY) or []) if r and r[0] == date_str]
+    report_row = next((r for r in (await get_cached_sheet_data(context, SHEET_REPORT) or []) if r and r[0] == date_str), None)
 
     # --- 2. Формируем красивое сообщение ---
     msg = f"<b>📜 Протокол смены за {date_str}</b>\n"
@@ -6425,7 +6425,7 @@ async def view_repayable_debts(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.message.edit_text("⏳ Загружаю список долгов для погашения...")
 
-    rows = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
+    rows = await get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
     unpaid_debts = [row + [i+2] for i, row in enumerate(rows) if len(row) >= 7 and row[6].strip().lower() != "да"]
     unpaid_debts.sort(key=lambda x: pdate(x[5]) or dt.date.max)
 
@@ -6495,7 +6495,7 @@ async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_in
         
         # Обновляем статус в листе "Поставщики"
         ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
-        sup_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []
+        sup_rows = await get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []
         for i, sup_row in enumerate(sup_rows, start=2):
             if len(sup_row) > 8 and sup_row[0] == date_created and sup_row[1] == supplier_name:
                 ws_sup.update_cell(i, 8, "Да")
@@ -6531,7 +6531,7 @@ async def view_debts_history(update: Update, context: ContextTypes.DEFAULT_TYPE,
     await query.answer()
     
     context.user_data['debts_history_page'] = page
-    rows = get_cached_sheet_data(context, SHEET_DEBTS)
+    rows = await get_cached_sheet_data(context, SHEET_DEBTS)
     if rows is None:
         await query.message.edit_text("❌ Ошибка чтения истории долгов.")
         return
@@ -6611,7 +6611,7 @@ async def withdraw_daily_salary(update: Update, context: ContextTypes.DEFAULT_TY
     today_str = sdate()
     # Проверяем, не была ли уже выплачена ставка сегодня
     try:
-        salaries_rows = get_cached_sheet_data(context, SHEET_SALARIES, force_update=True) or []
+        salaries_rows = await get_cached_sheet_data(context, SHEET_SALARIES, force_update=True) or []
         for row in salaries_rows:
             # Ищем запись: Дата=сегодня, Продавец=текущий, Тип=Ставка
             if len(row) > 2 and row[0] == today_str and row[1] == seller_name and row[2] == "Ставка":
@@ -6632,7 +6632,7 @@ async def safe_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page:
     query = update.callback_query
     await query.message.edit_text("🧾 Загружаю историю сейфа...")
 
-    rows = get_cached_sheet_data(context, "Сейф", force_update=True) or []
+    rows = await get_cached_sheet_data(context, "Сейф", force_update=True) or []
     if not rows:
         return await query.message.edit_text("История операций с сейфом пуста.", reply_markup=safe_menu_kb())
 
@@ -6902,7 +6902,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif state_key == 'search_debt':
         search_query = update.message.text.strip().lower()
         context.user_data.pop('search_debt', None)
-        rows = get_cached_sheet_data(context, SHEET_DEBTS)
+        rows = await get_cached_sheet_data(context, SHEET_DEBTS)
         if rows is None:
             await update.message.reply_text(f"❌ Ошибка чтения таблицы долгов.")
             return
@@ -7073,7 +7073,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 'new_values': {}       # Словарь для хранения новых введенных значений
             }
             
-            all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+            all_invoices = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
             # Проверяем, что индекс не выходит за пределы списка
             if row_index - 2 < len(all_invoices):
                 invoice_data = all_invoices[row_index - 2]
@@ -7097,7 +7097,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 edit_state['selected_fields'][field] = None
             
-            all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+            all_invoices = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
             invoice_data = all_invoices[row_index - 2]
             kb = build_edit_invoice_keyboard(invoice_data, edit_state['selected_fields'], row_index)
             await query.message.edit_text("<b>✏️ Редактирование накладной</b>\n\nВыберите галочками поля для изменения и нажмите 'Сохранить'.",
@@ -7111,7 +7111,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             day_invoice_rows = context.user_data.get('day_invoice_rows', [])
             try:
                 list_index = day_invoice_rows.index(row_index)
-                all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+                all_invoices = await get_cached_sheet_data(context, SHEET_SUPPLIERS)
                 date_str = sdate(pdate(all_invoices[row_index-2][0]))
                 
                 # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
@@ -7229,7 +7229,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("repay_final_"):
             await repay_final(update, context, int(data.split('_')[2]))
         elif data == "debts_history_start":
-            all_logs = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
+            all_logs = await get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
             # Сортируем один раз при загрузке
             context.user_data['debt_history_data'] = sorted(all_logs, key=lambda r: pdate(r[0]) or dt.date.min)
             context.user_data.pop('debt_filters', None)
@@ -7316,7 +7316,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             page = 0
             # Если это самый первый вызов (без номера страницы), то вычисляем последнюю страницу
             if data == "safe_history":
-                rows = get_cached_sheet_data(context, "Сейф") or []
+                rows = await get_cached_sheet_data(context, "Сейф") or []
                 total_pages = math.ceil(len(rows) / 10)
                 page = max(0, total_pages - 1)
             else: # Если это навигация по страницам, берем номер из кнопки
@@ -7330,7 +7330,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             page = 0
             # Аналогичная логика для истории остатка
             if data == "inventory_history":
-                rows = get_cached_sheet_data(context, SHEET_INVENTORY) or []
+                rows = await get_cached_sheet_data(context, SHEET_INVENTORY) or []
                 total_pages = math.ceil(len(rows) / 10)
                 page = max(0, total_pages - 1)
             else:
@@ -7378,7 +7378,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Если в данных кнопки нет номера страницы (len < 4), значит это первый клик
             if len(parts) < 4:
                 # Вычисляем номер последней страницы
-                all_logs = get_cached_sheet_data(context, SHEET_LOG) or []
+                all_logs = await get_cached_sheet_data(context, SHEET_LOG) or []
                 filtered_logs = [row for row in all_logs if len(row) > 3 and row[3] == category]
                 total_pages = math.ceil(len(filtered_logs) / 10)
                 page = max(0, total_pages - 1) # Устанавливаем последнюю страницу
