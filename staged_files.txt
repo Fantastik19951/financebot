@@ -1,2 +1,0 @@
-fix.patch
-telegram_bot.py

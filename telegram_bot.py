@@ -810,7 +810,7 @@ def pdate(s):
     try:
         return dt.datetime.strptime(s, DATE_FMT).date()
     except ValueError:
-        return None # Просто возвращаем None, если формат не совпал
+        return None # Просто возвращаем None, если формат не совпали
     
 def week_range(date=None):
     date = date or dt.date.today()
