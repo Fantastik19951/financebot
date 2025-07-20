@@ -3624,17 +3624,29 @@ def faq_kb():
     )
 
 # --- ОБРАБОТЧИКИ КОМАНД ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    is_admin = str(user.id) in ADMINS
+    user_id_str = str(user.id)
+
+    # --- НОВАЯ ЛОГИКА: ЗАЩИТА ---
+    if user_id_str not in USER_ID_TO_NAME:
+        await update.message.reply_text(
+            f"❌ Ваш ID `{user_id_str}` не распознан в системе. Доступ запрещен.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        logging.warning(f"Несанкционированная попытка доступа от ID: {user_id_str} ({user.full_name})")
+        return
+    # --- КОНЕЦ ЗАЩИТЫ ---
+
+    is_admin = user_id_str in ADMINS
     
-    # --- НОВЫЙ БЛОК: Получаем данные для заголовка ---
     safe_balance = get_safe_balance(context)
     sales_forecast = get_sales_forecast_for_today(context)
     
     header = "🏪 Добро пожаловать!\n"
+    header += f"<b>Сейф:</b> {safe_balance:,.2f}₴".replace(',', ' ')
     if is_admin:
-        header += f"<b>Сейф:</b> {safe_balance:,.2f}₴".replace(',', ' ')
         if sales_forecast:
             header += f" | <b>Прогноз:</b> ~{sales_forecast:,.0f}₴".replace(',', ' ')
     
@@ -5419,8 +5431,10 @@ async def show_detailed_report(update: Update, context: ContextTypes.DEFAULT_TYP
     ])
     # --- ВОТ И НАША КНОПКА ---
     kb.append([InlineKeyboardButton("📜 Полный протокол смены", callback_data=f"shift_protocol_{target_date_str}")])
-
-    kb.append([InlineKeyboardButton("✏️ Быстрая правка отчета", callback_data=f"start_report_fix_{target_date_str}")])
+    is_admin = str(query.from_user.id) in ADMINS
+    if is_admin:
+        kb.append([InlineKeyboardButton("✏️ Быстрая правка отчета", callback_data=f"start_report_fix_{target_date_str}")])
+    
     
     back_callback = f"report_week_{start_str}_{end_str}" if (end_date - start_date).days <= 7 else f"report_month_{start_str}_{end_str}"
     # Для отчета за один день кнопка "Назад" ведет в общее меню отчетов
@@ -5438,19 +5452,20 @@ async def get_report_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def start_report_fix(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начинает диалог исправления отчета, предлагая поля для редактирования."""
+    """Начинает диалог исправления, предлагая выбор режима."""
     query = update.callback_query
     date_str = query.data.split('_')[-1]
     
-    context.user_data['report_fix'] = {'date': date_str, 'step': 'select_field'}
+    context.user_data['report_fix'] = {'date': date_str, 'step': 'select_mode'}
     
     kb = [
-        [InlineKeyboardButton("💵 Наличные", callback_data=f"report_fix_field_Наличные")],
-        [InlineKeyboardButton("💳 Карта", callback_data=f"report_fix_field_Терминал")],
+        [InlineKeyboardButton("С полным пересчетом", callback_data=f"report_fix_mode_full")],
+        [InlineKeyboardButton("Только цифры в отчете", callback_data=f"report_fix_mode_simple")],
         [InlineKeyboardButton("🔙 Назад к отчету", callback_data=f"detail_report_nav_{date_str}_{date_str}_0")]
     ]
-    await query.message.edit_text(f"✏️ Какое поле в отчете за {date_str} вы хотите исправить?", reply_markup=InlineKeyboardMarkup(kb))
+    await query.message.edit_text(f"✏️ Выберите режим редактирования для отчета за {date_str}:", reply_markup=InlineKeyboardMarkup(kb))
 
 async def prompt_for_report_fix_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запрашивает новое значение для выбранного поля."""
@@ -5463,77 +5478,102 @@ async def prompt_for_report_fix_value(update: Update, context: ContextTypes.DEFA
     
     await query.message.edit_text(f"Введите новое, правильное значение для поля '<b>{field_to_fix}</b>':", parse_mode=ParseMode.HTML)
 
-async def execute_report_fix(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выполняет исправление и полный перерасчет всех зависимых данных."""
+async def select_field_for_fix(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """После выбора режима, спрашивает, какое поле править."""
+    query = update.callback_query
+    mode = query.data.split('_')[-1] # 'full' или 'simple'
+    
     fix_data = context.user_data['report_fix']
-    date_str, field, new_value_str = fix_data['date'], fix_data['field'], update.message.text
+    fix_data['mode'] = mode
+    fix_data['step'] = 'select_field'
+    date_str = fix_data['date']
+    
+    kb = [
+        [InlineKeyboardButton("💵 Наличные", callback_data=f"report_fix_field_Наличные")],
+        [InlineKeyboardButton("💳 Карта", callback_data=f"report_fix_field_Терминал")],
+        [InlineKeyboardButton("🔙 Назад", callback_data=f"start_report_fix_{date_str}")]
+    ]
+    await query.message.edit_text(f"Какое поле в отчете за {date_str} вы хотите исправить?", reply_markup=InlineKeyboardMarkup(kb))
+
+async def execute_report_fix(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выполняет исправление в выбранном режиме и пересчитывает данные."""
+    fix_data = context.user_data.get('report_fix', {})
+    date_str, field, new_value_str, mode = fix_data.get('date'), fix_data.get('field'), update.message.text, fix_data.get('mode')
     
     try:
         new_value = parse_float(new_value_str)
     except ValueError:
         return await update.message.reply_text("❌ Ошибка. Введите число.")
 
-    await update.message.reply_text(f"⏳ Начинаю перерасчет данных с {date_str}... Это может занять до минуты.")
+    await update.message.reply_text(f"⏳ Начинаю перерасчет данных с {date_str}...")
     
     try:
         ws_reports = GSHEET.worksheet(SHEET_REPORT)
         all_reports = ws_reports.get_all_values()
-        
-        target_row_index = -1
-        for i, row in enumerate(all_reports):
-            if row and row[0] == date_str:
-                target_row_index = i
-                break
-        
+        target_row_index = next((i for i, row in enumerate(all_reports) if row and row[0] == date_str), -1)
+
         if target_row_index == -1:
             return await update.message.reply_text("❌ Не удалось найти отчет за эту дату.")
-
-        # 1. Рассчитываем разницу
+        
+        row_num_in_sheet = target_row_index + 1
         old_row = all_reports[target_row_index]
-        old_cash = parse_float(old_row[2])
-        old_terminal = parse_float(old_row[3])
-        
-        if field == "Наличные":
-            cash_diff = new_value - old_cash
-            terminal_diff = 0
-        else: # Карта
-            cash_diff = 0
-            terminal_diff = new_value - old_terminal
-            
-        total_sales_diff = cash_diff + terminal_diff
-        
-        # 2. Обновляем все отчеты, начиная с измененного
-        for i in range(target_row_index, len(all_reports)):
-            row = all_reports[i]
-            if not row or not row[0]: continue
-            
-            # Обновляем сам отчет
-            if i == target_row_index:
-                new_cash = old_cash + cash_diff
-                new_terminal = old_terminal + terminal_diff
-                new_total = new_cash + new_terminal
-                expenses = new_cash + old_terminal - parse_float(old_row[5]) # Вычисляем расходы
-                new_cash_balance = new_cash - expenses
-                
-                ws_reports.update_cell(i + 1, 3, new_cash)
-                ws_reports.update_cell(i + 1, 4, new_terminal)
-                ws_reports.update_cell(i + 1, 5, new_total)
-                ws_reports.update_cell(i + 1, 6, new_cash_balance)
-            
-            # Обновляем остаток в сейфе для всех последующих отчетов
-            old_safe_balance = parse_float(row[9])
-            ws_reports.update_cell(i + 1, 10, old_safe_balance + cash_diff)
+        old_cash, old_terminal = parse_float(old_row[2]), parse_float(old_row[3])
+        seller_name = old_row[1]
 
-        # 3. Корректируем связанные операции
-        user = update.effective_user
-        who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
-        comment = f"Корректировка отчета за {date_str} ({who})"
+        # Определяем новые значения
+        new_cash = new_value if field == "Наличные" else old_cash
+        new_terminal = new_value if field == "Терминал" else old_terminal
+        new_total = new_cash + new_terminal
         
-        add_safe_operation(user, "Корректировка", cash_diff, comment)
-        add_inventory_operation("Корректировка", total_sales_diff, comment, who)
-        
-        await update.message.reply_text(f"✅ Готово! Данные, начиная с {date_str}, были успешно пересчитаны.")
-    
+        # --- ИСПРАВЛЕНИЕ ЛОГИКИ 6-Й КОЛОНКИ ---
+        # Остаток наличных всегда равен сумме наличных за смену
+        new_cash_balance = new_cash
+
+        # Обновляем строку в таблице
+        ws_reports.update_cell(row_num_in_sheet, 3, new_cash)
+        ws_reports.update_cell(row_num_in_sheet, 4, new_terminal)
+        ws_reports.update_cell(row_num_in_sheet, 5, new_total)
+        ws_reports.update_cell(row_num_in_sheet, 6, new_cash_balance)
+
+        # --- ЛОГИКА ДЛЯ ПОЛНОГО ПЕРЕСЧЕТА ---
+        if mode == 'full':
+            cash_diff = new_cash - old_cash
+            total_sales_diff = new_total - (old_cash + old_terminal)
+
+            # Пересчитываем все последующие остатки в сейфе
+            for i in range(target_row_index + 1, len(all_reports)):
+                row = all_reports[i]
+                if not row or not row[0]: continue
+                old_safe_balance = parse_float(row[9])
+                ws_reports.update_cell(i + 1, 10, old_safe_balance + cash_diff)
+
+            # Корректируем связанные операции
+            user = update.effective_user
+            who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
+            comment = f"Корректировка отчета за {date_str} ({who})"
+            add_safe_operation(user, "Корректировка", cash_diff, comment)
+            add_inventory_operation("Корректировка", total_sales_diff, comment, who)
+
+            # --- ПЕРЕСЧЕТ ЗАРПЛАТЫ ---
+            ws_salaries = GSHEET.worksheet(SHEET_SALARIES)
+            all_salaries = ws_salaries.get_all_values()
+            new_bonus = round((new_total * 0.02) - 700, 2)
+            
+            found_salary_row = -1
+            for i, s_row in enumerate(all_salaries):
+                if len(s_row) > 4 and pdate(s_row[0]) == pdate(date_str) and s_row[1] == seller_name and s_row[2] == "Премия 2%":
+                    found_salary_row = i + 1
+                    break
+            
+            if new_bonus > 0:
+                if found_salary_row != -1:
+                    ws_salaries.update_cell(found_salary_row, 4, new_bonus)
+                else:
+                    add_salary_record(seller_name, "Премия 2%", new_bonus, f"За {date_str} (скорректировано)")
+            elif found_salary_row != -1:
+                ws_salaries.delete_rows(found_salary_row)
+
+        await update.message.reply_text(f"✅ Готово! Отчет за {date_str} был успешно исправлен.")
     except Exception as e:
         await update.message.reply_text(f"❌ Произошла критическая ошибка при перерасчете: {e}")
     finally:
@@ -7422,6 +7462,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await generate_shift_protocol(update, context)
         elif data.startswith("start_report_fix_"):
             await start_report_fix(update, context)
+        elif data.startswith("report_fix_mode_"):
+            await select_field_for_fix(update, context)
         elif data.startswith("report_fix_field_"):
             await prompt_for_report_fix_value(update, context)
 
