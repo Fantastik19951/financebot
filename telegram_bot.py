@@ -3624,7 +3624,7 @@ def faq_kb():
 
 # --- ОБРАБОТЧИКИ КОМАНД ---
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id_str = str(user.id)
 
