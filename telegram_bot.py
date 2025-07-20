@@ -1367,7 +1367,6 @@ def debts_message_and_keyboard(debts, page, page_size):
     msg = ""
     for idx, debt in enumerate(page_debts, start=1 + page * page_size):
         msg += f"{idx}. {debt['name']} — {debt['amount']}₴ — {debt['date']}\n"
-    i
     # Кнопки
     buttons = []
     if page > 0:
