@@ -796,9 +796,9 @@ async def process_financial_dashboard_period(update: Update, context: ContextTyp
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_financial_dashboard")]])
     )
     
-
 def now(): 
-    return dt.datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    """Возвращает текущее время по Киеву (GMT+3)."""
+    return dt.datetime.now(pytz.timezone('Europe/Kiev')).strftime("%d.%m.%Y %H:%M:%S")
 def sdate(d=None): 
     d = d or dt.date.today()
     return d.strftime(DATE_FMT)
@@ -4005,6 +4005,7 @@ async def handle_admin_expense_comment(update: Update, context: ContextTypes.DEF
 
 
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def show_expense_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     """Показывает страничный просмотр истории расходов с полной детализацией."""
     query = update.callback_query
@@ -4014,12 +4015,11 @@ async def show_expense_history(update: Update, context: ContextTypes.DEFAULT_TYP
     if not rows:
         return await query.message.edit_text("История расходов пуста.", reply_markup=admin_panel_kb())
 
-    rows.reverse() # Новые записи в начало списка
-
+    # --- ЛОГИКА ПАГИНАЦИИ ---
     per_page = 10
     total_records = len(rows)
-    total_pages = math.ceil(total_records / per_page)
-    page = max(0, min(page, total_pages - 1)) # Защита от неверного номера страницы
+    total_pages = math.ceil(total_records / per_page) if total_records > 0 else 1
+    page = max(0, min(page, total_pages - 1))
 
     start_index = page * per_page
     page_records = rows[start_index : start_index + per_page]
@@ -4033,7 +4033,8 @@ async def show_expense_history(update: Update, context: ContextTypes.DEFAULT_TYP
         msg += f"🗓 <b>{date}</b> - <b>{amount}₴</b>\n"
         msg += f"   • {comment} (<i>{user}</i>)\n"
         msg += f"   • Тип: {pay_type or 'Наличные'}, Источник: {data_type or 'Не указан'}"
-
+    
+    # --- Кнопки навигации ---
     nav_row = []
     if page > 0:
         nav_row.append(InlineKeyboardButton("◀️ Назад", callback_data=f"expense_history_{page - 1}"))
@@ -7358,12 +7359,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # Эта функция сама определит, кто нажал на кнопку
             await start_expense_flow(update, context)
         elif data.startswith("expense_history"):
-            try:
-                # Пытаемся извлечь номер страницы из 'expense_history_2'
-                page = int(data.split('_')[-1])
-            except (ValueError, IndexError):
-                # Если это первый вызов ('expense_history'), начинаем с нулевой страницы
-                page = 0
+            page = 0
+            # Если это первый вызов (без номера страницы), вычисляем последнюю страницу
+            if data == "expense_history":
+                rows = get_cached_sheet_data(context, SHEET_EXPENSES) or []
+                total_pages = math.ceil(len(rows) / 10)
+                page = max(0, total_pages - 1)
+            else: # Если это навигация, берем номер из кнопки
+                try:
+                    page = int(data.split('_')[-1])
+                except (ValueError, IndexError):
+                    page = 0
             await show_expense_history(update, context, page=page)
         elif data.startswith("exp_pay_type_"): await handle_admin_expense_pay_type(update, context)
         
