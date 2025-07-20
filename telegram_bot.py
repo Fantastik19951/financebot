@@ -3704,25 +3704,37 @@ async def save_inventory_expense(update: Update, context: ContextTypes.DEFAULT_T
 
 
 
-async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    is_admin = str(query.from_user.id) in ADMINS
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id_str = str(user.id)
+
+    # --- НОВАЯ ЛОГИКА: ЗАЩИТА ---
+    if user_id_str not in USER_ID_TO_NAME:
+        await update.message.reply_text(
+            f"❌ Ваш ID `{user_id_str}` не распознан в системе. Доступ запрещен.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        logging.warning(f"Несанкционированная попытка доступа от ID: {user_id_str} ({user.full_name})")
+        return
+    # --- КОНЕЦ ЗАЩИТЫ ---
+
+    is_admin = user_id_str in ADMINS
     
-    # --- НОВЫЙ БЛОК: Получаем данные для заголовка ---
     safe_balance = get_safe_balance(context)
     sales_forecast = get_sales_forecast_for_today(context)
     
-    header = "🏪 Главное меню\n"
+    header = "🏪 Добро пожаловать!\n"
+    header += f"<b>Сейф:</b> {safe_balance:,.2f}₴".replace(',', ' ')
     if is_admin:
-        header += f"<b>Сейф:</b> {safe_balance:,.2f}₴".replace(',', ' ')
         if sales_forecast:
             header += f" | <b>Прогноз:</b> ~{sales_forecast:,.0f}₴".replace(',', ' ')
-
-    await query.message.edit_text(
+    
+    await update.message.reply_text(
         header,
         reply_markup=main_kb(is_admin),
         parse_mode=ParseMode.HTML
     )
+    log_action(user, "Система", "Старт бота")
     
 async def close_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
