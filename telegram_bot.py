@@ -52,7 +52,7 @@ SHEET_INVENTORY = "Остаток магазина"
 DIALOG_KEYS = [
     'report', 'supplier', 'planning', 'edit_plan', 'edit_invoice',
     'revision', 'search_debt', 'safe_op', 'inventory_expense', 
-    'repay', 'shift', 'report_period', 'admin_expense', 'custom_analytics_period', 'supplier_edit', 'seller_expense', 'supplier_edit'
+    'repay', 'shift', 'report_period', 'admin_expense', 'custom_analytics_period', 'supplier_edit', 'seller_expense', 'supplier_edit', 'report_fix'
 ]
 
 
@@ -5419,6 +5419,8 @@ async def show_detailed_report(update: Update, context: ContextTypes.DEFAULT_TYP
     ])
     # --- ВОТ И НАША КНОПКА ---
     kb.append([InlineKeyboardButton("📜 Полный протокол смены", callback_data=f"shift_protocol_{target_date_str}")])
+
+    kb.append([InlineKeyboardButton("✏️ Быстрая правка отчета", callback_data=f"start_report_fix_{target_date_str}")])
     
     back_callback = f"report_week_{start_str}_{end_str}" if (end_date - start_date).days <= 7 else f"report_month_{start_str}_{end_str}"
     # Для отчета за один день кнопка "Назад" ведет в общее меню отчетов
@@ -5433,6 +5435,109 @@ async def get_report_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     today_str = sdate(dt.date.today())
     # Вызываем основную функцию для периода в один день (сегодня)
     await show_detailed_report(update, context, start_str=today_str, end_str=today_str, index_str="0")
+
+# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
+
+async def start_report_fix(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает диалог исправления отчета, предлагая поля для редактирования."""
+    query = update.callback_query
+    date_str = query.data.split('_')[-1]
+    
+    context.user_data['report_fix'] = {'date': date_str, 'step': 'select_field'}
+    
+    kb = [
+        [InlineKeyboardButton("💵 Наличные", callback_data=f"report_fix_field_Наличные")],
+        [InlineKeyboardButton("💳 Карта", callback_data=f"report_fix_field_Терминал")],
+        [InlineKeyboardButton("🔙 Назад к отчету", callback_data=f"detail_report_nav_{date_str}_{date_str}_0")]
+    ]
+    await query.message.edit_text(f"✏️ Какое поле в отчете за {date_str} вы хотите исправить?", reply_markup=InlineKeyboardMarkup(kb))
+
+async def prompt_for_report_fix_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запрашивает новое значение для выбранного поля."""
+    query = update.callback_query
+    field_to_fix = query.data.split('_')[-1]
+    
+    fix_data = context.user_data['report_fix']
+    fix_data['field'] = field_to_fix
+    fix_data['step'] = 'new_value'
+    
+    await query.message.edit_text(f"Введите новое, правильное значение для поля '<b>{field_to_fix}</b>':", parse_mode=ParseMode.HTML)
+
+async def execute_report_fix(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выполняет исправление и полный перерасчет всех зависимых данных."""
+    fix_data = context.user_data['report_fix']
+    date_str, field, new_value_str = fix_data['date'], fix_data['field'], update.message.text
+    
+    try:
+        new_value = parse_float(new_value_str)
+    except ValueError:
+        return await update.message.reply_text("❌ Ошибка. Введите число.")
+
+    await update.message.reply_text(f"⏳ Начинаю перерасчет данных с {date_str}... Это может занять до минуты.")
+    
+    try:
+        ws_reports = GSHEET.worksheet(SHEET_REPORT)
+        all_reports = ws_reports.get_all_values()
+        
+        target_row_index = -1
+        for i, row in enumerate(all_reports):
+            if row and row[0] == date_str:
+                target_row_index = i
+                break
+        
+        if target_row_index == -1:
+            return await update.message.reply_text("❌ Не удалось найти отчет за эту дату.")
+
+        # 1. Рассчитываем разницу
+        old_row = all_reports[target_row_index]
+        old_cash = parse_float(old_row[2])
+        old_terminal = parse_float(old_row[3])
+        
+        if field == "Наличные":
+            cash_diff = new_value - old_cash
+            terminal_diff = 0
+        else: # Карта
+            cash_diff = 0
+            terminal_diff = new_value - old_terminal
+            
+        total_sales_diff = cash_diff + terminal_diff
+        
+        # 2. Обновляем все отчеты, начиная с измененного
+        for i in range(target_row_index, len(all_reports)):
+            row = all_reports[i]
+            if not row or not row[0]: continue
+            
+            # Обновляем сам отчет
+            if i == target_row_index:
+                new_cash = old_cash + cash_diff
+                new_terminal = old_terminal + terminal_diff
+                new_total = new_cash + new_terminal
+                expenses = new_cash + old_terminal - parse_float(old_row[5]) # Вычисляем расходы
+                new_cash_balance = new_cash - expenses
+                
+                ws_reports.update_cell(i + 1, 3, new_cash)
+                ws_reports.update_cell(i + 1, 4, new_terminal)
+                ws_reports.update_cell(i + 1, 5, new_total)
+                ws_reports.update_cell(i + 1, 6, new_cash_balance)
+            
+            # Обновляем остаток в сейфе для всех последующих отчетов
+            old_safe_balance = parse_float(row[9])
+            ws_reports.update_cell(i + 1, 10, old_safe_balance + cash_diff)
+
+        # 3. Корректируем связанные операции
+        user = update.effective_user
+        who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
+        comment = f"Корректировка отчета за {date_str} ({who})"
+        
+        add_safe_operation(user, "Корректировка", cash_diff, comment)
+        add_inventory_operation("Корректировка", total_sales_diff, comment, who)
+        
+        await update.message.reply_text(f"✅ Готово! Данные, начиная с {date_str}, были успешно пересчитаны.")
+    
+    except Exception as e:
+        await update.message.reply_text(f"❌ Произошла критическая ошибка при перерасчете: {e}")
+    finally:
+        context.user_data.pop('report_fix', None)
 
 async def show_business_insights(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запускает анализ и показывает бизнес-инсайты."""
@@ -6964,13 +7069,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif state_key == 'shift':
         if user_data['shift'].get('step') == 'date': return await handle_shift_date(update, context)
 
-    elif state_key == 'supplier_edit':
-        step = user_data['supplier_edit'].get('step')
-        if step == 'search':
-            # Эта функция будет искать и показывать кнопки с найденными поставщиками
-            return await list_suppliers_for_editing(update, context) 
-        elif step == 'new_name':
-            return await save_edited_supplier_name(update, context)
+    elif state_key == 'report_fix':
+        step = user_data['report_fix'].get('step')
+        if step == 'new_value':
+            return await execute_report_fix(update, context)
 
     elif state_key == 'report_period':
         step = user_data['report_period'].get('step')
@@ -7318,6 +7420,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await start_custom_period_analytics(update, context)
         elif data.startswith("shift_protocol_"):
             await generate_shift_protocol(update, context)
+        elif data.startswith("start_report_fix_"):
+            await start_report_fix(update, context)
+        elif data.startswith("report_fix_field_"):
+            await prompt_for_report_fix_value(update, context)
 
     
         # --- 11. СЕЙФ И ОСТАТОК ---
