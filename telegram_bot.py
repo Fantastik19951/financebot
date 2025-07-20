@@ -5494,8 +5494,9 @@ async def select_field_for_fix(update: Update, context: ContextTypes.DEFAULT_TYP
     ]
     await query.message.edit_text(f"Какое поле в отчете за {date_str} вы хотите исправить?", reply_markup=InlineKeyboardMarkup(kb))
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
 async def execute_report_fix(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выполняет исправление в выбранном режиме и пересчитывает данные."""
+    """Выполняет исправление и полный, КОРРЕКТНЫЙ перерасчет всех зависимых данных."""
     fix_data = context.user_data.get('report_fix', {})
     date_str, field, new_value_str, mode = fix_data.get('date'), fix_data.get('field'), update.message.text, fix_data.get('mode')
     
@@ -5504,7 +5505,7 @@ async def execute_report_fix(update: Update, context: ContextTypes.DEFAULT_TYPE)
     except ValueError:
         return await update.message.reply_text("❌ Ошибка. Введите число.")
 
-    await update.message.reply_text(f"⏳ Начинаю перерасчет данных с {date_str}...")
+    await update.message.reply_text(f"⏳ Начинаю перерасчет данных с {date_str}... Это может занять до минуты.")
     
     try:
         ws_reports = GSHEET.worksheet(SHEET_REPORT)
@@ -5536,13 +5537,14 @@ async def execute_report_fix(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         # --- ЛОГИКА ДЛЯ ПОЛНОГО ПЕРЕСЧЕТА ---
         if mode == 'full':
+            # --- ИСПРАВЛЕНИЕ ЛОГИКИ КОРРЕКТИРОВКИ ---
             cash_diff = new_cash - old_cash
             total_sales_diff = new_total - (old_cash + old_terminal)
 
             # Пересчитываем все последующие остатки в сейфе
             for i in range(target_row_index + 1, len(all_reports)):
                 row = all_reports[i]
-                if not row or not row[0]: continue
+                if not row or len(row) < 10 or not row[9]: continue
                 old_safe_balance = parse_float(row[9])
                 ws_reports.update_cell(i + 1, 10, old_safe_balance + cash_diff)
 
@@ -5550,8 +5552,15 @@ async def execute_report_fix(update: Update, context: ContextTypes.DEFAULT_TYPE)
             user = update.effective_user
             who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
             comment = f"Корректировка отчета за {date_str} ({who})"
-            add_safe_operation(user, "Корректировка", cash_diff, comment)
-            add_inventory_operation("Корректировка", total_sales_diff, comment, who)
+            
+            # Если выручка по наличности увеличилась, это Пополнение сейфа, и наоборот
+            if cash_diff != 0:
+                op_type = "Пополнение" if cash_diff > 0 else "Расход"
+                add_safe_operation(user, op_type, abs(cash_diff), comment)
+
+            # Если общая выручка увеличилась, это Продажа, и остаток УМЕНЬШАЕТСЯ
+            if total_sales_diff != 0:
+                add_inventory_operation("Продажа", total_sales_diff, comment, who)
 
             # --- ПЕРЕСЧЕТ ЗАРПЛАТЫ ---
             ws_salaries = GSHEET.worksheet(SHEET_SALARIES)
@@ -5573,9 +5582,25 @@ async def execute_report_fix(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 ws_salaries.delete_rows(found_salary_row)
 
         await update.message.reply_text(f"✅ Готово! Отчет за {date_str} был успешно исправлен.")
+        get_cached_sheet_data(context, SHEET_REPORT, force_update=True)
+        
+        # Генерируем текст обновленного отчета
+        report_text = await generate_daily_report_text(context, date_str)
+        
+        # Создаем простую клавиатуру для этого отчета
+        kb = [[InlineKeyboardButton("🔙 В меню отчетов", callback_data="view_reports_menu")]]
+        
+        # Отправляем обновленный отчет новым сообщением
+        await update.message.reply_text(
+            report_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+
     except Exception as e:
         await update.message.reply_text(f"❌ Произошла критическая ошибка при перерасчете: {e}")
     finally:
+        # Гарантированно очищаем состояние диалога в любом случае
         context.user_data.pop('report_fix', None)
 
 async def show_business_insights(update: Update, context: ContextTypes.DEFAULT_TYPE):
