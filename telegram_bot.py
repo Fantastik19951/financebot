@@ -3623,38 +3623,26 @@ def faq_kb():
     )
 
 # --- ОБРАБОТЧИКИ КОМАНД ---
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    user_id_str = str(user.id)
-
-    # --- НОВАЯ ЛОГИКА: ЗАЩИТА ---
-    if user_id_str not in USER_ID_TO_NAME:
-        await update.message.reply_text(
-            f"❌ Ваш ID `{user_id_str}` не распознан в системе. Доступ запрещен.",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        logging.warning(f"Несанкционированная попытка доступа от ID: {user_id_str} ({user.full_name})")
-        return
-    # --- КОНЕЦ ЗАЩИТЫ ---
-
-    is_admin = user_id_str in ADMINS
+    query = update.callback_query
+    is_admin = str(query.from_user.id) in ADMINS
     
+    # --- Логика для динамического заголовка ---
     safe_balance = get_safe_balance(context)
     sales_forecast = get_sales_forecast_for_today(context)
     
-    header = "🏪 Добро пожаловать!\n"
+    header = "🏪 Главное меню\n"
     header += f"<b>Сейф:</b> {safe_balance:,.2f}₴".replace(',', ' ')
     if is_admin:
         if sales_forecast:
             header += f" | <b>Прогноз:</b> ~{sales_forecast:,.0f}₴".replace(',', ' ')
-    
-    await update.message.reply_text(
+
+    # Используем query.message.edit_text, так как это ответ на нажатие кнопки
+    await query.message.edit_text(
         header,
         reply_markup=main_kb(is_admin),
         parse_mode=ParseMode.HTML
     )
-    log_action(user, "Система", "Старт бота")
 
 async def start_inventory_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -3704,11 +3692,11 @@ async def save_inventory_expense(update: Update, context: ContextTypes.DEFAULT_T
 
 
 
+# --- ВЕРНИТЕ ЭТУ ФУНКЦИЮ ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id_str = str(user.id)
 
-    # --- НОВАЯ ЛОГИКА: ЗАЩИТА ---
     if user_id_str not in USER_ID_TO_NAME:
         await update.message.reply_text(
             f"❌ Ваш ID `{user_id_str}` не распознан в системе. Доступ запрещен.",
@@ -3716,7 +3704,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         logging.warning(f"Несанкционированная попытка доступа от ID: {user_id_str} ({user.full_name})")
         return
-    # --- КОНЕЦ ЗАЩИТЫ ---
 
     is_admin = user_id_str in ADMINS
     
@@ -3729,6 +3716,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sales_forecast:
             header += f" | <b>Прогноз:</b> ~{sales_forecast:,.0f}₴".replace(',', ' ')
     
+    # Используем update.message.reply_text, так как это ответ на команду
     await update.message.reply_text(
         header,
         reply_markup=main_kb(is_admin),
