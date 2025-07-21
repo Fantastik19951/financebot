@@ -3628,6 +3628,13 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     is_admin = str(query.from_user.id) in ADMINS
     
     # --- Логика для динамического заголовка ---
+    await query.message.edit_text(
+        "🏪 Главное меню\n_Загружаю данные..._",
+        reply_markup=main_kb(is_admin),
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    # 2. Только потом делаем медленные запросы
     safe_balance = get_safe_balance(context)
     sales_forecast = get_sales_forecast_for_today(context)
     
@@ -3637,12 +3644,15 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if sales_forecast:
             header += f" | <b>Прогноз:</b> ~{sales_forecast:,.0f}₴".replace(',', ' ')
 
-    # Используем query.message.edit_text, так как это ответ на нажатие кнопки
-    await query.message.edit_text(
-        header,
-        reply_markup=main_kb(is_admin),
-        parse_mode=ParseMode.HTML
-    )
+    try:
+        await query.message.edit_text(
+            header,
+            reply_markup=main_kb(is_admin),
+            parse_mode=ParseMode.HTML
+        )
+    except BadRequest as e:
+        if "Message is not modified" not in str(e):
+            logging.error(f"Ошибка обновления заголовка main_menu: {e}")
 
 async def start_inventory_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -4482,15 +4492,17 @@ async def suppliers_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
 async def debts_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает меню управления долгами с отображением общей суммы."""
+    """Показывает меню управления долгами с предварительной загрузкой."""
     query = update.callback_query
-    await query.answer()
-
-    # Получаем общую сумму долга
+    
+    # 1. Мгновенно показываем экран загрузки
+    await query.message.edit_text("⏳ Загружаю данные о долгах...")
+    
+    # 2. Делаем медленный запрос
     total_debt_amount = get_total_unpaid_debt(context)
     
-    # Формируем сообщение
-    msg = "🏦 Управление долгами\n\n"
+    # 3. Формируем и показываем финальное сообщение
+    msg = "🏦 <b>Управление долгами</b>\n\n"
     if total_debt_amount > 0:
         msg += f"Общая сумма неоплаченных долгов: <b>{total_debt_amount:,.2f}₴</b>".replace(',', ' ')
     else:
