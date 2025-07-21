@@ -71,7 +71,7 @@ def generate_business_insights(context: ContextTypes.DEFAULT_TYPE, days_period: 
     today = dt.date.today()
     start_date = today - dt.timedelta(days=days_period)
 
-    suppliers_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
+    suppliers_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []
     
     # --- 1. Анализ эффективности продавцов по маржинальности ---
     seller_markup_data = defaultdict(list)
@@ -945,29 +945,33 @@ def clear_plan_for_date(date_to_clear_str: str):
         logging.error(f"Ошибка очистки планов для даты {date_to_clear_str}: {e}")
 
 
-def get_cached_sheet_data(context: ContextTypes.DEFAULT_TYPE, sheet_name: str, force_update: bool = False) -> list | None:
-    """
-    Получает данные из листа, используя проактивный кэш.
-    force_update используется только фоновой задачей.
-    """
+def get_cached_sheet_data(context: ContextTypes.DEFAULT_TYPE, sheet_name: str, cache_duration_seconds: int = 60, force_update: bool = False) -> list | None:
+    """Получает данные из листа, используя кэш, с возможностью принудительного обновления."""
     if not GSHEET: return None
     
+    now = dt.datetime.now()
     cache = context.bot_data.setdefault('sheets_cache', {})
     
-    # Если фоновая задача просит обновить, или если кэш для этого листа еще пуст, идем в Google
-    if force_update or sheet_name not in cache:
-        try:
-            logging.info(f"Читаем данные для '{sheet_name}' из Google Sheets (обновляем кэш).")
-            ws = GSHEET.worksheet(sheet_name)
-            data = ws.get_all_values()[1:]
-            cache[sheet_name] = data
-            return list(data)
-        except Exception as e:
-            logging.error(f"Не удалось прочитать или кэшировать лист '{sheet_name}': {e}")
-            return cache.get(sheet_name, []) # В случае ошибки отдаем старые данные, если они есть
+    # Если не требуется принудительное обновление, проверяем кэш
+    if not force_update and sheet_name in cache:
+        cached_data, timestamp = cache[sheet_name]
+        if (now - timestamp).total_seconds() < cache_duration_seconds:
+            logging.info(f"Данные для '{sheet_name}' взяты из кэша.")
+            return list(cached_data)
             
-    # Во всех остальных случаях - мгновенно отдаем данные из памяти
-    return list(cache[sheet_name])
+    # Читаем из таблицы, если кэш устарел, его нет или требуется обновление
+    try:
+        logging.info(f"Читаем данные для '{sheet_name}' из Google Sheets (обновляем кэш).")
+        ws = GSHEET.worksheet(sheet_name)
+        data = ws.get_all_values()[1:]
+        
+        cache[sheet_name] = (data, now)
+        context.bot_data['sheets_cache'] = cache
+        
+        return list(data)
+    except Exception as e:
+        logging.error(f"Не удалось прочитать или кэшировать лист '{sheet_name}': {e}")
+        return None
     
 # --- GOOGLE SHEETS ---
 def get_gsheet():
@@ -1408,45 +1412,18 @@ def build_debts_history_keyboard(rows, page=0, per_page=10):
 
 
 # --- ОСТАТОК МАГАЗИНА, ПЕРЕУЧЕТЫ И СЕЙФ ---
-# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 def add_safe_operation(user: Update.effective_user, op_type: str, amount: float, comment: str):
-    """Добавляет операцию в сейф, немедленно логирует и МГНОВЕННО обновляет кэш."""
+    """Добавляет операцию в сейф и немедленно логирует это действие."""
     user_name = USER_ID_TO_NAME.get(str(user.id), user.first_name)
-    
-    # 1. Готовим строку для записи
-    row_to_save = [sdate(), op_type, amount, comment, user_name]
-    
-    # 2. Записываем в Google Таблицу
-    try:
-        ws = GSHEET.worksheet("Сейф")
-        ws.append_row(row_to_save)
-    except Exception as e:
-        logging.error(f"Критическая ошибка при записи в сейф: {e}")
-        # Даже если запись не удалась, мы не должны продолжать
-        return
-
-    # --- НОВЫЙ БЛОК: МГНОВЕННОЕ ОБНОВЛЕНИЕ КЭША ---
-    try:
-        # Получаем текущий кэш для "Сейфа"
-        context = ContextTypes.DEFAULT_TYPE.get_context()
-        current_cache = context.bot_data.get('sheets_cache', {}).get("Сейф", [])
-        # Добавляем в него нашу новую запись
-        current_cache.append(row_to_save)
-        # Сохраняем обновленный кэш обратно
-        context.bot_data['sheets_cache']["Сейф"] = current_cache
-        logging.info("Кэш для 'Сейф' обновлен мгновенно.")
-    except Exception as e:
-        logging.error(f"Ошибка мгновенного обновления кэша для Сейфа: {e}")
-    # --- КОНЕЦ НОВОГО БЛОКА ---
-
-    # 3. Логируем действие
+    ws = GSHEET.worksheet("Сейф")
+    ws.append_row([sdate(), op_type, amount, comment, user_name])
     log_action(
         user=user,
         category="Сейф",
         action=op_type,
         comment=f"Сумма: {amount:.2f}₴. ({comment})"
     )
-
+    
 def get_sellers_comparison_data(context: ContextTypes.DEFAULT_TYPE, sellers_list: list, days_period: int = 30):
     """Собирает данные для сравнения средних продаж продавцов по дням недели."""
     today = dt.date.today()
@@ -1880,7 +1857,7 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
         update_invoice_in_sheet(row_index, field, new_value)
     
     # 3. Принудительно сбрасываем кэш, чтобы прочитать новые данные
-    get_cached_sheet_data(context, SHEET_SUPPLIERS)
+    get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True)
     all_invoices_new = get_cached_sheet_data(context, SHEET_SUPPLIERS)
     new_row = all_invoices_new[row_index - 2]
     
@@ -1927,7 +1904,7 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
     # 5. Обновляем лист "Долги"
     ws_debts = GSHEET.worksheet(SHEET_DEBTS)
     # Принудительно читаем свежие данные, так как могли быть изменения
-    debts_rows = get_cached_sheet_data(context, SHEET_DEBTS) 
+    debts_rows = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) 
     found_debt_row_index = -1
     for i, debt_row in enumerate(debts_rows):
         if debt_row[0] == original_date and debt_row[1] == original_supplier:
@@ -1972,7 +1949,7 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Финальные действия
     context.user_data.pop('edit_invoice', None)
-    get_cached_sheet_data(context, "Сейф") # Сбрасываем кэш сейфа
+    get_cached_sheet_data(context, "Сейф", force_update=True) # Сбрасываем кэш сейфа
     await query.message.edit_text("✅ Накладная успешно обновлена! Все связанные данные, включая сейф, пересчитаны.",
                                   reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Продолжить просмотр", callback_data=f"edit_invoice_cancel_{row_index}")]]))
 
@@ -2222,7 +2199,7 @@ async def show_log_for_category(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.message.edit_text(f"📖 Загружаю логи для категории '{category}'...")
     
-    all_logs = get_cached_sheet_data(context, SHEET_LOG) or []
+    all_logs = get_cached_sheet_data(context, SHEET_LOG, force_update=True) or []
     filtered_logs = [row for row in all_logs if len(row) > 3 and row[3] == category]
 
     if not filtered_logs:
@@ -2540,7 +2517,7 @@ async def show_daily_dashboard(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # --- 1. Загружаем все необходимые данные ---
     all_data = {
-        sheet: get_cached_sheet_data(context, sheet) or []
+        sheet: get_cached_sheet_data(context, sheet, force_update=True) or []
         for sheet in [SHEET_SHIFTS, SHEET_PLAN_FACT, SHEET_SUPPLIERS, SHEET_DEBTS, "Сейф", SHEET_EXPENSES, SHEET_INVENTORY]
     }
 
@@ -2990,7 +2967,7 @@ async def execute_delete_invoice(update: Update, context: ContextTypes.DEFAULT_T
         # Откат долга, если он был
         if pay_type.startswith("Долг"):
             ws_debts = GSHEET.worksheet(SHEET_DEBTS)
-            debts_rows = get_cached_sheet_data(context, SHEET_DEBTS) or []
+            debts_rows = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
             for i, debt_row in enumerate(debts_rows, start=2):
                 if debt_row[0] == invoice_date and debt_row[1] == supplier_name:
                     ws_debts.delete_rows(i)
@@ -3001,10 +2978,10 @@ async def execute_delete_invoice(update: Update, context: ContextTypes.DEFAULT_T
         ws_sup.delete_rows(row_index)
         
         # 4. Сбрасываем кэши
-        get_cached_sheet_data(context, SHEET_SUPPLIERS)
-        get_cached_sheet_data(context, SHEET_DEBTS)
-        get_cached_sheet_data(context, "Сейф")
-        get_cached_sheet_data(context, SHEET_INVENTORY)
+        get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True)
+        get_cached_sheet_data(context, SHEET_DEBTS, force_update=True)
+        get_cached_sheet_data(context, "Сейф", force_update=True)
+        get_cached_sheet_data(context, SHEET_INVENTORY, force_update=True)
 
         await query.message.edit_text(
             f"✅ Накладная для <b>{supplier_name}</b> от {invoice_date} была успешно удалена.",
@@ -3154,7 +3131,7 @@ def update_supplier_schedule(context: ContextTypes.DEFAULT_TYPE, date_str: str, 
             ws_schedule.append_row([day_of_week, supplier_name])
             logging.info(f"Самообучение: Поставщик '{supplier_name}' добавлен в график на '{day_of_week}'.")
             # Сбрасываем кэш для этого листа, чтобы изменения сразу были видны
-            get_cached_sheet_data(context, SHEET_PLANNING_SCHEDULE)
+            get_cached_sheet_data(context, SHEET_PLANNING_SCHEDULE, force_update=True)
         else:
             logging.info(f"Поставщик '{supplier_name}' уже в графике на '{day_of_week}'. Обучение не требуется.")
 
@@ -3253,7 +3230,7 @@ async def add_new_supplier_to_directory(update: Update, context: ContextTypes.DE
         ws = GSHEET.worksheet("СправочникПоставщиков")
         ws.append_row([new_supplier_name])
         # Принудительно обновляем кэш со списком поставщиков
-        get_all_supplier_names(context)
+        get_all_supplier_names(context, force_update=True)
         logging.info(f"Новый поставщик '{new_supplier_name}' добавлен в справочник.")
     except Exception as e:
         logging.error(f"Ошибка добавления нового поставщика в справочник: {e}")
@@ -3562,7 +3539,7 @@ def calculate_detailed_salary(context: ContextTypes.DEFAULT_TYPE, user_name: str
     bonus_paid_out = 0.0
     shifts_worked = 0
 
-    salaries_rows = get_cached_sheet_data(context, SHEET_SALARIES) or []
+    salaries_rows = get_cached_sheet_data(context, SHEET_SALARIES, force_update=True) or []
     
     for row in salaries_rows:
         if len(row) > 3 and (d := pdate(row[0])) and start_period <= d <= end_period and row[1] == user_name:
@@ -3828,8 +3805,8 @@ async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TY
 
     # --- Получение данных ---
     try:
-        all_plans = get_cached_sheet_data(context, SHEET_PLAN_FACT) or []
-        all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
+        all_plans = get_cached_sheet_data(context, SHEET_PLAN_FACT, force_update=True) or []
+        all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []
     except Exception as e:
         await query.message.edit_text(f"❌ Ошибка чтения данных: {e}")
         return
@@ -4045,7 +4022,7 @@ async def show_expense_history(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.message.edit_text("🧾 Загружаю историю расходов...")
 
-    rows = get_cached_sheet_data(context, SHEET_EXPENSES) or []
+    rows = get_cached_sheet_data(context, SHEET_EXPENSES, force_update=True) or []
     if not rows:
         return await query.message.edit_text("История расходов пуста.", reply_markup=admin_panel_kb())
 
@@ -4220,22 +4197,6 @@ async def handle_admin_expense_pay_type(update: Update, context: ContextTypes.DE
     finally:
         context.user_data.pop('admin_expense', None)
 
-async def background_cache_updater(context: ContextTypes.DEFAULT_TYPE):
-    """
-    Фоновая задача, которая периодически обновляет кэш для ключевых таблиц.
-    """
-    logging.info("CACHE_UPDATER: Запущено фоновое обновление кэша...")
-    sheets_to_precache = [
-        SHEET_REPORT, SHEET_SUPPLIERS, SHEET_DEBTS, "Сейф", 
-        SHEET_INVENTORY, SHEET_PLAN_FACT, SHEET_SHIFTS, "СправочникПоставщиков",
-        SHEET_PLANNING_SCHEDULE, SHEET_EXPENSES, SHEET_SALARIES, SHEET_LOG
-    ]
-    
-    for sheet_name in sheets_to_precache:
-        get_cached_sheet_data(context, sheet_name, force_update=True)
-    
-    logging.info("CACHE_UPDATER: Фоновое обновление кэша завершено.")
-
 
 async def edit_plan_save_value(update: Update, context: ContextTypes.DEFAULT_TYPE, new_value=None):
     """Сохраняет новое значение и вызывает обновление журнала."""
@@ -4361,7 +4322,7 @@ async def execute_archive_supplier(update: Update, context: ContextTypes.DEFAULT
         if cell:
             # Устанавливаем статус "Архивный" во второй колонке
             ws_dir.update_cell(cell.row, 2, "Архивный")
-            get_all_supplier_names(context)
+            get_all_supplier_names(context, force_update=True)
             await query.message.edit_text(f"✅ Поставщик '<b>{supplier_name}</b>' успешно архивирован.", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В меню", callback_data="supplier_directory_menu")]]))
         else:
             await query.message.edit_text("❌ Не удалось найти поставщика для архивации.")
@@ -4394,7 +4355,7 @@ async def save_edited_supplier_name(update: Update, context: ContextTypes.DEFAUL
             updated_count += len(cells_to_update)
             if len(cells_to_update) > 0:
                 # Сбрасываем кэш измененного листа
-                get_cached_sheet_data(context, sheet_name)
+                get_cached_sheet_data(context, sheet_name, force_update=True)
         
         await processing_message.edit_text(f"✅ Готово! Всего обновлено {updated_count} записей.", reply_markup=suppliers_menu_kb())
 
@@ -4480,8 +4441,8 @@ async def execute_delete_supplier(update: Update, context: ContextTypes.DEFAULT_
             ws_sched.delete_rows(cell.row)
 
         # Сбрасываем кэши
-        get_all_supplier_names(context)
-        get_cached_sheet_data(context, SHEET_PLANNING_SCHEDULE)
+        get_all_supplier_names(context, force_update=True)
+        get_cached_sheet_data(context, SHEET_PLANNING_SCHEDULE, force_update=True)
 
         await query.message.edit_text(f"✅ Поставщик '<b>{supplier_name}</b>' успешно удален из справочников.", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В меню", callback_data="supplier_directory_menu")]]))
     except Exception as e:
@@ -5279,7 +5240,7 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if bonus > 0:
                 add_salary_record(seller, "Премия 2%", bonus, f"За {today_str} (продажи: {total_sales:.2f}₴)")
 
-        get_cached_sheet_data(context, "Сейф")
+        get_cached_sheet_data(context, "Сейф", force_update=True)
         safe_bal_after_shift = get_safe_balance(context)
 
         total_debts, suppliers_debts = (0, [])
@@ -5621,7 +5582,7 @@ async def execute_report_fix(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 ws_salaries.delete_rows(found_salary_row)
 
         await update.message.reply_text(f"✅ Готово! Отчет за {date_str} был успешно исправлен.")
-        get_cached_sheet_data(context, SHEET_REPORT)
+        get_cached_sheet_data(context, SHEET_REPORT, force_update=True)
         
         # Генерируем текст обновленного отчета
         report_text = await generate_daily_report_text(context, date_str)
@@ -5789,7 +5750,7 @@ async def inventory_history(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     query = update.callback_query
     await query.message.edit_text("📦 Загружаю историю остатка...")
     
-    rows = get_cached_sheet_data(context, SHEET_INVENTORY) or []
+    rows = get_cached_sheet_data(context, SHEET_INVENTORY, force_update=True) or []
     if not rows:
         return await query.message.edit_text("История операций с остатком пуста.", reply_markup=stock_menu_kb())
 
@@ -5980,7 +5941,7 @@ async def add_new_supplier_directory_and_continue(update: Update, context: Conte
     try:
         ws = GSHEET.worksheet("СправочникПоставщиков")
         ws.append_row([new_supplier_name])
-        get_all_supplier_names(context)
+        get_all_supplier_names(context, force_update=True)
         logging.info(f"Новый поставщик '{new_supplier_name}' добавлен в справочник.")
     except Exception as e:
         return await query.message.edit_text(f"❌ Не удалось сохранить нового поставщика: {e}")
@@ -6263,17 +6224,6 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
         ws_sup.append_row(row_to_save)
-        try:
-            # Получаем текущий кэш
-            current_cache = context.bot_data.get('sheets_cache', {}).get(SHEET_SUPPLIERS, [])
-            # Добавляем в него нашу новую запись
-            current_cache.append(row_to_save)
-            # Сохраняем обновленный кэш обратно
-            context.bot_data['sheets_cache'][SHEET_SUPPLIERS] = current_cache
-            logging.info("Кэш для 'Поставщики' обновлен мгновенно.")
-        except Exception as e:
-            logging.error(f"Ошибка мгновенного обновления кэша для Поставщиков: {e}")
-
         log_action(user, "Накладные", "Создание накладной", f"Поставщик: {supplier_data['name']}, Приход: {amount_income:.2f}₴")
         
 
@@ -6291,7 +6241,7 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
             supplier_name_to_check = supplier_data['name']
             if supplier_name_to_check:
                 ws_plan = GSHEET.worksheet(SHEET_PLAN_FACT)
-                plan_rows = get_cached_sheet_data(context, SHEET_PLAN_FACT)
+                plan_rows = get_cached_sheet_data(context, SHEET_PLAN_FACT, force_update=True)
                 for i, plan_row in enumerate(plan_rows, start=2):
                     if len(plan_row) > 5 and plan_row[0] == today_str and plan_row[1] == supplier_name_to_check and plan_row[5] != "Прибыл":
                         ws_plan.update_cell(i, 6, "Прибыл")
@@ -6479,7 +6429,7 @@ async def show_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
     # Ваша рабочая логика получения и фильтрации долгов остается без изменений
     try:
-        rows = get_cached_sheet_data(context, SHEET_DEBTS) or []
+        rows = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
         unpaid_debts = []
         for i, row in enumerate(rows):
             try:
@@ -6694,7 +6644,7 @@ async def view_repayable_debts(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.message.edit_text("⏳ Загружаю список долгов для погашения...")
 
-    rows = get_cached_sheet_data(context, SHEET_DEBTS) or []
+    rows = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
     unpaid_debts = [row + [i+2] for i, row in enumerate(rows) if len(row) >= 7 and row[6].strip().lower() != "да"]
     unpaid_debts.sort(key=lambda x: pdate(x[5]) or dt.date.max)
 
@@ -6764,7 +6714,7 @@ async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_in
         
         # Обновляем статус в листе "Поставщики"
         ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
-        sup_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
+        sup_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []
         for i, sup_row in enumerate(sup_rows, start=2):
             if len(sup_row) > 8 and sup_row[0] == date_created and sup_row[1] == supplier_name:
                 ws_sup.update_cell(i, 8, "Да")
@@ -6880,7 +6830,7 @@ async def withdraw_daily_salary(update: Update, context: ContextTypes.DEFAULT_TY
     today_str = sdate()
     # Проверяем, не была ли уже выплачена ставка сегодня
     try:
-        salaries_rows = get_cached_sheet_data(context, SHEET_SALARIES) or []
+        salaries_rows = get_cached_sheet_data(context, SHEET_SALARIES, force_update=True) or []
         for row in salaries_rows:
             # Ищем запись: Дата=сегодня, Продавец=текущий, Тип=Ставка
             if len(row) > 2 and row[0] == today_str and row[1] == seller_name and row[2] == "Ставка":
@@ -6901,7 +6851,7 @@ async def safe_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page:
     query = update.callback_query
     await query.message.edit_text("🧾 Загружаю историю сейфа...")
 
-    rows = get_cached_sheet_data(context, "Сейф") or []
+    rows = get_cached_sheet_data(context, "Сейф", force_update=True) or []
     if not rows:
         return await query.message.edit_text("История операций с сейфом пуста.", reply_markup=safe_menu_kb())
 
@@ -7495,7 +7445,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("repay_final_"):
             await repay_final(update, context, int(data.split('_')[2]))
         elif data == "debts_history_start":
-            all_logs = get_cached_sheet_data(context, SHEET_DEBTS) or []
+            all_logs = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
             # Сортируем один раз при загрузке
             context.user_data['debt_history_data'] = sorted(all_logs, key=lambda r: pdate(r[0]) or dt.date.min)
             context.user_data.pop('debt_filters', None)
@@ -7696,9 +7646,6 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
     
     # 4. Регистрируем все обработчики (как и раньше)
-    job_queue = app.job_queue
-    # Запускаем задачу каждые 60 секунд. first=5 - первая проверка через 5 сек после старта.
-    job_queue.run_repeating(background_cache_updater, interval=60, first=5)
     app.add_handler(CallbackQueryHandler(cancel_report, pattern="^cancel_report$"))
     app.add_handler(CommandHandler("cancel", cancel))
     app.add_handler(CommandHandler("start", start))
