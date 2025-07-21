@@ -5794,14 +5794,14 @@ async def inventory_history(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 
 async def handle_add_supplier_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает выбор поставщика при добавлении накладной."""
+    """Обрабатывает выбор поставщика и показывает контекстную подсказку из плана."""
     query = update.callback_query
     await query.answer()
     
-    # ИСПРАВЛЕНИЕ: Более надежный способ получить имя
-    prefix = "add_sup_"
-    supplier_name = query.data[len(prefix):]
-
+    # Ваша рабочая логика получения имени поставщика
+    supplier_name = query.data.split('_', 2)[2]
+    
+    # Ваша рабочая логика для "Другой (не по графику)" остается без изменений
     if supplier_name == "other":
         context.user_data['supplier'] = {'step': 'search'}
         await query.message.edit_text(
@@ -5809,9 +5809,30 @@ async def handle_add_supplier_choice(update: Update, context: ContextTypes.DEFAU
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]])
         )
     else:
+        # Если поставщик выбран, добавляем умную подсказку
         context.user_data['supplier'] = {'name': supplier_name, 'step': 'amount_income'}
+        
+        # --- НАЧАЛО НОВОГО БЛОКА: ПОИСК ПЛАНА НА СЕГОДНЯ ---
+        today_str = sdate()
+        planned_amount = None
+        try:
+            plan_rows = get_cached_sheet_data(context, SHEET_PLAN_FACT) or []
+            for row in plan_rows:
+                if len(row) > 2 and row[0] == today_str and row[1] == supplier_name:
+                    planned_amount = parse_float(row[2])
+                    break
+        except Exception as e:
+            logging.error(f"Ошибка получения плана для подсказки: {e}")
+
+        msg = f"<b>Поставщик:</b> {supplier_name}\n"
+        if planned_amount is not None:
+            msg += f"<i>(ℹ️ На сегодня было запланировано: {planned_amount:.2f}₴)</i>\n\n"
+        
+        msg += "💰 Введите сумму прихода по накладной:"
+        # --- КОНЕЦ НОВОГО БЛОКА ---
+        
         await query.message.edit_text(
-            f"💰 Введите сумму прихода по накладной для <b>{supplier_name}</b>:",
+            msg,
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="add_supplier")]]),
             parse_mode=ParseMode.HTML
         )
@@ -6401,11 +6422,12 @@ async def save_shift(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- ДОЛГИ ---
 async def show_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0, filter_by: str = None):
-    """Показывает страничный список АКТУАЛЬНЫХ долгов в виде текста."""
+    """Показывает страничный список АКТУАЛЬНЫХ долгов с визуальной подсветкой срочных."""
     query = update.callback_query
     if query:
         await query.message.edit_text("⏳ Загружаю список текущих долгов...")
 
+    # Ваша рабочая логика получения и фильтрации долгов остается без изменений
     try:
         rows = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
         unpaid_debts = []
@@ -6422,6 +6444,7 @@ async def show_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE,
         await query.message.edit_text(f"❌ Ошибка чтения таблицы долгов: {e}")
         return
 
+    # Ваша рабочая логика пагинации остается без изменений
     per_page = 10
     total_pages = math.ceil(len(unpaid_debts) / per_page) if unpaid_debts else 1
     page = max(0, min(page, total_pages - 1))
@@ -6434,15 +6457,31 @@ async def show_current_debts(update: Update, context: ContextTypes.DEFAULT_TYPE,
     if not page_debts:
         msg += "\n✅ Отлично! Текущих долгов нет."
     else:
+        today = dt.date.today()
+        tomorrow = today + dt.timedelta(days=1)
         for debt in page_debts:
-            date_created, supplier, _, _, to_pay, due_date, _, pay_type = (debt + [""] * 8)[:8]
+            date_created, supplier, _, _, to_pay, due_date_str, _, pay_type = (debt + [""] * 8)[:8]
+            
+            # --- НАЧАЛО НОВОГО БЛОКА: ВИЗУАЛЬНАЯ ПОДСВЕТКА ---
+            due_date_obj = pdate(due_date_str)
+            urgency_text = f"   • ❗️ <b>Срок погашения:</b> {due_date_str}\n" # По умолчанию
+            if due_date_obj:
+                if due_date_obj < today:
+                    urgency_text = f"   • ❗️ <b>Срок погашения:</b> 🔴 <b>ПРОСРОЧЕНО ({due_date_str})</b>\n"
+                elif due_date_obj == today:
+                    urgency_text = f"   • ❗️ <b>Срок погашения:</b> 🔴 <b>СЕГОДНЯ</b>\n"
+                elif due_date_obj == tomorrow:
+                    urgency_text = f"   • ❗️ <b>Срок погашения:</b> 🟡 <b>ЗАВТРА</b>\n"
+            # --- КОНЕЦ НОВОГО БЛОКА ---
+
             msg += "\n──────────────────\n"
             msg += f"<b>Поставщик:</b> {supplier}\n"
             msg += f"   • 💰 <b>Сумма долга:</b> {parse_float(to_pay):.2f}₴\n"
             msg += f"   • 🗓 <b>Дата долга:</b> {date_created}\n"
-            msg += f"   • ❗️ <b>Срок погашения:</b> {due_date}\n"
-            msg += f"   • 💳 <b>Тип оплаты:</b> {pay_type or 'Наличные'}\n"
+            msg += urgency_text # Вставляем отформатированный срок
+            msg += f"   • 💳 <b>Тип оплаты:</b> {pay_type or 'Наличные'}"
 
+    # Ваша рабочая логика формирования клавиатуры остается без изменений
     kb = []
     filter_row = [
         InlineKeyboardButton("Фильтр: Наличные", callback_data=f"current_debts_filter_Наличные_0"),
