@@ -1408,18 +1408,45 @@ def build_debts_history_keyboard(rows, page=0, per_page=10):
 
 
 # --- ОСТАТОК МАГАЗИНА, ПЕРЕУЧЕТЫ И СЕЙФ ---
+# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 def add_safe_operation(user: Update.effective_user, op_type: str, amount: float, comment: str):
-    """Добавляет операцию в сейф и немедленно логирует это действие."""
+    """Добавляет операцию в сейф, немедленно логирует и МГНОВЕННО обновляет кэш."""
     user_name = USER_ID_TO_NAME.get(str(user.id), user.first_name)
-    ws = GSHEET.worksheet("Сейф")
-    ws.append_row([sdate(), op_type, amount, comment, user_name])
+    
+    # 1. Готовим строку для записи
+    row_to_save = [sdate(), op_type, amount, comment, user_name]
+    
+    # 2. Записываем в Google Таблицу
+    try:
+        ws = GSHEET.worksheet("Сейф")
+        ws.append_row(row_to_save)
+    except Exception as e:
+        logging.error(f"Критическая ошибка при записи в сейф: {e}")
+        # Даже если запись не удалась, мы не должны продолжать
+        return
+
+    # --- НОВЫЙ БЛОК: МГНОВЕННОЕ ОБНОВЛЕНИЕ КЭША ---
+    try:
+        # Получаем текущий кэш для "Сейфа"
+        context = ContextTypes.DEFAULT_TYPE.get_context()
+        current_cache = context.bot_data.get('sheets_cache', {}).get("Сейф", [])
+        # Добавляем в него нашу новую запись
+        current_cache.append(row_to_save)
+        # Сохраняем обновленный кэш обратно
+        context.bot_data['sheets_cache']["Сейф"] = current_cache
+        logging.info("Кэш для 'Сейф' обновлен мгновенно.")
+    except Exception as e:
+        logging.error(f"Ошибка мгновенного обновления кэша для Сейфа: {e}")
+    # --- КОНЕЦ НОВОГО БЛОКА ---
+
+    # 3. Логируем действие
     log_action(
         user=user,
         category="Сейф",
         action=op_type,
         comment=f"Сумма: {amount:.2f}₴. ({comment})"
     )
-    
+
 def get_sellers_comparison_data(context: ContextTypes.DEFAULT_TYPE, sellers_list: list, days_period: int = 30):
     """Собирает данные для сравнения средних продаж продавцов по дням недели."""
     today = dt.date.today()
@@ -6246,7 +6273,7 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logging.info("Кэш для 'Поставщики' обновлен мгновенно.")
         except Exception as e:
             logging.error(f"Ошибка мгновенного обновления кэша для Поставщиков: {e}")
-            
+
         log_action(user, "Накладные", "Создание накладной", f"Поставщик: {supplier_data['name']}, Приход: {amount_income:.2f}₴")
         
 
