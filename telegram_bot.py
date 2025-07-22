@@ -5,8 +5,6 @@ from telegram.constants import ParseMode
 from telegram.error import BadRequest
 from thefuzz import fuzz
 from telegram.error import TelegramError
-from dataclasses import dataclass
-import threading
 from telegram import (
     InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, Update, InputFile
 )
@@ -56,172 +54,6 @@ DIALOG_KEYS = [
     'revision', 'search_debt', 'safe_op', 'inventory_expense', 
     'repay', 'shift', 'report_period', 'admin_expense', 'custom_analytics_period', 'supplier_edit', 'seller_expense', 'supplier_edit', 'report_fix'
 ]
-
-# ================== КЭШ ДЛЯ GOOGLE SHEETS ==================
-
-@dataclass
-class _CacheEntry:
-    data: list
-    ts: dt.datetime
-    dirty: bool = False
-
-class SheetsCache:
-    def __init__(self, ttl_seconds: int = 60):
-        self.ttl = ttl_seconds
-        self._data: dict[str, _CacheEntry] = {}
-        self._lock = threading.Lock()
-
-    def get(self, name: str, loader, force: bool = False, ttl: int | None = None):
-        now = dt.datetime.now()
-        ttl = ttl if ttl is not None else self.ttl
-        with self._lock:
-            entry = self._data.get(name)
-            if entry and not force and (now - entry.ts).total_seconds() < ttl:
-                return list(entry.data)
-        # загрузка вне лока
-        data = loader(name)
-        with self._lock:
-            self._data[name] = _CacheEntry(list(data), now, dirty=False)
-        return list(data)
-
-    def set_local(self, name: str, data: list, mark_dirty: bool = False):
-        with self._lock:
-            self._data[name] = _CacheEntry(list(data), dt.datetime.now(), dirty=mark_dirty)
-
-    def mark_dirty(self, name: str):
-        with self._lock:
-            if name in self._data:
-                self._data[name].dirty = True
-
-    def invalidate(self, name: str | None = None):
-        with self._lock:
-            if name is None:
-                self._data.clear()
-            else:
-                self._data.pop(name, None)
-
-    def collect_dirty(self):
-        with self._lock:
-            dirty = [(n, e) for n, e in self._data.items() if e.dirty]
-            for _, e in dirty:
-                e.dirty = False
-            return dirty
-
-def _get_cache_mgr(context: ContextTypes.DEFAULT_TYPE, ttl: int) -> SheetsCache:
-    mgr: SheetsCache | None = context.bot_data.get('sheets_cache_mgr')
-    if mgr is None:
-        mgr = SheetsCache(ttl_seconds=ttl)
-        context.bot_data['sheets_cache_mgr'] = mgr
-    _set_global_mgr(mgr)
-    return mgr
-
-# === Авто-пометка dirty без context ===
-_GLOBAL_SHEETS_CACHE_MGR = None  # глобальная ссылка
-
-def _set_global_mgr(mgr):
-    global _GLOBAL_SHEETS_CACHE_MGR
-    _GLOBAL_SHEETS_CACHE_MGR = mgr
-
-
-
-def mark_sheet_dirty_nc(sheet_name: str):
-    """Пометить лист грязным без context (используем глобальный менеджер)."""
-    mgr = _GLOBAL_SHEETS_CACHE_MGR
-    if mgr:
-        try:
-            mgr.mark_dirty(sheet_name)
-        except Exception:
-            pass
-
-# === Локальное обновление кэша после записи в таблицу ===
-def cache_append_row(sheet_name: str, row: list):
-    mgr = _GLOBAL_SHEETS_CACHE_MGR
-    if not mgr:
-        return
-    entry = mgr._data.get(sheet_name)
-    if entry:
-        entry.data.append(row)
-        entry.ts = dt.datetime.now()
-        entry.dirty = True  # чтоб sync_job потом перечитал из Sheets
-
-def cache_update_row(sheet_name: str, row_idx_1based: int, new_row: list):
-    """
-    row_idx_1based — номер строки в Google Sheets (с заголовком).
-    В кэше индекс = row_idx_1based - 2 (т.к. мы срезаем заголовок).
-    """
-    mgr = _GLOBAL_SHEETS_CACHE_MGR
-    if not mgr:
-        return
-    entry = mgr._data.get(sheet_name)
-    if entry:
-        idx = row_idx_1based - 2
-        if 0 <= idx < len(entry.data):
-            entry.data[idx] = new_row
-            entry.ts = dt.datetime.now()
-            entry.dirty = True
-
-def cache_delete_rows(sheet_name: str, rows_1based: list[int]):
-    mgr = _GLOBAL_SHEETS_CACHE_MGR
-    if not mgr:
-        return
-    entry = mgr._data.get(sheet_name)
-    if entry:
-        for r in sorted(rows_1based, reverse=True):
-            idx = r - 2
-            if 0 <= idx < len(entry.data):
-                entry.data.pop(idx)
-        entry.ts = dt.datetime.now()
-        entry.dirty = True
-
-def refresh_sheet_cache(sheet_name: str):
-    """Полностью перечитать лист из Google и положить в кэш сразу (моментальное обновление)."""
-    if not GSHEET:
-        return
-    mgr = _GLOBAL_SHEETS_CACHE_MGR
-    if not mgr:
-        return
-    try:
-        ws = GSHEET.worksheet(sheet_name)
-        data = ws.get_all_values()[1:]  # без заголовка
-        mgr.set_local(sheet_name, data, mark_dirty=False)
-        logging.info(f"[instant_refresh] Кэш листа '{sheet_name}' обновлён сразу после записи.")
-    except Exception:
-        logging.exception(f"[instant_refresh] Не удалось обновить кэш листа '{sheet_name}'")
-
-
-def _patch_worksheet_methods():
-    """Монкипатчим write-методы gspread.Worksheet: после записи — сразу обновляем кэш листа."""
-    try:
-        import gspread.models as _gm
-    except Exception:
-        return
-
-    methods = [
-        "update_cell", "append_row", "batch_update", "delete_rows",
-        "insert_row", "update_acell", "update", "append_rows"
-    ]
-
-    for m in methods:
-        if hasattr(_gm.Worksheet, m):
-            orig = getattr(_gm.Worksheet, m)
-            if getattr(orig, "__patched_refresh__", False):
-                continue
-
-            def make_wrap(o):
-                def wrapped(self, *args, **kwargs):
-                    res = o(self, *args, **kwargs)
-                    # сразу обновляем кэш этого листа
-                    try:
-                        refresh_sheet_cache(self.title)
-                    except Exception:
-                        logging.exception(f"[patch] Ошибка моментального обновления для '{self.title}'")
-                    return res
-                wrapped.__patched_refresh__ = True
-                return wrapped
-
-            setattr(_gm.Worksheet, m, make_wrap(orig))
-
-
 
 
 logging.basicConfig(
@@ -1113,64 +945,45 @@ def clear_plan_for_date(date_to_clear_str: str):
         logging.error(f"Ошибка очистки планов для даты {date_to_clear_str}: {e}")
 
 
-def get_cached_sheet_data(context: ContextTypes.DEFAULT_TYPE,
-                          sheet_name: str,
-                          cache_duration_seconds: int = 60,
-                          force_update: bool = False) -> list | None:
-    """Единая точка доступа к данным листа: кэш с TTL."""
-    if not GSHEET:
-        return None
-
-    mgr = _get_cache_mgr(context, cache_duration_seconds)
-
-    def _loader(name: str):
-        ws = GSHEET.worksheet(name)
-        return ws.get_all_values()[1:]  # пропуск заголовка
-
-    try:
-        data = mgr.get(sheet_name, _loader, force=force_update, ttl=cache_duration_seconds)
-        return data
-    except Exception as e:
-        logging.error(f"Не удалось получить лист '{sheet_name}': {e}")
-        return None
-
-def mark_sheet_dirty(context: ContextTypes.DEFAULT_TYPE, sheet_name: str):
-    mgr: SheetsCache | None = context.bot_data.get('sheets_cache_mgr')
-    if mgr:
-        mgr.mark_dirty(sheet_name)
-
-def sync_cache_job(context):
-    """Раз в минуту перечитываем «грязные» листы."""
-    try:
-        mgr = context.bot_data.get('sheets_cache_mgr') if context else None
-        if mgr is None:
-            mgr = _GLOBAL_SHEETS_CACHE_MGR
-
-        if mgr is None or not GSHEET:
-            logging.debug("[sync_job] skip: mgr or GSHEET is None")
-            return
-
-        dirty = mgr.collect_dirty()
-        if not dirty:
-            return
-
-        def _loader(name: str):
-            ws = GSHEET.worksheet(name)
-            return ws.get_all_values()[1:]
-
-        for name, _entry in dirty:
-            try:
-                data = _loader(name)
-                mgr.set_local(name, data, mark_dirty=False)
-                logging.info(f"[sync_job] Обновил кэш листа '{name}'.")
-            except Exception:
-                logging.exception(f"[sync_job] Не удалось обновить лист '{name}'")
-    except Exception:
-        logging.exception("[sync_job] crash")
-
-
-
+def get_cached_sheet_data(context: ContextTypes.DEFAULT_TYPE, sheet_name: str, cache_duration_seconds: int = 60, force_update: bool = False) -> list | None:
+    """Получает данные из листа, используя кэш, с возможностью принудительного обновления."""
+    if not GSHEET: return None
     
+    now = dt.datetime.now()
+    cache = context.bot_data.setdefault('sheets_cache', {})
+    
+    # Если не требуется принудительное обновление, проверяем кэш
+    if not force_update and sheet_name in cache:
+        cached_data, timestamp = cache[sheet_name]
+        if (now - timestamp).total_seconds() < cache_duration_seconds:
+            logging.info(f"Данные для '{sheet_name}' взяты из кэша.")
+            return list(cached_data)
+            
+    # Читаем из таблицы, если кэш устарел, его нет или требуется обновление
+    try:
+        logging.info(f"Читаем данные для '{sheet_name}' из Google Sheets (обновляем кэш).")
+        ws = GSHEET.worksheet(sheet_name)
+        data = ws.get_all_values()[1:]
+        
+        cache[sheet_name] = (data, now)
+        context.bot_data['sheets_cache'] = cache
+        
+        return list(data)
+    except Exception as e:
+        logging.error(f"Не удалось прочитать или кэшировать лист '{sheet_name}': {e}")
+        return None
+    
+def drop_cache(context: ContextTypes.DEFAULT_TYPE | None, *sheet_names: str):
+    """Безопасно убирает листы из кэша."""
+    if not context:
+        return
+    cache = context.bot_data.get('sheets_cache')
+    if not cache:
+        return
+    for n in sheet_names:
+        cache.pop(n, None)
+
+
 # --- GOOGLE SHEETS ---
 def get_gsheet():
     try:
@@ -1610,11 +1423,13 @@ def build_debts_history_keyboard(rows, page=0, per_page=10):
 
 
 # --- ОСТАТОК МАГАЗИНА, ПЕРЕУЧЕТЫ И СЕЙФ ---
-def add_safe_operation(user: Update.effective_user, op_type: str, amount: float, comment: str):
+def add_safe_operation(user: Update.effective_user, op_type: str, amount: float, comment: str, context: ContextTypes.DEFAULT_TYPE):
     """Добавляет операцию в сейф и немедленно логирует это действие."""
     user_name = USER_ID_TO_NAME.get(str(user.id), user.first_name)
     ws = GSHEET.worksheet("Сейф")
     ws.append_row([sdate(), op_type, amount, comment, user_name])
+    drop_cache(context, "Сейф")
+    balance = get_safe_balance(context, force=True)
     log_action(
         user=user,
         category="Сейф",
@@ -1685,9 +1500,8 @@ def generate_comparison_chart(stats_data: dict) -> io.BytesIO:
     plt.close(fig)
     return buf
 
-def get_safe_balance(context: ContextTypes.DEFAULT_TYPE):
-    """Считает баланс сейфа, используя кэшированные данные."""
-    rows = get_cached_sheet_data(context, "Сейф")
+def get_safe_balance(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> float:
+    rows = get_cached_sheet_data(context, "Сейф", force_update=force) or []
     if rows is None:
         logging.error("Не удалось получить данные для расчета баланса сейфа.")
         return 0
@@ -5376,7 +5190,8 @@ async def show_today_invoices(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     today_str = sdate()
-    rows = get_cached_sheet_data(context, SHEET_SUPPLIERS)
+    drop_cache(context, SHEET_SUPPLIERS)
+    rows = get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True)
     if rows is None:
         await query.message.edit_text("❌ Ошибка чтения данных о поставщиках.")
         return
@@ -6435,6 +6250,8 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
         ws_sup.append_row(row_to_save)
         log_action(user, "Накладные", "Создание накладной", f"Поставщик: {supplier_data['name']}, Приход: {amount_income:.2f}₴")
+        drop_cache(context, SHEET_SUPPLIERS, SHEET_DEBTS, SHEET_INVENTORY)
+
         
 
         if pay_type.startswith("Долг"):
@@ -6790,13 +6607,13 @@ async def repay_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, row_
 
 
 async def generate_shift_protocol(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Собирает все действия за день и формирует структурированный протокол смены."""
+    """Собирает все действия за день и формирует структурированный протокол смены.""" 
     query = update.callback_query
     date_str = query.data.split('_')[-1]
     await query.message.edit_text(f"📜 Собираю полный протокол смены за {date_str}...")
 
     # --- 1. Собираем данные из всех таблиц ---
-    supplier_rows = [r for r in (get_cached_sheet_data(context, SHEET_SUPPLIERS) or []) if r and r[0] == date_str]
+    supplier_rows = [r for r in (get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []) if r and r[0] == date_str]
     expense_rows = [r for r in (get_cached_sheet_data(context, SHEET_EXPENSES) or []) if r and r[0] == date_str and "Закрытие смены" in r[5]]
     safe_rows = [r for r in (get_cached_sheet_data(context, "Сейф") or []) if r and r[0].startswith(date_str)]
     inventory_rows = [r for r in (get_cached_sheet_data(context, SHEET_INVENTORY) or []) if r and r[0] == date_str]
@@ -7854,9 +7671,6 @@ def main():
     
     # 1. Создаем приложение
     app = ApplicationBuilder().token(TOKEN).build()
-    mgr = SheetsCache(ttl_seconds=60)
-    app.bot_data['sheets_cache_mgr'] = mgr
-    _set_global_mgr(mgr)
     
     # 4. Регистрируем все обработчики (как и раньше)
     app.add_handler(CallbackQueryHandler(cancel_report, pattern="^cancel_report$"))
@@ -7866,20 +7680,8 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_error_handler(error_handler)
-
-    try:
-        _patch_worksheet_methods()
-    except Exception as e:
-        logging.error(f"Не удалось пропатчить Worksheet: {e}")
     
-
     logging.info("Бот запущен и готов к работе!")
-
-    try:
-        app.job_queue.run_repeating(sync_cache_job, interval=60, first=60)
-    except Exception as e:
-        logging.error(f"Не удалось запустить sync_cache_job: {e}")
-
 
     # 5. Запускаем бота (этот метод сам справится с асинхронностью)
     app.run_polling()
