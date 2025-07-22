@@ -973,17 +973,6 @@ def get_cached_sheet_data(context: ContextTypes.DEFAULT_TYPE, sheet_name: str, c
         logging.error(f"Не удалось прочитать или кэшировать лист '{sheet_name}': {e}")
         return None
     
-def drop_cache(context: ContextTypes.DEFAULT_TYPE | None, *sheet_names: str):
-    """Безопасно убирает листы из кэша."""
-    if not context:
-        return
-    cache = context.bot_data.get('sheets_cache')
-    if not cache:
-        return
-    for n in sheet_names:
-        cache.pop(n, None)
-
-
 # --- GOOGLE SHEETS ---
 def get_gsheet():
     try:
@@ -1423,13 +1412,11 @@ def build_debts_history_keyboard(rows, page=0, per_page=10):
 
 
 # --- ОСТАТОК МАГАЗИНА, ПЕРЕУЧЕТЫ И СЕЙФ ---
-def add_safe_operation(user: Update.effective_user, op_type: str, amount: float, comment: str, context: ContextTypes.DEFAULT_TYPE):
+def add_safe_operation(user: Update.effective_user, op_type: str, amount: float, comment: str):
     """Добавляет операцию в сейф и немедленно логирует это действие."""
     user_name = USER_ID_TO_NAME.get(str(user.id), user.first_name)
     ws = GSHEET.worksheet("Сейф")
     ws.append_row([sdate(), op_type, amount, comment, user_name])
-    drop_cache(context, "Сейф")
-    balance = get_safe_balance(context, force=True)
     log_action(
         user=user,
         category="Сейф",
@@ -1500,8 +1487,9 @@ def generate_comparison_chart(stats_data: dict) -> io.BytesIO:
     plt.close(fig)
     return buf
 
-def get_safe_balance(context: ContextTypes.DEFAULT_TYPE, force: bool = False) -> float:
-    rows = get_cached_sheet_data(context, "Сейф", force_update=force) or []
+def get_safe_balance(context: ContextTypes.DEFAULT_TYPE):
+    """Считает баланс сейфа, используя кэшированные данные."""
+    rows = get_cached_sheet_data(context, "Сейф")
     if rows is None:
         logging.error("Не удалось получить данные для расчета баланса сейфа.")
         return 0
@@ -5190,8 +5178,7 @@ async def show_today_invoices(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
     today_str = sdate()
-    drop_cache(context, SHEET_SUPPLIERS)
-    rows = get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True)
+    rows = get_cached_sheet_data(context, SHEET_SUPPLIERS)
     if rows is None:
         await query.message.edit_text("❌ Ошибка чтения данных о поставщиках.")
         return
@@ -6250,8 +6237,6 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
         ws_sup.append_row(row_to_save)
         log_action(user, "Накладные", "Создание накладной", f"Поставщик: {supplier_data['name']}, Приход: {amount_income:.2f}₴")
-        drop_cache(context, SHEET_SUPPLIERS, SHEET_DEBTS, SHEET_INVENTORY)
-
         
 
         if pay_type.startswith("Долг"):
@@ -6607,13 +6592,13 @@ async def repay_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE, row_
 
 
 async def generate_shift_protocol(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Собирает все действия за день и формирует структурированный протокол смены.""" 
+    """Собирает все действия за день и формирует структурированный протокол смены."""
     query = update.callback_query
     date_str = query.data.split('_')[-1]
     await query.message.edit_text(f"📜 Собираю полный протокол смены за {date_str}...")
 
     # --- 1. Собираем данные из всех таблиц ---
-    supplier_rows = [r for r in (get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []) if r and r[0] == date_str]
+    supplier_rows = [r for r in (get_cached_sheet_data(context, SHEET_SUPPLIERS) or []) if r and r[0] == date_str]
     expense_rows = [r for r in (get_cached_sheet_data(context, SHEET_EXPENSES) or []) if r and r[0] == date_str and "Закрытие смены" in r[5]]
     safe_rows = [r for r in (get_cached_sheet_data(context, "Сейф") or []) if r and r[0].startswith(date_str)]
     inventory_rows = [r for r in (get_cached_sheet_data(context, SHEET_INVENTORY) or []) if r and r[0] == date_str]
