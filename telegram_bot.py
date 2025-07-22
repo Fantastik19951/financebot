@@ -1081,7 +1081,7 @@ def mark_sheet_dirty(context: ContextTypes.DEFAULT_TYPE, sheet_name: str):
 
 def sync_cache_job(context: ContextTypes.DEFAULT_TYPE):
     """Раз в минуту перечитываем «грязные» листы."""
-    mgr: SheetsCache | None = context.bot_data.get('sheets_cache_mgr')
+    mgr: SheetsCache | None = context.bot_data.get('sheets_cache_mgr') or _GLOBAL_SHEETS_CACHE_MGR
     if not mgr or not GSHEET:
         return
 
