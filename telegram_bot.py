@@ -122,6 +122,8 @@ def _set_global_mgr(mgr):
     global _GLOBAL_SHEETS_CACHE_MGR
     _GLOBAL_SHEETS_CACHE_MGR = mgr
 
+
+
 def mark_sheet_dirty_nc(sheet_name: str):
     """Пометить лист грязным без context (используем глобальный менеджер)."""
     mgr = _GLOBAL_SHEETS_CACHE_MGR
@@ -131,8 +133,64 @@ def mark_sheet_dirty_nc(sheet_name: str):
         except Exception:
             pass
 
+# === Локальное обновление кэша после записи в таблицу ===
+def cache_append_row(sheet_name: str, row: list):
+    mgr = _GLOBAL_SHEETS_CACHE_MGR
+    if not mgr:
+        return
+    entry = mgr._data.get(sheet_name)
+    if entry:
+        entry.data.append(row)
+        entry.ts = dt.datetime.now()
+        entry.dirty = True  # чтоб sync_job потом перечитал из Sheets
+
+def cache_update_row(sheet_name: str, row_idx_1based: int, new_row: list):
+    """
+    row_idx_1based — номер строки в Google Sheets (с заголовком).
+    В кэше индекс = row_idx_1based - 2 (т.к. мы срезаем заголовок).
+    """
+    mgr = _GLOBAL_SHEETS_CACHE_MGR
+    if not mgr:
+        return
+    entry = mgr._data.get(sheet_name)
+    if entry:
+        idx = row_idx_1based - 2
+        if 0 <= idx < len(entry.data):
+            entry.data[idx] = new_row
+            entry.ts = dt.datetime.now()
+            entry.dirty = True
+
+def cache_delete_rows(sheet_name: str, rows_1based: list[int]):
+    mgr = _GLOBAL_SHEETS_CACHE_MGR
+    if not mgr:
+        return
+    entry = mgr._data.get(sheet_name)
+    if entry:
+        for r in sorted(rows_1based, reverse=True):
+            idx = r - 2
+            if 0 <= idx < len(entry.data):
+                entry.data.pop(idx)
+        entry.ts = dt.datetime.now()
+        entry.dirty = True
+
+def refresh_sheet_cache(sheet_name: str):
+    """Полностью перечитать лист из Google и положить в кэш сразу (моментальное обновление)."""
+    if not GSHEET:
+        return
+    mgr = _GLOBAL_SHEETS_CACHE_MGR
+    if not mgr:
+        return
+    try:
+        ws = GSHEET.worksheet(sheet_name)
+        data = ws.get_all_values()[1:]  # без заголовка
+        mgr.set_local(sheet_name, data, mark_dirty=False)
+        logging.info(f"[instant_refresh] Кэш листа '{sheet_name}' обновлён сразу после записи.")
+    except Exception:
+        logging.exception(f"[instant_refresh] Не удалось обновить кэш листа '{sheet_name}'")
+
+
 def _patch_worksheet_methods():
-    """Монкипатчим write-методы gspread.Worksheet, чтобы автопомечать лист dirty."""
+    """Монкипатчим write-методы gspread.Worksheet: после записи — сразу обновляем кэш листа."""
     try:
         import gspread.models as _gm
     except Exception:
@@ -146,21 +204,23 @@ def _patch_worksheet_methods():
     for m in methods:
         if hasattr(_gm.Worksheet, m):
             orig = getattr(_gm.Worksheet, m)
-            if getattr(orig, "__patched_dirty__", False):
+            if getattr(orig, "__patched_refresh__", False):
                 continue
 
             def make_wrap(o):
                 def wrapped(self, *args, **kwargs):
                     res = o(self, *args, **kwargs)
+                    # сразу обновляем кэш этого листа
                     try:
-                        mark_sheet_dirty_nc(self.title)
+                        refresh_sheet_cache(self.title)
                     except Exception:
-                        pass
+                        logging.exception(f"[patch] Ошибка моментального обновления для '{self.title}'")
                     return res
-                wrapped.__patched_dirty__ = True
+                wrapped.__patched_refresh__ = True
                 return wrapped
 
             setattr(_gm.Worksheet, m, make_wrap(orig))
+
 
 
 
