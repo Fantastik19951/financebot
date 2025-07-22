@@ -18,6 +18,7 @@ python-Levenshtein = "*"
 APScheduler = "*"
 pytz = "*"
 cachetools = "*"
+dataclasses = "*"
 
 [build-system]
 requires = ["poetry-core"]
