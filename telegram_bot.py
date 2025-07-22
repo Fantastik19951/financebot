@@ -1079,27 +1079,38 @@ def mark_sheet_dirty(context: ContextTypes.DEFAULT_TYPE, sheet_name: str):
     if mgr:
         mgr.mark_dirty(sheet_name)
 
-def sync_cache_job(context: ContextTypes.DEFAULT_TYPE):
+def sync_cache_job(context):
     """Раз в минуту перечитываем «грязные» листы."""
-    mgr: SheetsCache | None = context.bot_data.get('sheets_cache_mgr') or _GLOBAL_SHEETS_CACHE_MGR
-    if not mgr or not GSHEET:
-        return
+    try:
+        # 1. Берём менеджер из context или из глобалки
+        mgr = context.bot_data.get('sheets_cache_mgr') if context else None
+        if mgr is None:
+            mgr = _GLOBAL_SHEETS_CACHE_MGR
 
-    dirty = mgr.collect_dirty()
-    if not dirty:
-        return
+        if mgr is None or not GSHEET:
+            logging.debug("[sync_job] mgr or GSHEET is None -> skip")
+            return
 
-    def _loader(name: str):
-        ws = GSHEET.worksheet(name)
-        return ws.get_all_values()[1:]
+        dirty = mgr.collect_dirty()
+        if not dirty:
+            # ничего не меняли
+            return
 
-    for name, _entry in dirty:
-        try:
-            data = _loader(name)
-            mgr.set_local(name, data, mark_dirty=False)
-            logging.info(f"[sync_job] Обновил кэш листа '{name}'.")
-        except Exception as e:
-            logging.error(f"[sync_job] Не удалось обновить лист '{name}': {e}")
+        def _loader(name: str):
+            ws = GSHEET.worksheet(name)
+            return ws.get_all_values()[1:]
+
+        for name, _entry in dirty:
+            try:
+                data = _loader(name)
+                mgr.set_local(name, data, mark_dirty=False)
+                logging.info(f"[sync_job] Обновил кэш листа '{name}'.")
+            except Exception:
+                logging.exception(f"[sync_job] Не удалось обновить лист '{name}'")
+
+    except Exception:
+        logging.exception("[sync_job] crash")
+
 
     
 # --- GOOGLE SHEETS ---
@@ -7804,7 +7815,7 @@ def main():
     logging.info("Бот запущен и готов к работе!")
 
     try:
-        app.job_queue.run_repeating(lambda c: sync_cache_job(c), interval=60, first=60)
+        app.job_queue.run_repeating(sync_cache_job, interval=60, first=60)
     except Exception as e:
         logging.error(f"Не удалось запустить sync_cache_job: {e}")
 
