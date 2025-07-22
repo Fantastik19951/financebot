@@ -1082,18 +1082,16 @@ def mark_sheet_dirty(context: ContextTypes.DEFAULT_TYPE, sheet_name: str):
 def sync_cache_job(context):
     """Раз в минуту перечитываем «грязные» листы."""
     try:
-        # 1. Берём менеджер из context или из глобалки
         mgr = context.bot_data.get('sheets_cache_mgr') if context else None
         if mgr is None:
             mgr = _GLOBAL_SHEETS_CACHE_MGR
 
         if mgr is None or not GSHEET:
-            logging.debug("[sync_job] mgr or GSHEET is None -> skip")
+            logging.debug("[sync_job] skip: mgr or GSHEET is None")
             return
 
         dirty = mgr.collect_dirty()
         if not dirty:
-            # ничего не меняли
             return
 
         def _loader(name: str):
@@ -1107,9 +1105,9 @@ def sync_cache_job(context):
                 logging.info(f"[sync_job] Обновил кэш листа '{name}'.")
             except Exception:
                 logging.exception(f"[sync_job] Не удалось обновить лист '{name}'")
-
     except Exception:
         logging.exception("[sync_job] crash")
+
 
 
     
@@ -7796,6 +7794,9 @@ def main():
     
     # 1. Создаем приложение
     app = ApplicationBuilder().token(TOKEN).build()
+    mgr = SheetsCache(ttl_seconds=60)
+    app.bot_data['sheets_cache_mgr'] = mgr
+    _set_global_mgr(mgr)
     
     # 4. Регистрируем все обработчики (как и раньше)
     app.add_handler(CallbackQueryHandler(cancel_report, pattern="^cancel_report$"))
