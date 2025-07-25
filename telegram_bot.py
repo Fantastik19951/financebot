@@ -3853,7 +3853,7 @@ async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TY
             for supplier, data in pending_suppliers:
                 msg += f" • <b>{supplier}</b>\n"
                 msg += f"     <i>План: {data['plan_amount']:.2f}₴ ({data['plan_type']})</i>\n"
-                msg += f"     <i>Факт: {data['fact_amount']:.2f}₴ ({', '.join(data['fact_types']) or '-'})</i>\n"
+
 
     # Клавиатура навигации
     kb = []
