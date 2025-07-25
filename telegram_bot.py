@@ -2304,8 +2304,9 @@ async def execute_payout(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 async def show_salary_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает страничный просмотр истории выплат бонусов в виде красивой таблицы."""
+    """Показывает страничный просмотр истории выплат бонусов в виде идеально ровной таблицы."""
     query = update.callback_query
     
     try:
@@ -2338,18 +2339,21 @@ async def show_salary_history(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not page_records:
         msg += "<i>Записей о выплаченных бонусах не найдено.</i>"
     else:
-        # --- НОВОЕ ФОРМАТИРОВАНИЕ ---
-        msg += "<code>Дата         Сумма      Период</code>\n"
-        msg += "<code>-----------------------------------</code>\n"
+        # --- НОВОЕ, ИДЕАЛЬНОЕ ФОРМАТИРОВАНИЕ ---
+        # Используем HTML тег <pre> для сохранения форматирования
+        table_header = "<b>Дата        Сумма         Период</b>\n"
+        table_body = ""
         for row in page_records:
             date = row[0]
             amount = f"{parse_float(row[3]):.2f}₴"
             # Извлекаем только даты из комментария
             period_comment = row[4].replace("за период ", "")
             
-            # Выравниваем строки
-            padded_amount = amount.ljust(11)
-            msg += f"<code>{date} {padded_amount} {period_comment}</code>\n"
+            # Выравниваем строки с помощью f-string форматирования
+            # ljust - выравнивание по левому краю, rjust - по правому
+            table_body += f"{date:<12}{amount:>12}  {period_comment}\n"
+        
+        msg += f"<pre>{table_header}{table_body}</pre>"
 
     kb_nav = []
     if page > 0:
