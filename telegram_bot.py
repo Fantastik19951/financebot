@@ -1178,7 +1178,7 @@ def get_avg_markup_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_nam
     return None
 
 def get_tomorrow_planning_details():
-    """Собирает данные из ПланФакт для отчета и возвращает форматированную строку."""
+    """Собирает данные из ПланФакт для отчета и возвращает форматированную строк."""
     tomorrow_str = (dt.date.today() + dt.timedelta(days=1)).strftime(DATE_FMT)
     try:
         ws = GSHEET.worksheet("ПланФактНаЗавтра")
