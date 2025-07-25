@@ -1986,22 +1986,55 @@ async def check_financial_shield(context: ContextTypes.DEFAULT_TYPE):
     else:
         logging.info("FINANCIAL SHIELD: Проблем не обнаружено.")
 
+# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 async def show_seller_salary_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает детализацию бонусов с пагинацией по периодам."""
     query = update.callback_query
     
+    # Новый формат callback: view_salary_ИМЯ_СМЕЩЕНИЕ
     parts = query.data.split('_')
     seller_name = parts[2]
     offset = int(parts[3]) if len(parts) > 3 else 0
 
     await query.message.edit_text(f"⏳ Загружаю данные по зарплате для {seller_name}...")
 
+    # Получаем нужный период
     start_period, end_period = get_payroll_period(offset)
 
-    # --- ИСПРАВЛЕНИЕ: Передаем 'context' ---
+    # Рассчитываем бонус и статус оплаты для этого периода
     bonus_to_pay, bonus_days, is_paid = calculate_accrued_bonus(context, seller_name, start_period, end_period)
 
-    # ... (остальная часть функции для формирования msg и kb остается без изменений) ...
+    # --- НАЧАЛО ИСПРАВЛЕННОГО БЛОКА ---
+    # Формируем сообщение
+    msg = f"<b>Детализация бонусов для {seller_name}</b>\n"
+    msg += f"<i>Период: {sdate(start_period)} - {sdate(end_period)}</i>\n\n"
+    if not bonus_days:
+        msg += "Начислений бонусов в этом периоде нет."
+    else:
+        for day in bonus_days:
+            msg += f" • {day['date']}: +{day['bonus']:.2f}₴ (от продаж {day['sales']:.2f}₴)\n"
+    
+    msg += f"\n<b>Итого начислено за период: {bonus_to_pay:.2f}₴</b>"
+    
+    # Формируем клавиатуру
+    kb = []
+    nav_row = []
+    # Кнопка "Назад" по периодам
+    nav_row.append(InlineKeyboardButton("◀️ Пред. период", callback_data=f"view_salary_{seller_name}_{offset - 1}"))
+    # Кнопка "Вперед" активна, только если мы не в текущем периоде (offset < 0)
+    if offset < 0:
+        nav_row.append(InlineKeyboardButton("След. период ▶️", callback_data=f"view_salary_{seller_name}_{offset + 1}"))
+    kb.append(nav_row)
+
+    if is_paid:
+        kb.append([InlineKeyboardButton("✅ Уже выплачено", callback_data="noop")])
+    elif bonus_to_pay > 0:
+        # Передаем смещение в callback, чтобы знать, за какой период платим
+        kb.append([InlineKeyboardButton(f"💰 Выплатить {bonus_to_pay:.2f}₴", callback_data=f"confirm_payout_{seller_name}_{bonus_to_pay}_{offset}")])
+    
+    kb.append([InlineKeyboardButton(f"📜 История всех выплат", callback_data=f"salary_history_{seller_name}_0")])
+    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="staff_management")])
+    # --- КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ---
     
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
