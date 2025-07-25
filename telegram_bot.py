@@ -2303,8 +2303,9 @@ async def execute_payout(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def show_salary_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает страничный просмотр истории ТОЛЬКО ВЫПЛАЧЕННЫХ БОНУСОВ для продавца."""
+    """Показывает страничный просмотр истории выплат бонусов в виде красивой таблицы."""
     query = update.callback_query
     
     try:
@@ -2314,46 +2315,41 @@ async def show_salary_history(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.answer("Ошибка в данных для навигации.", show_alert=True)
         return
         
-    await query.answer()
+    await query.message.edit_text(f"📜 Загружаю историю выплат для {seller_name}...")
 
     try:
-        ws = GSHEET.worksheet(SHEET_SALARIES)
-        all_rows = ws.get_all_values()[1:]
-        
-        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Фильтруем записи по типу "Выплата бонуса" ---
-        seller_rows = [
-            row for row in all_rows 
-            if len(row) > 2 and row[1] == seller_name and row[2] == "Выплата бонуса"
-        ]
-        seller_rows.reverse() # Показываем самые новые записи сначала
+        all_rows = get_cached_sheet_data(context, SHEET_SALARIES) or []
+        seller_rows = [row for row in all_rows if len(row) > 2 and row[1] == seller_name and row[2] == "Выплата бонуса"]
+        seller_rows.reverse() # Новые записи сначала
     except Exception as e:
         await query.message.edit_text(f"❌ Ошибка получения истории зарплат: {e}")
         return
 
-    per_page = 5 # Уменьшим количество на странице для лучшей читаемости
+    per_page = 10
     total_records = len(seller_rows)
     total_pages = math.ceil(total_records / per_page) if total_records > 0 else 1
     page = max(0, min(page, total_pages - 1))
 
     start_index = page * per_page
-    end_index = start_index + per_page
-    page_records = seller_rows[start_index:end_index]
+    page_records = seller_rows[start_index:start_index + per_page]
 
-    msg = f"<b>📜 История выплат бонусов для {seller_name}</b>\n(Стр. {page + 1}/{total_pages})\n"
+    msg = f"<b>📜 История выплат бонусов для {seller_name}</b>\n(Стр. {page + 1}/{total_pages})\n\n"
 
     if not page_records:
-        msg += "\n<i>Записей о выплаченных бонусах не найдено.</i>"
+        msg += "<i>Записей о выплаченных бонусах не найдено.</i>"
     else:
-        # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Новый красивый формат вывода ---
+        # --- НОВОЕ ФОРМАТИРОВАНИЕ ---
+        msg += "<code>Дата         Сумма      Период</code>\n"
+        msg += "<code>-----------------------------------</code>\n"
         for row in page_records:
-            date = row[0] if len(row) > 0 else ""
-            amount = row[3] if len(row) > 3 else "0"
-            comment = row[4] if len(row) > 4 else "" # Комментарий содержит период
+            date = row[0]
+            amount = f"{parse_float(row[3]):.2f}₴"
+            # Извлекаем только даты из комментария
+            period_comment = row[4].replace("за период ", "")
             
-            msg += "\n──────────────────\n"
-            msg += f"🗓 <i>{date}</i>\n"
-            msg += f"💰 <b>Сумма:</b> {amount}₴\n"
-            msg += f"📋 <b>Детали:</b> Выплата бонуса {comment}\n"
+            # Выравниваем строки
+            padded_amount = amount.ljust(11)
+            msg += f"<code>{date} {padded_amount} {period_comment}</code>\n"
 
     kb_nav = []
     if page > 0:
@@ -2361,11 +2357,8 @@ async def show_salary_history(update: Update, context: ContextTypes.DEFAULT_TYPE
     if (page + 1) < total_pages:
         kb_nav.append(InlineKeyboardButton("Вперед ▶️", callback_data=f"salary_history_{seller_name}_{page + 1}"))
 
-    kb = []
-    if kb_nav:
-        kb.append(kb_nav)
-    
-    kb.append([InlineKeyboardButton("🔙 К деталям продавца", callback_data=f"view_salary_{seller_name}")])
+    kb = [kb_nav] if kb_nav else []
+    kb.append([InlineKeyboardButton("🔙 К деталям продавца", callback_data=f"view_salary_{seller_name}_0")])
 
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
@@ -3805,71 +3798,64 @@ async def show_planned_arrivals(update: Update, context: ContextTypes.DEFAULT_TY
             raise e
         
 async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TYPE, target_date: dt.date = None):
-    """Показывает обновленный, красивый и устойчивый журнал прибытия (План/Факт)."""
+    """Показывает журнал прибытия с разделением на 'прибыли' и 'ожидаются'."""
     query = update.callback_query
     if query:
-        await query.message.edit_text("⏳ Загружаю журнал прибытия...")
+        await query.message.edit_text("🚚 Загружаю журнал прибытия...")
 
     today = dt.date.today()
     if target_date is None:
         target_date = today
-
     target_date_str = sdate(target_date)
+    
     day_of_week_name = DAYS_OF_WEEK_RU[target_date.weekday()]
 
     # Период навигации
     days_until_next_sunday = (6 - today.weekday()) + 7
     end_of_viewing_period = today + dt.timedelta(days=days_until_next_sunday)
-
-    # --- Получение данных ---
-    try:
-        all_plans = get_cached_sheet_data(context, SHEET_PLAN_FACT, force_update=True) or []
-        all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True) or []
-    except Exception as e:
-        await query.message.edit_text(f"❌ Ошибка чтения данных: {e}")
-        return
-        
+    all_plans = get_cached_sheet_data(context, SHEET_PLAN_FACT) or []
+    all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
     plans_for_day = [row for row in all_plans if row and row[0] == target_date_str]
     invoices_for_day = [row for row in all_invoices if row and row[0] == target_date_str]
-    
-    # --- Собираем сообщение ---
-    msg_parts = [f"<b>🚚 Журнал прибытия на {day_of_week_name.upper()}, {target_date_str}</b>"]
 
-    # --- Агрегируем данные для сводки ---
-    suppliers_status = defaultdict(lambda: {
-        'plan_amount': 0, 'plan_type': '-', 
-        'fact_amount': 0, 'fact_types': set()
-    })
-
+    # --- Получение данных ---
+    suppliers_status = defaultdict(lambda: {'plan_amount': 0, 'plan_type': '-', 'fact_amount': 0, 'fact_types': set()})
     for plan in plans_for_day:
         supplier, amount, p_type = plan[1], parse_float(plan[2]), plan[3]
         suppliers_status[supplier]['plan_amount'] += amount
         suppliers_status[supplier]['plan_type'] = p_type
-
     for invoice in invoices_for_day:
         supplier, to_pay, pay_type = invoice[1], parse_float(invoice[4]), invoice[6]
         suppliers_status[supplier]['fact_amount'] += to_pay
         suppliers_status[supplier]['fact_types'].add(pay_type)
 
-    if not suppliers_status:
-        msg_parts.append("\n<i>На этот день нет ни планов, ни фактов.</i>")
-    else:
-        for supplier, data in sorted(suppliers_status.items()):
-            status_icon = "✅" if data['fact_amount'] > 0 else "⌛️"
-            
-            plan_amount_str = f"{data['plan_amount']:.2f}₴"
-            fact_amount_str = f"{data['fact_amount']:.2f}₴"
-            
-            plan_type_str = data['plan_type']
-            fact_type_str = ", ".join(sorted(list(data['fact_types']))) or "-"
+    arrived_suppliers = []
+    pending_suppliers = []
+    for supplier, data in sorted(suppliers_status.items()):
+        if data['fact_amount'] > 0:
+            arrived_suppliers.append((supplier, data))
+        else:
+            pending_suppliers.append((supplier, data))
 
-            supplier_block = (
-                f"──────────────────\n"
-                f"{status_icon} <b>{supplier}</b>\n"
-                f"    • <b>План:</b> {plan_amount_str} <i>({plan_type_str})</i>\n"
-                f"    • <b>Факт:</b> {fact_amount_str} <i>({fact_type_str})</i>"
-            )
-            msg_parts.append(supplier_block)
+    # --- ФОРМИРОВАНИЕ НОВОГО СООБЩЕНИЯ ---
+    msg = f"<b>🚚 Журнал прибытия на {DAYS_OF_WEEK_RU[target_date.weekday()].upper()}, {target_date_str}</b>\n"
+
+    if not arrived_suppliers and not pending_suppliers:
+        msg += "\n<i>На этот день нет ни планов, ни фактических накладных.</i>"
+    else:
+        if arrived_suppliers:
+            msg += "\n──────────────────\n<b>✅ Уже прибыли:</b>\n"
+            for supplier, data in arrived_suppliers:
+                msg += f" • <b>{supplier}</b>\n"
+                msg += f"     <i>План: {data['plan_amount']:.2f}₴ ({data['plan_type']})</i>\n"
+                msg += f"     <i>Факт: {data['fact_amount']:.2f}₴ ({', '.join(data['fact_types']) or '-'})</i>\n"
+        
+        if pending_suppliers:
+            msg += "\n──────────────────\n<b>⌛️ Еще ожидаются:</b>\n"
+            for supplier, data in pending_suppliers:
+                msg += f" • <b>{supplier}</b>\n"
+                msg += f"     <i>План: {data['plan_amount']:.2f}₴ ({data['plan_type']})</i>\n"
+                msg += f"     <i>Факт: {data['fact_amount']:.2f}₴ ({', '.join(data['fact_types']) or '-'})</i>\n"
 
     # --- Собираем клавиатуру ---
     kb = []
@@ -3889,8 +3875,9 @@ async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TY
     kb.append([InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")])
 
     final_msg = "\n".join(msg_parts)
-    if query:
-        await query.message.edit_text(final_msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+    await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+    
         
 async def toggle_arrival_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Переключает статус прибытия товара."""
