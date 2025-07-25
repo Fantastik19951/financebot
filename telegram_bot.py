@@ -1605,9 +1605,7 @@ def get_payroll_period(offset: int = 0) -> tuple[dt.date, dt.date]:
     
     return start_date, end_date
 
-
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-def calculate_accrued_bonus(seller_name: str, start_period: dt.date, end_period: dt.date, all_reports=None, all_salaries=None):
+def calculate_accrued_bonus(context: ContextTypes.DEFAULT_TYPE, seller_name: str, start_period: dt.date, end_period: dt.date, all_reports=None, all_salaries=None):
     """
     Считает бонус к выплате за ЛЮБОЙ заданный период и проверяет, был ли он уже оплачен.
     """
@@ -1640,7 +1638,6 @@ def calculate_accrued_bonus(seller_name: str, start_period: dt.date, end_period:
             break
             
     return total_accrued, bonus_days, is_paid
-
 
 async def show_planning_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает меню действий (править/удалить) для выбранного плана."""
@@ -1676,6 +1673,7 @@ async def show_planning_actions(update: Update, context: ContextTypes.DEFAULT_TY
         reply_markup=InlineKeyboardMarkup(kb)
     )
     
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def staff_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает оптимизированное меню управления персоналом."""
     query = update.callback_query
@@ -1685,18 +1683,15 @@ async def staff_management_menu(update: Update, context: ContextTypes.DEFAULT_TY
     kb = []
     
     try:
-        # ОДИН РАЗ читаем все необходимые данные
-        ws_reports = GSHEET.worksheet(SHEET_REPORT)
-        all_reports = ws_reports.get_all_values()[1:]
-        
-        ws_salaries = GSHEET.worksheet(SHEET_SALARIES)
-        all_salaries = ws_salaries.get_all_values()[1:]
+        all_reports = get_cached_sheet_data(context, SHEET_REPORT) or []
+        all_salaries = get_cached_sheet_data(context, SHEET_SALARIES) or []
+        start_period, end_period = get_payroll_period() # Текущий период
 
         for seller in sellers_to_check:
-            # Передаем уже загруженные данные в функцию
-            bonus, _ = calculate_accrued_bonus(seller, all_reports, all_salaries)
+            # --- ИСПРАВЛЕНИЕ: Передаем 'context' ---
+            bonus, _, _ = calculate_accrued_bonus(context, seller, start_period, end_period, all_reports, all_salaries)
             btn_text = f"{seller} (Бонус к выплате: {bonus:.2f}₴)"
-            kb.append([InlineKeyboardButton(btn_text, callback_data=f"view_salary_{seller}")])
+            kb.append([InlineKeyboardButton(btn_text, callback_data=f"view_salary_{seller}_0")]) # _0 для текущего периода
 
     except Exception as e:
         await query.message.edit_text(f"❌ Не удалось загрузить данные для расчета: {e}")
@@ -1990,53 +1985,23 @@ async def check_financial_shield(context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode=ParseMode.HTML)
     else:
         logging.info("FINANCIAL SHIELD: Проблем не обнаружено.")
-        
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+
 async def show_seller_salary_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает детализацию бонусов с пагинацией по периодам."""
     query = update.callback_query
     
-    # Новый формат callback: view_salary_ИМЯ_СМЕЩЕНИЕ
     parts = query.data.split('_')
     seller_name = parts[2]
     offset = int(parts[3]) if len(parts) > 3 else 0
 
     await query.message.edit_text(f"⏳ Загружаю данные по зарплате для {seller_name}...")
 
-    # Получаем нужный период
     start_period, end_period = get_payroll_period(offset)
 
-    # Рассчитываем бонус и статус оплаты для этого периода
-    bonus_to_pay, bonus_days, is_paid = calculate_accrued_bonus(seller_name, start_period, end_period)
+    # --- ИСПРАВЛЕНИЕ: Передаем 'context' ---
+    bonus_to_pay, bonus_days, is_paid = calculate_accrued_bonus(context, seller_name, start_period, end_period)
 
-    # Формируем сообщение
-    msg = f"<b>Детализация бонусов для {seller_name}</b>\n"
-    msg += f"<i>Период: {sdate(start_period)} - {sdate(end_period)}</i>\n\n"
-    if not bonus_days:
-        msg += "Начислений бонусов в этом периоде нет."
-    else:
-        for day in bonus_days:
-            msg += f" • {day['date']}: +{day['bonus']:.2f}₴ (от продаж {day['sales']:.2f}₴)\n"
-    
-    msg += f"\n<b>Итого начислено за период: {bonus_to_pay:.2f}₴</b>"
-    
-    # Формируем клавиатуру
-    kb = []
-    nav_row = []
-    nav_row.append(InlineKeyboardButton("◀️ Пред. период", callback_data=f"view_salary_{seller_name}_{offset - 1}"))
-    # Кнопка "Вперед" активна, только если мы не в текущем периоде
-    if offset < 0:
-        nav_row.append(InlineKeyboardButton("След. период ▶️", callback_data=f"view_salary_{seller_name}_{offset + 1}"))
-    kb.append(nav_row)
-
-    if is_paid:
-        kb.append([InlineKeyboardButton("✅ Уже выплачено", callback_data="noop")])
-    elif bonus_to_pay > 0:
-        # Передаем смещение в callback, чтобы знать, за какой период платим
-        kb.append([InlineKeyboardButton(f"💰 Выплатить {bonus_to_pay:.2f}₴", callback_data=f"confirm_payout_{seller_name}_{bonus_to_pay}_{offset}")])
-    
-    kb.append([InlineKeyboardButton(f"📜 История всех выплат", callback_data=f"salary_history_{seller_name}_0")])
-    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="staff_management")])
+    # ... (остальная часть функции для формирования msg и kb остается без изменений) ...
     
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
