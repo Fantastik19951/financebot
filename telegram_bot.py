@@ -1178,7 +1178,7 @@ def get_avg_markup_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_nam
     return None
 
 def get_tomorrow_planning_details():
-    """Собирает данные из ПланФакт для отчета и возвращает форматированную строку."""
+    """Собирает данные из ПланФакт для отчета и возвращает форматированную строк."""
     tomorrow_str = (dt.date.today() + dt.timedelta(days=1)).strftime(DATE_FMT)
     try:
         ws = GSHEET.worksheet("ПланФактНаЗавтра")
@@ -3853,7 +3853,7 @@ async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TY
             for supplier, data in pending_suppliers:
                 msg += f" • <b>{supplier}</b>\n"
                 msg += f"     <i>План: {data['plan_amount']:.2f}₴ ({data['plan_type']})</i>\n"
-                msg += f"     <i>Факт: {data['fact_amount']:.2f}₴ ({', '.join(data['fact_types']) or '-'})</i>\n"
+
 
     # Клавиатура навигации
     kb = []
