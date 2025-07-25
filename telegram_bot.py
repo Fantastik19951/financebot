@@ -3797,6 +3797,7 @@ async def show_planned_arrivals(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             raise e
         
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TYPE, target_date: dt.date = None):
     """Показывает журнал прибытия с разделением на 'прибыли' и 'ожидаются'."""
     query = update.callback_query
@@ -3807,10 +3808,7 @@ async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TY
     if target_date is None:
         target_date = today
     target_date_str = sdate(target_date)
-    
-    day_of_week_name = DAYS_OF_WEEK_RU[target_date.weekday()]
 
-    # Период навигации
     days_until_next_sunday = (6 - today.weekday()) + 7
     end_of_viewing_period = today + dt.timedelta(days=days_until_next_sunday)
     all_plans = get_cached_sheet_data(context, SHEET_PLAN_FACT) or []
@@ -3818,7 +3816,7 @@ async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TY
     plans_for_day = [row for row in all_plans if row and row[0] == target_date_str]
     invoices_for_day = [row for row in all_invoices if row and row[0] == target_date_str]
 
-    # --- Получение данных ---
+    # --- НОВАЯ ЛОГИКА: РАЗДЕЛЕНИЕ НА ДВА СПИСКА ---
     suppliers_status = defaultdict(lambda: {'plan_amount': 0, 'plan_type': '-', 'fact_amount': 0, 'fact_types': set()})
     for plan in plans_for_day:
         supplier, amount, p_type = plan[1], parse_float(plan[2]), plan[3]
@@ -3857,24 +3855,18 @@ async def show_arrivals_journal(update: Update, context: ContextTypes.DEFAULT_TY
                 msg += f"     <i>План: {data['plan_amount']:.2f}₴ ({data['plan_type']})</i>\n"
                 msg += f"     <i>Факт: {data['fact_amount']:.2f}₴ ({', '.join(data['fact_types']) or '-'})</i>\n"
 
-    # --- Собираем клавиатуру ---
+    # Клавиатура навигации
     kb = []
     nav_row = []
     prev_day = target_date - dt.timedelta(days=1)
-    # Ограничим навигацию назад, чтобы не уходить в далекое прошлое (например, 30 дней)
-    if (today - prev_day).days < 30:
-        nav_row.append(InlineKeyboardButton("◀️", callback_data=f"journal_nav_{sdate(prev_day)}"))
-    
+    nav_row.append(InlineKeyboardButton("◀️", callback_data=f"journal_nav_{sdate(prev_day)}"))
     nav_row.append(InlineKeyboardButton("Сегодня", callback_data=f"journal_nav_{sdate(today)}"))
-    
     next_day = target_date + dt.timedelta(days=1)
     if next_day <= end_of_viewing_period:
         nav_row.append(InlineKeyboardButton("▶️", callback_data=f"journal_nav_{sdate(next_day)}"))
-    
     kb.append(nav_row)
     kb.append([InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")])
 
-    final_msg = "\n".join(msg_parts)
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
     
