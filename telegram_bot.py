@@ -2300,11 +2300,6 @@ async def execute_payout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await query.message.edit_text(f"❌ Ошибка записи выплаты: {e}")
 
-
-
-
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
-# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 async def show_salary_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает страничный просмотр истории выплат бонусов в виде идеально ровной таблицы."""
     query = update.callback_query
@@ -2320,7 +2315,7 @@ async def show_salary_history(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     try:
         all_rows = get_cached_sheet_data(context, SHEET_SALARIES) or []
-        seller_rows = [row for row in all_rows if len(row) > 2 and row[1] == seller_name and row[2] == "Выплата бонуса"]
+        seller_rows = [row for row in all_rows if len(row) > 4 and row[1] == seller_name and row[2] == "Выплата бонуса"]
         seller_rows.reverse() # Новые записи сначала
     except Exception as e:
         await query.message.edit_text(f"❌ Ошибка получения истории зарплат: {e}")
@@ -2340,21 +2335,24 @@ async def show_salary_history(update: Update, context: ContextTypes.DEFAULT_TYPE
         msg += "<i>Записей о выплаченных бонусах не найдено.</i>"
     else:
         # --- НОВОЕ, ИДЕАЛЬНОЕ ФОРМАТИРОВАНИЕ ---
-        # Используем HTML тег <pre> для сохранения форматирования
-        table_header = "<b>Дата        Сумма         Период</b>\n"
-        table_body = ""
+        table_lines = []
+        # Создаем "шапку" таблицы
+        table_lines.append(f"{'Дата':<12}{'Сумма':>12}  {'Период'}")
+        table_lines.append(f"{'='*10}  {'='*10}  {'='*21}")
+        
         for row in page_records:
-            date = row[0]
-            amount = f"{parse_float(row[3]):.2f}₴"
-            # Извлекаем только даты из комментария
-            period_comment = row[4].replace("за период ", "")
+            date_str = row[0]
+            amount_str = f"{parse_float(row[3]):.2f}₴"
+            period_str = row[4].replace("за период ", "")
             
             # Выравниваем строки с помощью f-string форматирования
-            # ljust - выравнивание по левому краю, rjust - по правому
-            table_body += f"{date:<12}{amount:>12}  {period_comment}\n"
+            table_lines.append(f"{date_str:<12}{amount_str:>12}  {period_str}")
         
-        msg += f"<pre>{table_header}{table_body}</pre>"
+        # Оборачиваем всю таблицу в один блок <pre><code> для надежности
+        table_text = "\n".join(table_lines)
+        msg += f"<pre><code>{table_text}</code></pre>"
 
+    # Клавиатура (остается без изменений)
     kb_nav = []
     if page > 0:
         kb_nav.append(InlineKeyboardButton("◀️ Назад", callback_data=f"salary_history_{seller_name}_{page - 1}"))
