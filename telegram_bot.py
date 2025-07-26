@@ -3275,7 +3275,6 @@ async def add_new_supplier_to_directory(update: Update, context: ContextTypes.DE
         parse_mode=ParseMode.HTML
     )
 
-
 async def save_revision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сохраняет результаты переучета и выводит итог."""
     comment = update.message.text
@@ -3283,16 +3282,18 @@ async def save_revision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     calculated = revision_data.get('calculated')
     actual = revision_data.get('actual')
-    user = update.effective_user.first_name
+    
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Получаем имя пользователя из справочника ---
+    user = update.effective_user
+    who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
     
     if calculated is None or actual is None:
         await update.message.reply_text("❌ Произошла ошибка, данные утеряны. Начните заново.")
         context.user_data.pop('revision', None)
         return
-    log_action(update.effective_user, "Остаток", "Переучет", f"Расчет: {calculated}, Факт: {actual}, Разница: {actual - calculated}")
 
-    # Используем вашу существующую функцию для записи данных
-    add_revision(calculated, actual, comment, user)
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Передаем 'context' в функцию ---
+    add_revision(context, calculated, actual, comment, who)
     
     difference = actual - calculated
     diff_text = f"Излишек: +{difference:.2f}₴" if difference > 0 else f"Недостача: {difference:.2f}₴"
@@ -3305,7 +3306,7 @@ async def save_revision(update: Update, context: ContextTypes.DEFAULT_TYPE):
            f"<b>Результат:</b> {diff_text}\n\n"
            f"<i>Комментарий: {comment}</i>")
 
-    kb = [[InlineKeyboardButton("🔙 В админ-панель", callback_data="admin_panel")]]
+    kb = [[InlineKeyboardButton("🔙 В меню переучета", callback_data="admin_revision")]]
     
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
     context.user_data.pop('revision', None)
@@ -5843,7 +5844,7 @@ async def show_revision_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
         [InlineKeyboardButton("📜 История переучетов", callback_data="revision_history")],
         [InlineKeyboardButton("🔙 В админ-панель", callback_data="admin_panel")]
     ]
-    await query.message.edit_text("🧮 **Переучет**\n\nВыберите действие:", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+    await query.message.edit_text("🧮 Меню переучета магазина\n\nВыберите действие:", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
 async def show_revision_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     """Показывает страничный просмотр истории переучетов."""
