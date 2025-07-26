@@ -1754,12 +1754,23 @@ async def edit_invoice_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
                                   parse_mode=ParseMode.HTML, reply_markup=kb)
 
 async def show_sales_trend_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает меню выбора периода для графика продаж."""
+    """Показывает меню выбора периода для графика продаж, корректно обрабатывая сообщения с фото."""
     query = update.callback_query
-    await query.message.edit_text(
-        "📈 Пожалуйста, выберите период для построения графика динамики продаж:",
-        reply_markup=sales_trend_period_kb()
-    )
+    
+    text_to_send = "📈 Пожалуйста, выберите период для построения графика динамики продаж:"
+    keyboard = sales_trend_period_kb()
+
+    try:
+        await query.message.edit_text(text_to_send, reply_markup=keyboard)
+    except BadRequest:
+        # Удаляем старое сообщение с фото
+        await query.message.delete()
+        # Отправляем новое текстовое сообщение с меню
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=text_to_send,
+            reply_markup=keyboard
+        )
 
 async def process_sales_trend_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает выбор периода, генерирует и отправляет график."""
@@ -5948,7 +5959,7 @@ async def add_new_supplier_directory_and_continue(update: Update, context: Conte
     # 1. Добавляем в таблицу "СправочникПоставщиков"
     try:
         ws = GSHEET.worksheet("СправочникПоставщиков")
-        ws.append_row([new_supplier_name])
+        ws.append_row([new_supplier_name, "Активный"])
         get_all_supplier_names(context, force_update=True)
         logging.info(f"Новый поставщик '{new_supplier_name}' добавлен в справочник.")
     except Exception as e:
