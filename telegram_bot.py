@@ -3414,18 +3414,21 @@ def get_week_debts(start, end):
             debts.append(row)
     return debts
 
-def add_revision(calc_sum, fact_sum, comment, user):
+
+def add_revision(context: ContextTypes.DEFAULT_TYPE, calc_sum: float, fact_sum: float, comment: str, user: str):
     """
-    Записывает данные о переучете в лист "Переучеты" и КОРРЕКТНО
-    обновляет баланс в листе "Остаток магазина".
+    Записывает данные о переучете и КОРРЕКТНО обновляет баланс в остатке.
     """
-    ws_revisions = GSHEET.worksheet("Переучеты")
+    # 1. Запись в архив переучетов
     diff = fact_sum - calc_sum
-    ws_revisions.append_row([sdate(), calc_sum, fact_sum, diff, comment, user])
+    row_to_save_rev = [sdate(), calc_sum, fact_sum, diff, comment, user]
+    append_row_and_update_cache(context, "Переучеты", row_to_save_rev)
     
-    ws_inv = GSHEET.worksheet("Остаток магазина")
-    
-    ws_inv.append_row([sdate(), "Переучет", fact_sum, f"Новый остаток: {fact_sum}", user])
+    # 2. Корректировка баланса в "Остаток магазина"
+    # --- ИСПРАВЛЕНИЕ: Теперь в комментарий пишется ваш комментарий ---
+    row_to_save_inv = [sdate(), "Переучет", fact_sum, comment, user]
+    append_row_and_update_cache(context, SHEET_INVENTORY, row_to_save_inv)
+
 def is_date(string):
     try:
         dt.datetime.strptime(string, "%d.%m.%Y")
@@ -5831,6 +5834,65 @@ async def start_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.HTML
     )
 
+
+async def show_revision_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает новое меню для раздела 'Переучет'."""
+    query = update.callback_query
+    kb = [
+        [InlineKeyboardButton("➕ Новый переучет", callback_data="start_new_revision")],
+        [InlineKeyboardButton("📜 История переучетов", callback_data="revision_history")],
+        [InlineKeyboardButton("🔙 В админ-панель", callback_data="admin_panel")]
+    ]
+    await query.message.edit_text("🧮 **Переучет**\n\nВыберите действие:", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+async def show_revision_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
+    """Показывает страничный просмотр истории переучетов."""
+    query = update.callback_query
+    await query.message.edit_text("📜 Загружаю историю переучетов...")
+
+    rows = get_cached_sheet_data(context, "Переучеты") or []
+    if not rows:
+        return await query.message.edit_text("История переучетов пуста.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_revision")]]))
+
+    per_page = 10
+    total_records = len(rows)
+    total_pages = math.ceil(total_records / per_page) if total_records > 0 else 1
+    page = max(0, min(page, total_pages - 1))
+
+    start_index = page * per_page
+    page_records = rows[start_index : start_index + per_page]
+    
+    msg = f"<b>📜 История переучетов (Стр. {page + 1}/{total_pages}):</b>\n"
+    
+    for row in page_records:
+        date, calc, fact, diff, comment, who = (row + [""] * 6)[:6]
+        diff_val = parse_float(diff)
+        
+        if diff_val > 0:
+            status_icon, diff_text = "🟢", f"Излишек: +{diff_val:.2f}₴"
+        elif diff_val < 0:
+            status_icon, diff_text = "🔴", f"Недостача: {diff_val:.2f}₴"
+        else:
+            status_icon, diff_text = "⚪️", "Расхождений нет"
+
+        msg += "\n──────────────────\n"
+        msg += f"<b>🗓 {date}</b> ({who})\n"
+        msg += f"   • Расчет: {parse_float(calc):.2f}₴\n"
+        msg += f"   • Факт: {parse_float(fact):.2f}₴\n"
+        msg += f"   • {status_icon} {diff_text}\n"
+        msg += f"   • <i>Комментарий: {comment}</i>"
+    
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton("◀️ Назад", callback_data=f"revision_history_{page - 1}"))
+    if (page + 1) < total_pages:
+        nav_row.append(InlineKeyboardButton("Вперед ▶️", callback_data=f"revision_history_{page + 1}"))
+    
+    kb = [nav_row] if nav_row else []
+    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_revision")])
+    
+    await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
 async def inventory_history(update: Update, context: ContextTypes.DEFAULT_TYPE, page: int = 0):
     query = update.callback_query
     await query.message.edit_text("📦 Загружаю историю остатка...")
@@ -7654,7 +7716,24 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "safe_deposit": await start_safe_deposit(update, context)
         elif data == "safe_withdraw": await start_safe_withdraw(update, context)
         elif data == "add_inventory_expense": await start_inventory_expense(update, context)
-        elif data == "admin_revision": await start_revision(update, context)
+        elif data == "admin_revision":
+            await show_revision_menu(update, context)
+        elif data == "start_new_revision":
+            await start_revision(update, context)
+
+        elif data.startswith("revision_history"):
+            page = 0
+            # Если это первый вызов (без номера страницы), вычисляем последнюю страницу
+            if data == "revision_history":
+                rows = get_cached_sheet_data(context, "Переучеты") or []
+                total_pages = math.ceil(len(rows) / 10)
+                page = max(0, total_pages - 1)
+            else: # Если это навигация, берем номер из кнопки
+                try:
+                    page = int(data.split('_')[-1])
+                except (ValueError, IndexError):
+                    page = 0
+            await show_revision_history(update, context, page=page)
         elif data == "start_expense_flow":
             # Эта функция сама определит, кто нажал на кнопку
             await start_expense_flow(update, context)
@@ -7704,7 +7783,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await show_log_for_category(update, context, category=category, page=page)
 
-        elif data == "admin_revision": await start_revision(update, context)
         elif data == "noop": pass
         else:
             await query.answer("Команда не реализована.", show_alert=True)
