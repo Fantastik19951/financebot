@@ -3152,6 +3152,125 @@ def update_supplier_schedule(context: ContextTypes.DEFAULT_TYPE, date_str: str, 
     except Exception as e:
         logging.error(f"Ошибка в модуле самообучения графика поставщиков: {e}")
 
+# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
+
+def generate_financial_calendar_keyboard(year: int, month: int, events_data: dict):
+    """Генерирует клавиатуру с финансовым календарем и иконками событий."""
+    RU_MONTHS = {
+        1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель", 5: "Май", 6: "Июнь",
+        7: "Июль", 8: "Август", 9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
+    }
+    
+    kb = []
+    month_name = f"{RU_MONTHS.get(month, '')} {year}"
+    nav_row = [
+        InlineKeyboardButton("◀️", callback_data=f"fin_cal_nav_{year}_{month-1}" if month > 1 else f"fin_cal_nav_{year-1}_12"),
+        InlineKeyboardButton(month_name, callback_data="noop"),
+        InlineKeyboardButton("▶️", callback_data=f"fin_cal_nav_{year}_{month+1}" if month < 12 else f"fin_cal_nav_{year+1}_1")
+    ]
+    kb.append(nav_row)
+    kb.append([InlineKeyboardButton(day, callback_data="noop") for day in ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]])
+
+    month_calendar = calendar.monthcalendar(year, month)
+    for week in month_calendar:
+        row = []
+        for day in week:
+            if day == 0:
+                row.append(InlineKeyboardButton(" ", callback_data="noop"))
+            else:
+                date_str = f"{day:02d}.{month:02d}.{year}"
+                events_on_day = events_data.get(date_str, set())
+                
+                btn_text = f"{day}"
+                if "report" in events_on_day: btn_text += "💰"
+                if "plan" in events_on_day: btn_text += "🚚"
+                if "debt" in events_on_day: btn_text += "❗️"
+                
+                row.append(InlineKeyboardButton(btn_text, callback_data=f"fin_cal_date_{date_str}"))
+        kb.append(row)
+        
+    kb.append([InlineKeyboardButton("🔙 Назад в меню Финансы", callback_data="finance_menu")])
+    return InlineKeyboardMarkup(kb)
+
+async def show_financial_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE, year: int = None, month: int = None):
+    """Собирает данные о событиях и показывает финансовый календарь."""
+    query = update.callback_query
+    await query.message.edit_text("🗓️ Загружаю финансовый календарь...")
+
+    if year is None or month is None:
+        today = dt.date.today()
+        year, month = today.year, today.month
+
+    # Собираем данные о событиях за весь месяц
+    start_of_month = dt.date(year, month, 1)
+    end_of_month = (start_of_month + dt.timedelta(days=31)).replace(day=1) - dt.timedelta(days=1)
+    
+    events_by_date = defaultdict(set)
+    
+    # Отчеты
+    reports = get_cached_sheet_data(context, SHEET_REPORT) or []
+    for row in reports:
+        if (d := pdate(row[0])) and start_of_month <= d <= end_of_month:
+            events_by_date[sdate(d)].add("report")
+            
+    # Планы
+    plans = get_cached_sheet_data(context, SHEET_PLAN_FACT) or []
+    for row in plans:
+        if (d := pdate(row[0])) and start_of_month <= d <= end_of_month:
+            events_by_date[sdate(d)].add("plan")
+            
+    # Долги
+    debts = get_cached_sheet_data(context, SHEET_DEBTS) or []
+    for row in debts:
+        if len(row) > 6 and row[6].lower() != 'да' and (d := pdate(row[5])) and start_of_month <= d <= end_of_month:
+            events_by_date[sdate(d)].add("debt")
+
+    kb = generate_financial_calendar_keyboard(year, month, events_by_date)
+    legend = ("<b>Легенда:</b>\n"
+              "💰 - Сдана смена\n"
+              "🚚 - Запланированы поставки\n"
+              "❗️ - Крайний срок оплаты долга")
+              
+    await query.message.edit_text(legend, parse_mode=ParseMode.HTML, reply_markup=kb)
+
+async def show_financial_summary_for_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает детальную финансовую сводку за выбранный день."""
+    query = update.callback_query
+    date_str = query.data.split('_')[-1]
+    await query.message.edit_text(f"📊 Собираю сводку за {date_str}...")
+
+    # Собираем все данные за этот день
+    report = next((r for r in (get_cached_sheet_data(context, SHEET_REPORT) or []) if r and r[0] == date_str), None)
+    invoices = [r for r in (get_cached_sheet_data(context, SHEET_SUPPLIERS) or []) if r and r[0] == date_str]
+    expenses = [r for r in (get_cached_sheet_data(context, SHEET_EXPENSES) or []) if r and r[0] == date_str]
+    debts_due = [r for r in (get_cached_sheet_data(context, SHEET_DEBTS) or []) if len(r) > 5 and r[5] == date_str and r[6].lower() != 'да']
+
+    msg = f"<b>Финансовая сводка за {date_str}</b>\n"
+    msg += "──────────────────\n"
+
+    if report:
+        msg += f"💰 <b>Выручка:</b> {parse_float(report[4]):.2f}₴ (Нал: {parse_float(report[2]):.2f}₴, Карта: {parse_float(report[3]):.2f}₴)\n"
+    else:
+        msg += "💰 <b>Выручка:</b> <i>Смена не была сдана.</i>\n"
+
+    total_invoices = sum(parse_float(inv[4]) for inv in invoices)
+    msg += f"📦 <b>Закупки (по накладным):</b> {total_invoices:.2f}₴\n"
+
+    total_expenses = sum(parse_float(exp[1]) for exp in expenses)
+    msg += f"💸 <b>Расходы:</b> {total_expenses:.2f}₴\n"
+
+    total_debts_due = sum(parse_float(d[4]) for d in debts_due)
+    if total_debts_due > 0:
+        msg += f"❗️ <b>Долги к оплате:</b> {total_debts_due:.2f}₴\n"
+
+    # Возвращаемся к календарю, сохраняя текущий месяц
+    date_obj = pdate(date_str)
+    back_callback = f"fin_cal_nav_{date_obj.year}_{date_obj.month}"
+    kb = [[InlineKeyboardButton("📜 Полный протокол смены", callback_data=f"shift_protocol_{date_str}")],
+          [InlineKeyboardButton("🔙 К календарю", callback_data=back_callback)]]
+
+    await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
 async def handle_planning_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         amount = float(update.message.text.replace(',', '.'))
@@ -3525,6 +3644,7 @@ def finance_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Сдать смену", callback_data="add_report")],
         [InlineKeyboardButton("📋 Просмотр отчётов", callback_data="view_reports_menu")],
+        [InlineKeyboardButton("🗓 Финансовый Календарь", callback_data="financial_calendar")],
         [InlineKeyboardButton("📊 Ежедневная сводка", callback_data="daily_summary")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
@@ -5821,6 +5941,7 @@ async def start_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 3. Оставляем только тех, кого еще не добавляли
         suppliers_to_show = [s for s in scheduled_suppliers if s not in added_today_suppliers]
+        suppliers_to_show.sort() # Сортируем список по алфавиту
 
     except Exception as e:
         logging.error(f"Не удалось получить списки поставщиков: {e}")
@@ -7572,6 +7693,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # --- 8. ДЕТАЛИЗАЦИЯ ОТЧЕТОВ ---
         elif data == "view_today_invoices": await show_today_invoices(update, context)
         elif data.startswith("choose_date_"): await choose_details_date(update, context)
+        elif data == "financial_calendar":
+            await show_financial_calendar(update, context)
+        elif data.startswith("fin_cal_nav_"):
+            _, _, year, month = data.split('_')
+            await show_financial_calendar(update, context, year=int(year), month=int(month))
+        elif data.startswith("fin_cal_date_"):
+            await show_financial_summary_for_date(update, context)
         elif data.startswith("details_exp_"): await show_expenses_detail(update, context)
         elif data.startswith("details_sup_"): await show_suppliers_detail(update, context)
         elif data.startswith("detail_report_nav_"): await show_detailed_report(update, context)
