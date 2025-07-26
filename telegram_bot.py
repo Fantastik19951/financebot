@@ -3536,7 +3536,7 @@ def admin_system_settings_kb():
 # --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 def calculate_detailed_salary(context: ContextTypes.DEFAULT_TYPE, user_name: str) -> dict:
     """Собирает и рассчитывает детальную информацию по ЗП, корректно учитывая период выплат."""
-    start_period, end_period = get_current_payroll_period()
+    start_period, end_period = get_payroll_period()
     
     base_pay_earned = 0.0
     bonus_accrued = 0.0
