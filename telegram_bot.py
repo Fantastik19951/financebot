@@ -1605,6 +1605,61 @@ def get_payroll_period(offset: int = 0) -> tuple[dt.date, dt.date]:
     
     return start_date, end_date
 
+# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
+
+def generate_planning_calendar_keyboard(year: int, month: int):
+    """Генерирует календарь для выбора даты в меню планирования."""
+    RU_MONTHS = {
+        1: "Январь", 2: "Февраль", 3: "Март", 4: "Апрель", 5: "Май", 6: "Июнь",
+        7: "Июль", 8: "Август", 9: "Сентябрь", 10: "Октябрь", 11: "Ноябрь", 12: "Декабрь"
+    }
+    
+    kb = []
+    month_name = f"{RU_MONTHS.get(month, '')} {year}"
+    nav_row = [
+        InlineKeyboardButton("◀️", callback_data=f"planning_cal_nav_{year}_{month-1}" if month > 1 else f"planning_cal_nav_{year-1}_12"),
+        InlineKeyboardButton(month_name, callback_data="noop"),
+        InlineKeyboardButton("▶️", callback_data=f"planning_cal_nav_{year}_{month+1}" if month < 12 else f"planning_cal_nav_{year+1}_1")
+    ]
+    kb.append(nav_row)
+    kb.append([InlineKeyboardButton(day, callback_data="noop") for day in ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]])
+
+    today = dt.date.today()
+    days_until_next_sunday = (6 - today.weekday()) + 7
+    end_of_planning_period = today + dt.timedelta(days=days_until_next_sunday)
+
+    month_calendar = calendar.monthcalendar(year, month)
+    for week in month_calendar:
+        row = []
+        for day in week:
+            if day == 0:
+                row.append(InlineKeyboardButton(" ", callback_data="noop"))
+            else:
+                current_date = dt.date(year, month, day)
+                # Делаем кнопку активной, только если дата входит в разрешенный период
+                if today < current_date <= end_of_planning_period:
+                    row.append(InlineKeyboardButton(str(day), callback_data=f"plan_nav_{sdate(current_date)}"))
+                else:
+                    row.append(InlineKeyboardButton(f"·{day}·", callback_data="noop")) # Неактивная кнопка
+        kb.append(row)
+        
+    kb.append([InlineKeyboardButton("🔙 Назад в меню планирования", callback_data="planning")])
+    return InlineKeyboardMarkup(kb)
+
+async def show_planning_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE, year: int = None, month: int = None):
+    """Показывает календарь для выбора даты планирования."""
+    query = update.callback_query
+    
+    if year is None or month is None:
+        today = dt.date.today()
+        year, month = today.year, today.month
+
+    kb = generate_planning_calendar_keyboard(year, month)
+    await query.message.edit_text(
+        "🗓️ Выберите дату для планирования:",
+        reply_markup=kb
+    )
+
 def calculate_accrued_bonus(context: ContextTypes.DEFAULT_TYPE, seller_name: str, start_period: dt.date, end_period: dt.date, all_reports=None, all_salaries=None):
     """
     Считает бонус к выплате за ЛЮБОЙ заданный период и проверяет, был ли он уже оплачен.
@@ -2788,6 +2843,7 @@ async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, tar
             kb.append([InlineKeyboardButton(f"➕ {supplier}", callback_data=f"plan_sup_{target_date_str}_{supplier}")])
 
     kb.append([InlineKeyboardButton("📝 Внеплановый поставщик", callback_data=f"plan_sup_{target_date_str}_other")])
+    kb.append([InlineKeyboardButton("🗓️ Выбрать день из календаря", callback_data="planning_show_calendar")])
     kb.append([InlineKeyboardButton("🔙 В меню", callback_data="suppliers_menu")])
 
     if query:
@@ -7421,6 +7477,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("plan_pay_"): await handle_planning_pay_type(update, context)
         elif data.startswith("plan_select_"):
             await show_planning_actions(update, context)
+        elif data == "planning_show_calendar":
+            await show_planning_calendar(update, context)
+        elif data.startswith("planning_cal_nav_"):
+            parts = data.split('_')
+            year, month = int(parts[3]), int(parts[4])
+            await show_planning_calendar(update, context, year=year, month=month)
         
         # --- 3. ЖУРНАЛ ПРИБЫТИЯ И РЕДАКТИРОВАНИЕ ПЛАНОВ ---
         elif data == "view_suppliers": await show_arrivals_journal(update, context)
