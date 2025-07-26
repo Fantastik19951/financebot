@@ -3427,6 +3427,7 @@ def analytics_menu_kb():
         [InlineKeyboardButton("📊 Финансовая Панель", callback_data="analytics_financial_dashboard")],
         [InlineKeyboardButton("🍰 Расходы по категориям", callback_data="analytics_expense_pie_chart")],
         [InlineKeyboardButton("📈 Динамика Продаж", callback_data="analytics_sales_trends")],
+        [InlineKeyboardButton("📊 Статистика продавцов", callback_data="seller_stats")],
         [InlineKeyboardButton("📦 ABC-анализ Поставщиков", callback_data="analytics_abc_suppliers")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
@@ -3475,8 +3476,8 @@ def get_tomorrow_debts():
 def main_kb(is_admin=False):
     kb = [
         [InlineKeyboardButton("💼 Работа с остатком и сейфом", callback_data="stock_safe_menu")],
-        [InlineKeyboardButton("📊 Финансы", callback_data="finance_menu")],
-        [InlineKeyboardButton("👥 Персонал", callback_data="staff_menu")],
+        [InlineKeyboardButton("📊 Работа со сменой", callback_data="finance_menu")],
+        [InlineKeyboardButton("👥 Меню продавцов", callback_data="staff_menu")],
         [InlineKeyboardButton("📦 Поставщики", callback_data="suppliers_menu"),
          InlineKeyboardButton("🏦 Долги", callback_data="debts_menu")],
     ]
@@ -3510,11 +3511,10 @@ def reports_menu_kb():
 def staff_menu_kb(is_admin=False):
     kb = [
         [InlineKeyboardButton("🗓 Общий график смен", callback_data="view_shifts")],
-        [InlineKeyboardButton("⚙️ Персональные настройки", callback_data="staff_settings_menu")]
+        [InlineKeyboardButton("⚙️ Кабинет продавца", callback_data="staff_settings_menu")]
     ]
     if is_admin:
         kb.append([InlineKeyboardButton("✏️ Назначить/Изменить смену", callback_data="edit_shifts")])
-        kb.append([InlineKeyboardButton("📊 Статистика продавцов", callback_data="seller_stats")])
     
     kb.append([InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")])
     return InlineKeyboardMarkup(kb)
