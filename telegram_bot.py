@@ -4276,41 +4276,94 @@ async def show_supplier_directory_menu(update: Update, context: ContextTypes.DEF
     )
 
 async def list_suppliers_for_editing(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Ищет поставщиков по запросу и выводит их списком для выбора."""
+    """Ищет ВСЕХ поставщиков (активных и архивных) и выводит их с пометками."""
     search_query = update.message.text.strip()
-    await update.message.reply_text(f"🔎 Ищу '{search_query}' в справочнике...")
+    await update.message.reply_text(f"🔎 Ищу '{search_query}' во всем справочнике...")
     
-    all_suppliers = get_all_supplier_names(context)
+    # --- ИЗМЕНЕНИЕ: Читаем весь справочник, а не только активных ---
+    all_suppliers_rows = get_cached_sheet_data(context, "СправочникПоставщиков") or []
     normalized_query = normalize_text(search_query)
-    matches = [name for name in all_suppliers if normalized_query in normalize_text(name)]
+    
+    matches = [row for row in all_suppliers_rows if row and normalized_query in normalize_text(row[0])]
 
     if not matches:
         return await update.message.reply_text("🚫 Поставщик не найден. Попробуйте другой запрос.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="supplier_directory_menu")]]))
 
     kb = []
-    for name in matches[:25]: # Ограничиваем вывод
-        kb.append([InlineKeyboardButton(name, callback_data=f"edit_supplier_name_{name}")])
+    for row in matches[:25]:
+        name = row[0]
+        status = row[1] if len(row) > 1 else "Активный"
+        
+        # --- ИЗМЕНЕНИЕ: Добавляем иконку для архивных ---
+        btn_text = f"🗄️ {name} (Архив)" if status == "Архивный" else name
+        kb.append([InlineKeyboardButton(btn_text, callback_data=f"edit_supplier_name_{name}")])
+        
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="supplier_directory_menu")])
     
-    await update.message.reply_text("Выберите поставщика для переименования:", reply_markup=InlineKeyboardMarkup(kb))
-
+    await update.message.reply_text("Выберите поставщика для управления:", reply_markup=InlineKeyboardMarkup(kb))
 
 
 async def prompt_for_new_supplier_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает меню действий для выбранного поставщика."""
+    """Показывает ДИНАМИЧЕСКОЕ меню действий для выбранного поставщика."""
     query = update.callback_query
-    old_name = query.data.split('edit_supplier_name_')[-1]
+    supplier_name = query.data.split('edit_supplier_name_')[-1]
     
-    context.user_data['supplier_edit'] = { 'old_name': old_name, 'step': 'actions' }
+    context.user_data['supplier_edit'] = { 'old_name': supplier_name, 'step': 'actions' }
 
+    # --- НОВАЯ ЛОГИКА: Проверяем статус поставщика ---
+    all_suppliers_rows = get_cached_sheet_data(context, "СправочникПоставщиков") or []
+    supplier_status = "Активный" # По умолчанию
+    for row in all_suppliers_rows:
+        if row and row[0] == supplier_name:
+            supplier_status = row[1] if len(row) > 1 else "Активный"
+            break
+    
     kb = [
-        [InlineKeyboardButton("📂 Открыть досье", callback_data=f"dossier_{old_name}")],
-        [InlineKeyboardButton("✏️ Переименовать", callback_data="rename_supplier_start")],
-        # --- ИЗМЕНЕНИЕ: Кнопка архивации ---
-        [InlineKeyboardButton("🗄️ Архивировать", callback_data=f"archive_supplier_confirm_{old_name}")],
-        [InlineKeyboardButton("🔙 Назад к поиску", callback_data="supplier_directory_menu")]
+        [InlineKeyboardButton("📂 Открыть досье", callback_data=f"dossier_{supplier_name}")],
+        [InlineKeyboardButton("✏️ Переименовать", callback_data="rename_supplier_start")]
     ]
-    await query.message.edit_text(f"Выбран поставщик: <b>{old_name}</b>\n\nВыберите действие:", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+    
+    # Показываем разную кнопку в зависимости от статуса
+    if supplier_status == "Активный":
+        kb.append([InlineKeyboardButton("🗄️ Архивировать", callback_data=f"archive_supplier_confirm_{supplier_name}")])
+    else:
+        kb.append([InlineKeyboardButton("✅ Восстановить из архива", callback_data=f"unarchive_supplier_confirm_{supplier_name}")])
+
+    kb.append([InlineKeyboardButton("🔙 Назад к поиску", callback_data="supplier_directory_menu")])
+    
+    await query.message.edit_text(f"Выбран поставщик: <b>{supplier_name}</b> (Статус: {supplier_status})\n\nВыберите действие:", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+
+async def confirm_unarchive_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запрашивает подтверждение перед восстановлением поставщика из архива."""
+    query = update.callback_query
+    supplier_name = query.data.split('unarchive_supplier_confirm_')[-1]
+    
+    text = f"Вы уверены, что хотите восстановить '<b>{supplier_name}</b>' из архива?"
+    
+    kb = [
+        [InlineKeyboardButton(f"✅ Да, восстановить", callback_data=f"unarchive_supplier_execute_{supplier_name}")],
+        [InlineKeyboardButton("❌ Отмена", callback_data=f"edit_supplier_name_{supplier_name}")]
+    ]
+    await query.message.edit_text(text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+async def execute_unarchive_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Изменяет статус поставщика на 'Активный'."""
+    query = update.callback_query
+    supplier_name = query.data.split('unarchive_supplier_execute_')[-1]
+    await query.message.edit_text(f"⏳ Восстанавливаю '<b>{supplier_name}</b>'...", parse_mode=ParseMode.HTML)
+    
+    try:
+        ws_dir = GSHEET.worksheet("СправочникПоставщиков")
+        cell = ws_dir.find(supplier_name)
+        if cell:
+            ws_dir.update_cell(cell.row, 2, "Активный")
+            get_all_supplier_names(context, force_update=True)
+            await query.message.edit_text(f"✅ Поставщик '<b>{supplier_name}</b>' успешно восстановлен.", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 В меню", callback_data="supplier_directory_menu")]]))
+        else:
+            await query.message.edit_text("❌ Не удалось найти поставщика для восстановления.")
+    except Exception as e:
+        await query.message.edit_text(f"❌ Произошла ошибка: {e}")
 
 async def confirm_archive_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Запрашивает подтверждение перед архивацией поставщика."""
@@ -7491,6 +7544,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await confirm_archive_supplier(update, context)
         elif data.startswith("archive_supplier_execute_"):
             await execute_archive_supplier(update, context)
+        elif data.startswith("unarchive_supplier_confirm_"):
+            await confirm_unarchive_supplier(update, context)
+        elif data.startswith("unarchive_supplier_execute_"):
+            await execute_unarchive_supplier(update, context)
         
         elif data == "debt_search_start":
             context.user_data['search_debt'] = {}
