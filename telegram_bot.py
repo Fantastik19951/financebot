@@ -1605,8 +1605,6 @@ def get_payroll_period(offset: int = 0) -> tuple[dt.date, dt.date]:
     
     return start_date, end_date
 
-# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
-
 def generate_planning_calendar_keyboard(year: int, month: int):
     """Генерирует календарь для выбора даты в меню планирования."""
     RU_MONTHS = {
@@ -1636,11 +1634,10 @@ def generate_planning_calendar_keyboard(year: int, month: int):
                 row.append(InlineKeyboardButton(" ", callback_data="noop"))
             else:
                 current_date = dt.date(year, month, day)
-                # Делаем кнопку активной, только если дата входит в разрешенный период
                 if today < current_date <= end_of_planning_period:
                     row.append(InlineKeyboardButton(str(day), callback_data=f"plan_nav_{sdate(current_date)}"))
                 else:
-                    row.append(InlineKeyboardButton(f"·{day}·", callback_data="noop")) # Неактивная кнопка
+                    row.append(InlineKeyboardButton(" ", callback_data="noop")) # Пустая кнопка для неактивных дней
         kb.append(row)
         
     kb.append([InlineKeyboardButton("🔙 Назад в меню планирования", callback_data="planning")])
@@ -2787,11 +2784,11 @@ async def repay_debt(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 DAYS_OF_WEEK_RU = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
 
-# 1. Нажатие на кнопку "Планирование"
-# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ НА ИСПРАВЛЕННУЮ ВЕРСИЮ ---
 async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, target_date: dt.date = None):
-    """Показывает чистое, одноуровневое меню планирования."""
+    """Показывает меню планирования с предварительным сообщением о загрузке."""
     query = update.callback_query
+    
+    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Мгновенно отвечаем пользователю ---
     if query:
         await query.message.edit_text("⏳ Загружаю список поставщиков...")
 
@@ -2799,9 +2796,10 @@ async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, tar
     if target_date is None:
         target_date = today + dt.timedelta(days=1)
 
-    # ... (вся логика получения дат и данных остается прежней) ...
     target_date_str = sdate(target_date)
     day_of_week_name = DAYS_OF_WEEK_RU[target_date.weekday()]
+    
+    # --- Теперь выполняем медленные операции ---
     days_until_next_sunday = (6 - today.weekday()) + 7
     end_of_planning_period = today + dt.timedelta(days=days_until_next_sunday)
     scheduled_today = get_suppliers_for_day(day_of_week_name)
