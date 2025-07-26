@@ -3225,6 +3225,19 @@ async def start_revision(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML)
 
+async def handle_revision_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает ввод фактического остатка и запрашивает комментарий."""
+    try:
+        actual_amount = parse_float(update.message.text)
+        context.user_data['revision']['actual'] = actual_amount
+        context.user_data['revision']['step'] = 'comment'
+        
+        await update.message.reply_text("📝 Теперь введите комментарий к переучету (например, 'Плановый переучет за июнь'):")
+
+    except (ValueError, KeyError):
+        await update.message.reply_text("❌ Ошибка. Пожалуйста, введите сумму числом.")
+        return
+
 async def add_new_supplier_to_directory(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Добавляет нового поставщика в справочник и переходит к вводу суммы."""
     query = update.callback_query
