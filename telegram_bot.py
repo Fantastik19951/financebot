@@ -3211,7 +3211,7 @@ async def start_revision(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     # Сначала получаем расчетный баланс из нашей существующей функции
-    calculated_balance = get_inventory_balance()
+    calculated_balance = get_inventory_balance(context)
     
     # Сохраняем состояние
     context.user_data['revision'] = {
