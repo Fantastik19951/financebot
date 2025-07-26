@@ -1062,29 +1062,21 @@ def log_action(user: Update.effective_user, category: str, action: str, comment:
         logging.error(f"Ошибка логирования: {e}")
         
 
-def get_suppliers_for_day(day_of_week: str):
-    """Получает список всех поставщиков на заданный день недели из таблицы 'длинного' формата."""
+# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
+def get_suppliers_for_day(context: ContextTypes.DEFAULT_TYPE, day_of_week: str):
+    """Получает список поставщиков на день, ИСПОЛЬЗУЯ КЭШ."""
     try:
-        ws = GSHEET.worksheet("ПланированиеПоставщиков")
-        rows = ws.get_all_values()[1:]  # Пропускаем заголовок
+        # --- ИЗМЕНЕНИЕ: Используем get_cached_sheet_data ---
+        rows = get_cached_sheet_data(context, SHEET_PLANNING_SCHEDULE)
+        if rows is None: return []
         
         suppliers_for_day = []
-        
-        
         for row in rows:
-            # <<< И ЭТО ТОЖЕ ДОБАВЬ >>>
-
-            # row[0] - День недели, row[1] - Поставщик
             if row and row[0].strip().lower() == day_of_week:
                 if len(row) > 1 and row[1].strip():
                     suppliers_for_day.append(row[1].strip())
-                    
-        print(f"--- РЕЗУЛЬТАТ: Найденные поставщики: {suppliers_for_day} ---")
         return suppliers_for_day
         
-    except gspread.exceptions.WorksheetNotFound:
-        logging.error("Критическая ошибка: лист 'ПланированиеПоставщиков' не найден!")
-        return []
     except Exception as e:
         logging.error(f"Ошибка получения поставщиков на день '{day_of_week}': {e}")
         return []
@@ -1124,15 +1116,13 @@ def month_buttons(start_date, end_date):
         [InlineKeyboardButton("🔙 К отчетам", callback_data="view_reports_menu")]
     ]
 
-
-def get_planned_suppliers(date_str: str):
-    """
-    Получает поставщиков, которые уже были спланированы на заданную дату, 
-    вместе с деталями плана и номерами их строк.
-    """
+def get_planned_suppliers(context: ContextTypes.DEFAULT_TYPE, date_str: str):
+    """Получает спланированных поставщиков, ИСПОЛЬЗУЯ КЭШ."""
     try:
-        ws = GSHEET.worksheet(SHEET_PLAN_FACT)
-        rows = ws.get_all_values()[1:]
+        # --- ИЗМЕНЕНИЕ: Используем get_cached_sheet_data ---
+        rows = get_cached_sheet_data(context, SHEET_PLAN_FACT)
+        if rows is None: return []
+
         planned_suppliers_data = []
         for i, row in enumerate(rows, start=2):
             if row and len(row) >= 4 and row[0] == date_str:
@@ -2802,8 +2792,8 @@ async def start_planning(update: Update, context: ContextTypes.DEFAULT_TYPE, tar
     # --- Теперь выполняем медленные операции ---
     days_until_next_sunday = (6 - today.weekday()) + 7
     end_of_planning_period = today + dt.timedelta(days=days_until_next_sunday)
-    scheduled_today = get_suppliers_for_day(day_of_week_name)
-    planned_data = get_planned_suppliers(target_date_str)
+    scheduled_today = get_suppliers_for_day(context, day_of_week_name)
+    planned_data = get_planned_suppliers(context, target_date_str)
     planned_names = {item['supplier'] for item in planned_data}
     unplanned_scheduled = [s for s in scheduled_today if s not in planned_names]
 
