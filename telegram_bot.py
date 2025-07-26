@@ -3533,9 +3533,10 @@ def admin_system_settings_kb():
         [InlineKeyboardButton("🔙 Назад в админ-панель", callback_data="admin_panel")]
     ])
 
+# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 def calculate_detailed_salary(context: ContextTypes.DEFAULT_TYPE, user_name: str) -> dict:
-    """Собирает и рассчитывает детальную информацию по ЗП, разделяя ставку и премию."""
-    start_period, end_period = get_payroll_period()
+    """Собирает и рассчитывает детальную информацию по ЗП, корректно учитывая период выплат."""
+    start_period, end_period = get_current_payroll_period()
     
     base_pay_earned = 0.0
     bonus_accrued = 0.0
@@ -3544,7 +3545,11 @@ def calculate_detailed_salary(context: ContextTypes.DEFAULT_TYPE, user_name: str
 
     salaries_rows = get_cached_sheet_data(context, SHEET_SALARIES, force_update=True) or []
     
+    # Строка для точной проверки периода в комментарии
+    period_str = f"за период {sdate(start_period)}-{sdate(end_period)}"
+
     for row in salaries_rows:
+        # Проверяем, что дата транзакции попадает в период
         if len(row) > 3 and (d := pdate(row[0])) and start_period <= d <= end_period and row[1] == user_name:
             pay_type = row[2]
             amount = parse_float(row[3])
@@ -3555,19 +3560,21 @@ def calculate_detailed_salary(context: ContextTypes.DEFAULT_TYPE, user_name: str
             elif pay_type == "Премия 2%":
                 bonus_accrued += amount
             elif pay_type == "Выплата бонуса":
-                # Учитываем только выплаты, относящиеся к бонусам
-                bonus_paid_out += amount
+                # --- ГЛАВНОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+                # Учитываем выплату, только если она относится к ТЕКУЩЕМУ периоду
+                if len(row) > 4 and period_str in row[4]:
+                    bonus_paid_out += amount
 
-    # "К выплате" теперь считается ТОЛЬКО из бонусов
     bonus_to_be_paid = bonus_accrued - bonus_paid_out
 
     return {
         "start": sdate(start_period), "end": sdate(end_period),
         "shifts": shifts_worked,
-        "base_pay": base_pay_earned,      # Ставка (информационно)
-        "bonus_pay": bonus_accrued,       # Начислено премий
-        "paid_out": bonus_paid_out,       # Выплачено премий
-        "to_be_paid": bonus_to_be_paid    # Остаток премии к выплате
+        "base_pay": base_pay_earned,
+        "bonus_pay": bonus_accrued, 
+        "paid_out": bonus_paid_out, 
+        "to_be_paid": bonus_to_be_paid
+    }
     }
 def suppliers_menu_kb():
     return InlineKeyboardMarkup([
