@@ -3575,7 +3575,7 @@ def calculate_detailed_salary(context: ContextTypes.DEFAULT_TYPE, user_name: str
         "paid_out": bonus_paid_out, 
         "to_be_paid": bonus_to_be_paid
     }
-    }
+    
 def suppliers_menu_kb():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Добавить накладную", callback_data="add_supplier")],
