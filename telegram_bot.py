@@ -3418,17 +3418,21 @@ def get_week_debts(start, end):
 
 def add_revision(context: ContextTypes.DEFAULT_TYPE, calc_sum: float, fact_sum: float, comment: str, user: str):
     """
-    Записывает данные о переучете и КОРРЕКТНО обновляет баланс в остатке.
+    Записывает данные о переучете и КОРРЕКТНО обновляет баланс в остатке,
+    а затем принудительно обновляет кэш.
     """
     # 1. Запись в архив переучетов
+    ws_revisions = GSHEET.worksheet("Переучеты")
     diff = fact_sum - calc_sum
-    row_to_save_rev = [sdate(), calc_sum, fact_sum, diff, comment, user]
-    append_row_and_update_cache(context, "Переучеты", row_to_save_rev)
+    ws_revisions.append_row([sdate(), calc_sum, fact_sum, diff, comment, user])
     
     # 2. Корректировка баланса в "Остаток магазина"
-    # --- ИСПРАВЛЕНИЕ: Теперь в комментарий пишется ваш комментарий ---
-    row_to_save_inv = [sdate(), "Переучет", fact_sum, comment, user]
-    append_row_and_update_cache(context, SHEET_INVENTORY, row_to_save_inv)
+    ws_inv = GSHEET.worksheet(SHEET_INVENTORY)
+    ws_inv.append_row([sdate(), "Переучет", fact_sum, comment, user])
+
+    # 3. Принудительно обновляем кэш для затронутых таблиц, чтобы изменения были видны сразу
+    get_cached_sheet_data(context, "Переучеты", force_update=True)
+    get_cached_sheet_data(context, SHEET_INVENTORY, force_update=True)
 
 def is_date(string):
     try:
