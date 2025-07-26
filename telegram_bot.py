@@ -3233,41 +3233,57 @@ async def show_financial_calendar(update: Update, context: ContextTypes.DEFAULT_
               
     await query.message.edit_text(legend, parse_mode=ParseMode.HTML, reply_markup=kb)
 
+
 async def show_financial_summary_for_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает детальную финансовую сводку за выбранный день."""
+    """Показывает детальную и красивую финансовую сводку за выбранный день."""
     query = update.callback_query
     date_str = query.data.split('_')[-1]
     await query.message.edit_text(f"📊 Собираю сводку за {date_str}...")
 
-    # Собираем все данные за этот день
+    # --- 1. Собираем все данные за этот день ---
     report = next((r for r in (get_cached_sheet_data(context, SHEET_REPORT) or []) if r and r[0] == date_str), None)
     invoices = [r for r in (get_cached_sheet_data(context, SHEET_SUPPLIERS) or []) if r and r[0] == date_str]
     expenses = [r for r in (get_cached_sheet_data(context, SHEET_EXPENSES) or []) if r and r[0] == date_str]
-    debts_due = [r for r in (get_cached_sheet_data(context, SHEET_DEBTS) or []) if len(r) > 5 and r[5] == date_str and r[6].lower() != 'да']
+    debts_due = [r for r in (get_cached_sheet_data(context, SHEET_DEBTS) or []) if len(r) > 6 and r[5] == date_str and r[6].lower() != 'да']
 
+    # --- 2. Формируем новое, подробное сообщение ---
     msg = f"<b>Финансовая сводка за {date_str}</b>\n"
     msg += "──────────────────\n"
 
     if report:
-        msg += f"💰 <b>Выручка:</b> {parse_float(report[4]):.2f}₴ (Нал: {parse_float(report[2]):.2f}₴, Карта: {parse_float(report[3]):.2f}₴)\n"
+        msg += f"💰 <b>Выручка:</b> {parse_float(report[4]):.2f}₴\n"
+        msg += f"   <i>(Нал: {parse_float(report[2]):.2f}₴, Карта: {parse_float(report[3]):.2f}₴)</i>\n"
     else:
         msg += "💰 <b>Выручка:</b> <i>Смена не была сдана.</i>\n"
 
     total_invoices = sum(parse_float(inv[4]) for inv in invoices)
     msg += f"📦 <b>Закупки (по накладным):</b> {total_invoices:.2f}₴\n"
 
-    total_expenses = sum(parse_float(exp[1]) for exp in expenses)
-    msg += f"💸 <b>Расходы:</b> {total_expenses:.2f}₴\n"
+    if expenses:
+        total_expenses = sum(parse_float(exp[1]) for exp in expenses)
+        msg += f"💸 <b>Расходы ({total_expenses:.2f}₴):</b>\n"
+        for exp in expenses:
+            msg += f"   • {exp[2]}: {parse_float(exp[1]):.2f}₴ ({exp[3]})\n"
+    else:
+        msg += "💸 <b>Расходы:</b> <i>Не было.</i>\n"
 
-    total_debts_due = sum(parse_float(d[4]) for d in debts_due)
-    if total_debts_due > 0:
-        msg += f"❗️ <b>Долги к оплате:</b> {total_debts_due:.2f}₴\n"
+    if debts_due:
+        total_debts_due = sum(parse_float(d[4]) for d in debts_due)
+        msg += f"❗️ <b>Долги к оплате ({total_debts_due:.2f}₴):</b>\n"
+        for debt in debts_due:
+            msg += f"   • {debt[1]}: {parse_float(debt[4]):.2f}₴\n"
+    else:
+        msg += "❗️ <b>Долги к оплате:</b> <i>Нет.</i>\n"
 
-    # Возвращаемся к календарю, сохраняя текущий месяц
+    # --- 3. Исправляем "Бермудский треугольник" ---
     date_obj = pdate(date_str)
+    # Кнопка "Назад" теперь всегда правильно возвращает к календарю
     back_callback = f"fin_cal_nav_{date_obj.year}_{date_obj.month}"
-    kb = [[InlineKeyboardButton("📜 Полный протокол смены", callback_data=f"shift_protocol_{date_str}")],
-          [InlineKeyboardButton("🔙 К календарю", callback_data=back_callback)]]
+    
+    kb = [
+        [InlineKeyboardButton("📜 Полный протокол смены", callback_data=f"shift_protocol_{date_str}")],
+        [InlineKeyboardButton("🔙 К календарю", callback_data=back_callback)]
+    ]
 
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
@@ -7696,8 +7712,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "financial_calendar":
             await show_financial_calendar(update, context)
         elif data.startswith("fin_cal_nav_"):
-            _, _, year, month = data.split('_')
-            await show_financial_calendar(update, context, year=int(year), month=int(month))
+            # Надежный способ извлечь год и месяц, даже если их несколько
+            parts = data.split('_')
+            year, month = int(parts[-2]), int(parts[-1])
+            await show_financial_calendar(update, context, year=year, month=month)
         elif data.startswith("fin_cal_date_"):
             await show_financial_summary_for_date(update, context)
         elif data.startswith("details_exp_"): await show_expenses_detail(update, context)
