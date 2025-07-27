@@ -5846,28 +5846,27 @@ async def save_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # --- ПОСТАВЩИКИ ---
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def start_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Начинает процесс добавления накладной, скрывая уже добавленных поставщиков."""
+    """Начинает процесс добавления накладной с предварительным сообщением о загрузке."""
     query = update.callback_query
     await query.answer()
-
+    
+    # --- ИЗМЕНЕНИЕ: Мгновенно показываем статус ---
     await query.message.edit_text("⏳ Собираю информацию для создания накладной...")
 
     today_str = sdate()
     day_of_week = DAYS_OF_WEEK_RU[dt.date.today().weekday()]
 
     try:
-        # 1. Получаем всех поставщиков по графику на сегодня
-        scheduled_suppliers = get_suppliers_for_day(day_of_week)
+        # --- Теперь выполняем медленные операции ---
+        scheduled_suppliers = get_suppliers_for_day(context, day_of_week)
         
-        # 2. Получаем всех поставщиков, по которым УЖЕ есть накладные за сегодня
-        ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
-        rows = ws_sup.get_all_values()[1:]
-        added_today_suppliers = {row[1].strip() for row in rows if len(row) > 1 and row[0].strip() == today_str}
+        all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
+        added_today_suppliers = {row[1].strip() for row in all_invoices if len(row) > 1 and row[0].strip() == today_str}
 
-        # 3. Оставляем только тех, кого еще не добавляли
         suppliers_to_show = [s for s in scheduled_suppliers if s not in added_today_suppliers]
-        suppliers_to_show.sort() # Сортируем список по алфавиту
+        suppliers_to_show.sort()
 
     except Exception as e:
         logging.error(f"Не удалось получить списки поставщиков: {e}")
@@ -5880,6 +5879,7 @@ async def start_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb.append([InlineKeyboardButton("📝 Другой (не по графику)", callback_data="add_sup_other")])
     kb.append([InlineKeyboardButton("🔙 В меню поставщиков", callback_data="suppliers_menu")])
 
+    # --- В конце редактируем сообщение с "Загружаю..." на финальный результат ---
     await query.message.edit_text(
         "📦 <b>Добавление накладной</b>\n\nВыберите поставщика из списка:",
         reply_markup=InlineKeyboardMarkup(kb),
