@@ -2355,8 +2355,7 @@ async def execute_payout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     period_str = f"за период {sdate(start_period)}-{sdate(end_period)}"
     
     try:
-        ws = GSHEET.worksheet(SHEET_SALARIES)
-        ws.append_row([sdate(), seller_name, "Выплата бонуса", amount, period_str])
+        add_salary_record(context, seller_name, "Выплата бонуса", amount, period_str)
         log_action(query.from_user, "Зарплаты", "Выплата бонуса", f"Сумма: {amount:.2f}₴")
         
         # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
@@ -3771,31 +3770,26 @@ async def handle_inventory_expense(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text("❌ Введите сумму числом.")
 
 async def save_inventory_expense(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохраняет списание с остатка и корректно обновляет кэш."""
     comment = update.message.text
     amount = context.user_data['inventory_expense']['amount']
     user = update.effective_user
-    user_name = USER_ID_TO_NAME.get(str(user.id), user.first_name)
+    who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
     
-    # Основное действие
-    add_inventory_operation("Списание", amount, comment, user_name)
-    
-    # --- ИЗМЕНЕНИЕ ЗДЕСЬ: Добавляем клавиатуру с кнопкой "Назад" ---
-    kb = [[InlineKeyboardButton("🔙 Назад в меню 'Остаток'", callback_data="stock_safe_menu")]]
-    markup = InlineKeyboardMarkup(kb)
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Передаем 'context' первым аргументом ---
+    add_inventory_operation(context, "Списание", amount, comment, who)
     
     await update.message.reply_text(
         f"✅ Списание {amount:.2f}₴ добавлено!\nКомментарий: {comment}",
-        reply_markup=markup
+        reply_markup=stock_menu_kb()
     )
     
-    # Логируем это действие в категорию "Остаток"
+    # Логируем действие (эта часть остается)
     log_action(user, "Остаток", "Списание", f"Сумма: {amount:.2f}₴. ({comment})")
     
-    context.user_data.pop('inventory_expense', None)
+    context.user_data.pop('inventory_expense', None))
 
 
-
-# --- ВЕРНИТЕ ЭТУ ФУНКЦИЮ ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id_str = str(user.id)
@@ -6423,6 +6417,8 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
             debt_amount = sum_to_pay
             due_date_obj = supplier_data.get('due_date')
             due_date = sdate(due_date_obj) if due_date_obj else ""
+            debt_row = [sdate(), supplier_data['name'], sum_to_pay, 0, sum_to_pay, due_date, "Нет", debt_pay_type]
+            append_row_and_update_cache(context, SHEET_DEBTS, debt_row)
         else:
             paid_status = "Да"
             if pay_type == "Наличные":
@@ -7053,8 +7049,8 @@ async def withdraw_daily_salary(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     # Если проверка пройдена, выплачиваем
-    add_safe_operation(query.from_user, "Зарплата", 700, f"Ставка за смену для {seller_name}")
-    add_salary_record(seller_name, "Ставка", 700, "Выплачено из сейфа")
+    add_safe_operation(context, query.from_user, "Зарплата", 700, f"Ставка за смену для {seller_name}")
+    add_salary_record(context, seller_name, "Ставка", 700, "Выплачено из сейфа")
     log_action(query.from_user, "Зарплаты", "Выплата ставки", f"Сумма: 700₴")
     
     await query.message.edit_text(f"✅ <b>{seller_name}</b>, ваша ставка (700₴) за смену успешно выплачена из сейфа.", parse_mode=ParseMode.HTML, reply_markup=stock_safe_menu_kb())
@@ -7133,9 +7129,11 @@ async def handle_safe_amount(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         # 1. Выполняем операцию записи в таблицу
         if op_type == 'deposit':
-            add_safe_operation(user, "Пополнение", amount, "Внесение наличных")
+            # --- ИСПРАВЛЕНИЕ: Передаем context и user ---
+            add_safe_operation(context, user, "Пополнение", amount, "Внесение наличных")
         elif op_type == 'withdraw':
-            add_safe_operation(user, "Снятие", amount, "Снятие администратором")
+            # --- ИСПРАВЛЕНИЕ: Передаем context и user ---
+            add_safe_operation(context, user, "Снятие", amount, "Снятие администратором")
 
         # 2. ГЛАВНОЕ ИСПРАВЛЕНИЕ: Принудительно сбрасываем кэш для листа "Сейф"
         if 'sheets_cache' in context.bot_data and "Сейф" in context.bot_data['sheets_cache']:
@@ -7464,6 +7462,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await start_planning(update, context, target_date=target_date)
         elif data.startswith("plan_delete_"):
             _, _, row_index_str, date_str = data.split('_')
+            # --- ИСПРАВЛЕНИЕ: Передаем context ---
             if delete_plan_by_row_index(context, int(row_index_str)):
                 await query.answer("План удален!")
             else:
