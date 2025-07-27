@@ -841,16 +841,18 @@ def clear_conversation_state(context: ContextTypes.DEFAULT_TYPE):
             key_found = True
     return key_found
     
-def delete_plan_by_row_index(row_index: int) -> bool:
-    """Находит и удаляет строку в листе ПланФактНаЗавтра по ее номеру."""
+def delete_plan_by_row_index(context: ContextTypes.DEFAULT_TYPE, row_index: int) -> bool:
+    """Находит и удаляет строку и обновляет кэш."""
     try:
         ws = GSHEET.worksheet(SHEET_PLAN_FACT)
         ws.delete_rows(row_index)
+        get_cached_sheet_data(context, SHEET_PLAN_FACT, force_update=True) # <-- Добавлено
         logging.info(f"Запись о плане в строке {row_index} успешно удалена.")
         return True
     except Exception as e:
         logging.error(f"Ошибка удаления записи о плане в строке {row_index}: {e}")
         return False
+
 
 def month_range(date=None):
     date = date or dt.date.today()
@@ -952,24 +954,39 @@ def get_cached_sheet_data(context: ContextTypes.DEFAULT_TYPE, sheet_name: str, c
     now = dt.datetime.now()
     cache = context.bot_data.setdefault('sheets_cache', {})
     
-    # Если не требуется принудительное обновление, проверяем кэш
     if not force_update and sheet_name in cache:
         cached_data, timestamp = cache[sheet_name]
         if (now - timestamp).total_seconds() < cache_duration_seconds:
-            # Возвращаем свежие данные из кэша
             return list(cached_data)
             
-    # Читаем из таблицы, если кэш устарел, его нет или требуется обновление
     try:
-        logging.info(f"CACHE MISS: Читаем данные для '{sheet_name}' из Google Sheets.")
         ws = GSHEET.worksheet(sheet_name)
         data = ws.get_all_values()[1:]
-        # Сохраняем новые данные и новую временную метку в кэш
         cache[sheet_name] = (data, now)
         return list(data)
     except Exception as e:
         logging.error(f"Не удалось прочитать или кэшировать лист '{sheet_name}': {e}")
         return None
+
+def append_row_and_update_cache(context: ContextTypes.DEFAULT_TYPE, sheet_name: str, row_data: list):
+    """ГЛОБАЛЬНАЯ ФУНКЦИЯ: Добавляет строку в таблицу и мгновенно обновляет кэш."""
+    try:
+        ws = GSHEET.worksheet(sheet_name)
+        ws.append_row(row_data)
+
+        cache = context.bot_data.setdefault('sheets_cache', {})
+        # Проверяем, существует ли кэш для этого листа
+        if sheet_name in cache:
+            sheet_cache, _ = cache.get(sheet_name, ([], None))
+            sheet_cache.append(row_data)
+            cache[sheet_name] = (sheet_cache, dt.datetime.now())
+            logging.info(f"Кэш для '{sheet_name}' обновлен мгновенно.")
+        
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка в append_row_and_update_cache для '{sheet_name}': {e}")
+        return False
+
     
 # --- GOOGLE SHEETS ---
 def get_gsheet():
@@ -1136,19 +1153,10 @@ def get_planned_suppliers(context: ContextTypes.DEFAULT_TYPE, date_str: str):
         return []
         
 
-def save_plan_fact(context: ContextTypes.DEFAULT_TYPE, date_str: str, supplier: str, amount, pay_type, user_name):
-    """Сохраняет план и вызывает модуль самообучения для обновления еженедельного графика."""
-    # 1. Основное действие: сохраняем план на конкретный день
-    try:
-        ws_plan_fact = GSHEET.worksheet(SHEET_PLAN_FACT)
-        ws_plan_fact.append_row([date_str, supplier, amount, pay_type, user_name, "Ожидается"])
-        get_cached_sheet_data(context, SHEET_PLAN_FACT, force_update=True)
-        logging.info(f"План на {date_str} для '{supplier}' сохранен.")
-    except Exception as e:
-        logging.error(f"Критическая ошибка сохранения ПланФакт: {e}")
-        return
-
-    # 2. Вызываем модуль самообучения
+def save_plan_fact(context: ContextTypes.DEFAULT_TYPE, date_str: str, supplier: str, amount: float, pay_type: str, user_name: str):
+    """Сохраняет план и вызывает модуль самообучения."""
+    row_to_save = [date_str, supplier, amount, pay_type, user_name, "Ожидается"]
+    append_row_and_update_cache(context, SHEET_PLAN_FACT, row_to_save)
     update_supplier_schedule(context, date_str, supplier)
 
 def get_avg_markup_for_supplier(context: ContextTypes.DEFAULT_TYPE, supplier_name: str) -> float | None:
@@ -1279,9 +1287,10 @@ def month_buttons(start_date, end_date):
         ],
         [InlineKeyboardButton("🔙 К отчетам", callback_data="view_reports_menu")]
     ]
-def add_inventory_operation(op_type, amount, comment, user):
-    ws = GSHEET.worksheet("Остаток магазина")
-    ws.append_row([sdate(), op_type, amount, comment, user])
+def add_inventory_operation(context: ContextTypes.DEFAULT_TYPE, op_type: str, amount: float, comment: str, user: str):
+    row_to_save = [sdate(), op_type, amount, comment, user]
+    append_row_and_update_cache(context, SHEET_INVENTORY, row_to_save)
+
 
 def get_repayment_date_from_history(context: ContextTypes.DEFAULT_TYPE, invoice_date: str, supplier_name: str) -> str:
     """
@@ -1367,9 +1376,10 @@ def debts_message_and_keyboard(debts, page, page_size):
     
     return msg or "Записей пока нет.", keyboard
 
-def add_salary_record(seller, salary_type, amount, comment):
-    ws = GSHEET.worksheet(SHEET_SALARIES)
-    ws.append_row([sdate(), seller, salary_type, amount, comment])
+def add_salary_record(context: ContextTypes.DEFAULT_TYPE, seller: str, salary_type: str, amount: float, comment: str):
+    row_to_save = [sdate(), seller, salary_type, amount, comment]
+    append_row_and_update_cache(context, SHEET_SALARIES, row_to_save)
+
 
 def build_debts_history_keyboard(rows, page=0, per_page=10):
     # rows — это все строки из таблицы долгов (без заголовка)
@@ -1401,17 +1411,14 @@ def build_debts_history_keyboard(rows, page=0, per_page=10):
 
 
 # --- ОСТАТОК МАГАЗИНА, ПЕРЕУЧЕТЫ И СЕЙФ ---
-def add_safe_operation(user: Update.effective_user, op_type: str, amount: float, comment: str):
-    """Добавляет операцию в сейф и немедленно логирует это действие."""
+def add_safe_operation(context: ContextTypes.DEFAULT_TYPE, user: Update.effective_user, op_type: str, amount: float, comment: str):
+    """Добавляет операцию в сейф, используя глобальный регистратор."""
     user_name = USER_ID_TO_NAME.get(str(user.id), user.first_name)
-    ws = GSHEET.worksheet("Сейф")
-    ws.append_row([sdate(), op_type, amount, comment, user_name])
-    log_action(
-        user=user,
-        category="Сейф",
-        action=op_type,
-        comment=f"Сумма: {amount:.2f}₴. ({comment})"
-    )
+    row_to_save = [sdate(), op_type, amount, comment, user_name]
+
+    append_row_and_update_cache(context, "Сейф", row_to_save)
+
+    log_action(user=user, category="Сейф", action=op_type, comment=f"Сумма: {amount:.2f}₴. ({comment})")
     
 def get_sellers_comparison_data(context: ContextTypes.DEFAULT_TYPE, sellers_list: list, days_period: int = 30):
     """Собирает данные для сравнения средних продаж продавцов по дням недели."""
@@ -1985,7 +1992,11 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
 
     # Финальные действия
     context.user_data.pop('edit_invoice', None)
-    get_cached_sheet_data(context, "Сейф", force_update=True) # Сбрасываем кэш сейфа
+    get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True)
+    get_cached_sheet_data(context, SHEET_DEBTS, force_update=True)
+    get_cached_sheet_data(context, "Сейф", force_update=True)
+    get_cached_sheet_data(context, SHEET_INVENTORY, force_update=True)
+
     await query.message.edit_text("✅ Накладная успешно обновлена! Все связанные данные, включая сейф, пересчитаны.",
                                   reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Продолжить просмотр", callback_data=f"edit_invoice_cancel_{row_index}")]]))
 
@@ -3462,24 +3473,13 @@ def get_week_debts(start, end):
 
 
 def add_revision(context: ContextTypes.DEFAULT_TYPE, calc_sum: float, fact_sum: float, comment: str, user: str):
-    """
-    Записывает данные о переучете и КОРРЕКТНО обновляет баланс в остатке,
-    а затем принудительно обновляет кэш.
-    """
-    # 1. Запись в архив переучетов
-    ws_revisions = GSHEET.worksheet("Переучеты")
+    """Записывает данные о переучете и обновляет кэш."""
     diff = fact_sum - calc_sum
-    ws_revisions.append_row([sdate(), calc_sum, fact_sum, diff, comment, user])
-    
-    # 2. Корректировка баланса в "Остаток магазина"
-    ws_inv = GSHEET.worksheet(SHEET_INVENTORY)
-    ws_inv.append_row([sdate(), "Переучет", fact_sum, comment, user])
-    get_cached_sheet_data(context, "Переучеты", force_update=True)
-    get_cached_sheet_data(context, SHEET_INVENTORY, force_update=True)
+    row_to_save_rev = [sdate(), calc_sum, fact_sum, diff, comment, user]
+    append_row_and_update_cache(context, "Переучеты", row_to_save_rev)
 
-    # 3. Принудительно обновляем кэш для затронутых таблиц, чтобы изменения были видны сразу
-    get_cached_sheet_data(context, "Переучеты", force_update=True)
-    get_cached_sheet_data(context, SHEET_INVENTORY, force_update=True)
+    row_to_save_inv = [sdate(), "Переучет", fact_sum, comment, user]
+    append_row_and_update_cache(context, SHEET_INVENTORY, row_to_save_inv)
 
 def is_date(string):
     try:
@@ -4061,12 +4061,13 @@ async def save_seller_expense(update: Update, context: ContextTypes.DEFAULT_TYPE
     who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
     
     # 1. Списываем деньги из сейфа
-    add_safe_operation(user, "Расход", amount, f"Расход продавца: {comment}")
+    add_safe_operation(context, user, "Расход", amount, f"Расход продавца: {comment}")
     
     # 2. Записываем в таблицу расходов
     ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
     # Указываем, что это наличный расход, внесенный продавцом
-    ws_exp.append_row([sdate(), amount, comment, who, "Наличные", "Расход продавца"])
+    row_to_save = [sdate(), amount, comment, who, "Наличные", "Расход продавца"]
+    append_row_and_update_cache(context, SHEET_EXPENSES, row_to_save)
 
     await update.message.reply_text(
         f"✅ Расход '{comment}' на сумму {amount:.2f}₴ (наличные) успешно добавлен.",
@@ -4266,13 +4267,14 @@ async def handle_admin_expense_pay_type(update: Update, context: ContextTypes.DE
     
     # Списываем из сейфа, ТОЛЬКО если оплата наличными
     if pay_type == "Наличные":
-        add_safe_operation(user, "Расход", amount, f"Админ. расход: {comment}")
+        add_safe_operation(context, user, "Расход", amount, f"Админ. расход: {comment}")
 
     # Записываем в таблицу расходов с новыми данными
     try:
         ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
         # Новый формат записи с 6 колонками
-        ws_exp.append_row([sdate(), amount, comment, who, pay_type, "Админ. расход"])
+        row_to_save = [sdate(), amount, comment, who, pay_type, "Админ. расход"]
+        append_row_and_update_cache(context, SHEET_EXPENSES, row_to_save)
         
         await query.message.edit_text(
             f"✅ Расход '{comment}' на сумму {amount:.2f}₴ ({pay_type}) успешно добавлен.",
@@ -5113,7 +5115,7 @@ async def save_shift_changes(update: Update, context: ContextTypes.DEFAULT_TYPE)
         # Сбрасываем кэш
         if 'sheets_cache' in context.bot_data:
             context.bot_data['sheets_cache'].pop(SHEET_SHIFTS, None)
-            
+        get_cached_sheet_data(context, SHEET_SHIFTS, force_update=True) # <-- Добавлено
         await query.answer("✅ Смена сохранена!", show_alert=True)
         context.user_data.pop('edit_shift', None)
         
@@ -5367,20 +5369,19 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if 'expenses' in report_data and report_data['expenses']:
             ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
             for exp in report_data['expenses']:
-                ws_exp.append_row([
-                    today_str, exp.get('amount', 0), exp.get('comment', ''), seller,
-                    "Наличные (касса)", f"Закрытие смены за {today_str}"
-                ])
+                row_to_save = [today_str, exp.get('amount', 0), exp.get('comment', ''), seller, "Наличные (касса)", f"Закрытие смены за {today_str}"]
+                append_row_and_update_cache(context, SHEET_EXPENSES, row_to_save)
+
 
         balance_before_shift = get_safe_balance(context)
         cash_balance = cash - expenses_total
-        add_safe_operation(update.effective_user, "Пополнение", cash_balance, "Остаток кассы за день")
-        add_inventory_operation("Продажа", total_sales, "Продажа товаров за смену", seller)
+        add_safe_operation(context, update.effective_user, "Пополнение", cash_balance, "Остаток кассы за день")
+        add_inventory_operation(context, "Продажа", total_sales, "Продажа товаров за смену", seller)
 
         if seller in ["Мария", "Людмила"]:
             bonus = round((total_sales * 0.02) - 700, 2)
             if bonus > 0:
-                add_salary_record(seller, "Премия 2%", bonus, f"За {today_str} (продажи: {total_sales:.2f}₴)")
+                add_salary_record(context, seller, "Премия 2%", bonus, f"За {today_str} (продажи: {total_sales:.2f}₴)")
 
         get_cached_sheet_data(context, "Сейф", force_update=True)
         safe_bal_after_shift = get_safe_balance(context)
@@ -5396,7 +5397,7 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             today_str, seller, cash, terminal, total_sales, 
             cash_balance, total_debts, planned_total, comment, safe_bal_after_shift
         ]
-        ws_report.append_row(report_row_data)
+        append_row_and_update_cache(context, SHEET_REPORT, report_row_data)
         resp = (f"✅ <b>Смена полностью завершена!</b>\n\n"
                 f"📅 Дата: {today_str}\n"
                 f"👤 Продавец: {seller}\n"
@@ -6422,7 +6423,7 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
             paid_status = "Да"
             if pay_type == "Наличные":
                 comment_for_safe = f"Оплата поставщику: {supplier_data['name']}"
-                add_safe_operation(user, "Расход", sum_to_pay, comment_for_safe)
+                add_safe_operation(context, user, "Расход", sum_to_pay, comment_for_safe)
         
         row_to_save = [
             sdate(), supplier_data['name'], amount_income, amount_return, sum_to_pay,
@@ -6431,16 +6432,17 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         
         ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
-        ws_sup.append_row(row_to_save)
+        append_row_and_update_cache(context, SHEET_SUPPLIERS, row_to_save)
         log_action(user, "Накладные", "Создание накладной", f"Поставщик: {supplier_data['name']}, Приход: {amount_income:.2f}₴")
         
 
         if pay_type.startswith("Долг"):
             debt_pay_type = "Карта" if "(Карта)" in pay_type else "Наличные"
             ws_debts = GSHEET.worksheet(SHEET_DEBTS)
-            ws_debts.append_row([sdate(), supplier_data['name'], sum_to_pay, 0, sum_to_pay, due_date, "Нет", debt_pay_type])
+            debt_row = [sdate(), supplier_data['name'], sum_to_pay, 0, sum_to_pay, due_date, "Нет", debt_pay_type]
+            append_row_and_update_cache(context, SHEET_DEBTS, debt_row)
 
-        add_inventory_operation("Приход", invoice_total_markup, f"Поставщик: {supplier_data['name']}", who)
+        add_inventory_operation(context, "Приход", invoice_total_markup, f"Поставщик: {supplier_data['name']}", who)
 
         update_supplier_schedule(context, sdate(), supplier_data['name'])
 
@@ -6921,6 +6923,7 @@ async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_in
         ws_debts.update_cell(row_index, 4, current_paid + total_to_pay)
         ws_debts.update_cell(row_index, 5, 0)
         ws_debts.update_cell(row_index, 7, "Да")
+        
         
         # Обновляем статус в листе "Поставщики"
         ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
@@ -7464,7 +7467,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await start_planning(update, context, target_date=target_date)
         elif data.startswith("plan_delete_"):
             _, _, row_index_str, date_str = data.split('_')
-            if delete_plan_by_row_index(int(row_index_str)):
+            if delete_plan_by_row_index(context, int(row_index_str)):
                 await query.answer("План удален!")
             else:
                 await query.answer("❌ Ошибка удаления", show_alert=True)
