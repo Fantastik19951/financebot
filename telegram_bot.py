@@ -3787,7 +3787,7 @@ async def save_inventory_expense(update: Update, context: ContextTypes.DEFAULT_T
     # Логируем действие (эта часть остается)
     log_action(user, "Остаток", "Списание", f"Сумма: {amount:.2f}₴. ({comment})")
     
-    context.user_data.pop('inventory_expense', None))
+    context.user_data.pop('inventory_expense', None)
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
