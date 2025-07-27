@@ -946,7 +946,7 @@ def clear_plan_for_date(date_to_clear_str: str):
 
 
 def get_cached_sheet_data(context: ContextTypes.DEFAULT_TYPE, sheet_name: str, cache_duration_seconds: int = 60, force_update: bool = False) -> list | None:
-    """Получает данные из листа, используя кэш, с возможностью принудительного обновления."""
+    """Получает данные из листа, используя TTL-кэш, с возможностью принудительного обновления."""
     if not GSHEET: return None
     
     now = dt.datetime.now()
@@ -956,18 +956,16 @@ def get_cached_sheet_data(context: ContextTypes.DEFAULT_TYPE, sheet_name: str, c
     if not force_update and sheet_name in cache:
         cached_data, timestamp = cache[sheet_name]
         if (now - timestamp).total_seconds() < cache_duration_seconds:
-            logging.info(f"Данные для '{sheet_name}' взяты из кэша.")
+            # Возвращаем свежие данные из кэша
             return list(cached_data)
             
     # Читаем из таблицы, если кэш устарел, его нет или требуется обновление
     try:
-        logging.info(f"Читаем данные для '{sheet_name}' из Google Sheets (обновляем кэш).")
+        logging.info(f"CACHE MISS: Читаем данные для '{sheet_name}' из Google Sheets.")
         ws = GSHEET.worksheet(sheet_name)
         data = ws.get_all_values()[1:]
-        
+        # Сохраняем новые данные и новую временную метку в кэш
         cache[sheet_name] = (data, now)
-        context.bot_data['sheets_cache'] = cache
-        
         return list(data)
     except Exception as e:
         logging.error(f"Не удалось прочитать или кэшировать лист '{sheet_name}': {e}")
@@ -1144,6 +1142,7 @@ def save_plan_fact(context: ContextTypes.DEFAULT_TYPE, date_str: str, supplier: 
     try:
         ws_plan_fact = GSHEET.worksheet(SHEET_PLAN_FACT)
         ws_plan_fact.append_row([date_str, supplier, amount, pay_type, user_name, "Ожидается"])
+        get_cached_sheet_data(context, SHEET_PLAN_FACT, force_update=True)
         logging.info(f"План на {date_str} для '{supplier}' сохранен.")
     except Exception as e:
         logging.error(f"Критическая ошибка сохранения ПланФакт: {e}")
@@ -3475,6 +3474,8 @@ def add_revision(context: ContextTypes.DEFAULT_TYPE, calc_sum: float, fact_sum: 
     # 2. Корректировка баланса в "Остаток магазина"
     ws_inv = GSHEET.worksheet(SHEET_INVENTORY)
     ws_inv.append_row([sdate(), "Переучет", fact_sum, comment, user])
+    get_cached_sheet_data(context, "Переучеты", force_update=True)
+    get_cached_sheet_data(context, SHEET_INVENTORY, force_update=True)
 
     # 3. Принудительно обновляем кэш для затронутых таблиц, чтобы изменения были видны сразу
     get_cached_sheet_data(context, "Переучеты", force_update=True)
@@ -4071,6 +4072,7 @@ async def save_seller_expense(update: Update, context: ContextTypes.DEFAULT_TYPE
         f"✅ Расход '{comment}' на сумму {amount:.2f}₴ (наличные) успешно добавлен.",
         reply_markup=safe_menu_kb(is_admin=False) # Показываем меню сейфа для продавца
     )
+    get_cached_sheet_data(context, SHEET_EXPENSES, force_update=True)
     context.user_data.pop('seller_expense', None)
 
 
@@ -4279,6 +4281,7 @@ async def handle_admin_expense_pay_type(update: Update, context: ContextTypes.DE
     except Exception as e:
         await query.message.edit_text(f"❌ Ошибка записи расхода: {e}")
     finally:
+        get_cached_sheet_data(context, SHEET_EXPENSES, force_update=True)
         context.user_data.pop('admin_expense', None)
 
 
@@ -5457,6 +5460,12 @@ async def save_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         context.job_queue.run_once(check_financial_shield, run_time, name="financial_shield_check")
         logging.info(f"FINANCIAL SHIELD: Проверка запланирована на {run_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        # Мгновенно обновляем все затронутые таблицы
+        get_cached_sheet_data(context, SHEET_REPORT, force_update=True)
+        get_cached_sheet_data(context, SHEET_EXPENSES, force_update=True)
+        get_cached_sheet_data(context, "Сейф", force_update=True)
+        get_cached_sheet_data(context, SHEET_INVENTORY, force_update=True)
+        get_cached_sheet_data(context, SHEET_SALARIES, force_update=True)
         clear_plan_for_date(today_str)
         
 
@@ -6475,6 +6484,8 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         # --- Снимаем блокировку и очищаем состояние ---
         context.user_data.pop('is_processing_supplier', None)
+        get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True)
+        get_cached_sheet_data(context, SHEET_DEBTS, force_update=True)
         context.user_data.pop('supplier', None)
             
 async def add_shift(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -6929,7 +6940,9 @@ async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_in
             context.bot_data.pop(SHEET_DEBTS, None)
             context.bot_data.pop(SHEET_SUPPLIERS, None)
             context.bot_data.pop("Сейф", None)
-        
+        get_cached_sheet_data(context, SHEET_DEBTS, force_update=True)
+        get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True)
+        get_cached_sheet_data(context, "Сейф", force_update=True)
         await query.answer(f"✅ Долг для {supplier_name} успешно закрыт!", show_alert=True)
         # Показываем обновленный список долгов
         await view_repayable_debts(update, context)
