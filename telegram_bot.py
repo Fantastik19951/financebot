@@ -6885,26 +6885,21 @@ async def view_repayable_debts(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.message.edit_text(msg, parse_mode='HTML', reply_markup=InlineKeyboardMarkup(kb))
 
 async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_index: int):
-    """
-    Окончательно закрывает долг с защитой от двойного нажатия 
-    и промежуточным сообщением о статусе.
-    """
-    # --- НАЧАЛО БЛОКА ЗАЩИТЫ ---
+    """Окончательно закрывает долг, обновляя все связанные таблицы и кэш."""
+    query = update.callback_query
+    
+    # --- (Блок защиты от двойного нажатия остается без изменений) ---
     if context.user_data.get('is_processing_payment', False):
-        await update.callback_query.answer("⏳ Операция уже выполняется, пожалуйста, подождите...", show_alert=True)
+        await query.answer("⏳ Операция уже выполняется...", show_alert=True)
         return
     context.user_data['is_processing_payment'] = True
     
-    query = update.callback_query
-    # Сразу отправляем пользователю обратную связь
     await query.message.edit_text("⏳ Происходит погашение долга...")
-    # --- КОНЕЦ БЛОКА ЗАЩИТЫ ---
 
     try:
         ws_debts = GSHEET.worksheet(SHEET_DEBTS)
         debt_row = ws_debts.row_values(row_index)
         
-        # Проверяем, не был ли долг уже погашен другим запросом
         if len(debt_row) > 6 and debt_row[6].strip().lower() == "да":
             await query.answer("Этот долг уже погашен.", show_alert=True)
             await view_repayable_debts(update, context)
@@ -6916,9 +6911,9 @@ async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_in
         payment_method = debt_row[7] if len(debt_row) > 7 else "Наличные"
 
         if payment_method != "Карта":
-            who = USER_ID_TO_NAME.get(str(query.from_user.id), query.from_user.first_name)
             comment = f"Оплата долга {supplier_name} за {date_created}"
-            add_safe_operation(query.from_user, "Расход", total_to_pay, comment)
+            # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Добавляем 'context' первым аргументом ---
+            add_safe_operation(context, query.from_user, "Расход", total_to_pay, comment)
         else:
             logging.info(f"Погашение карточного долга для {supplier_name}. Сейф не затронут.")
 
@@ -6951,7 +6946,6 @@ async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_in
         get_cached_sheet_data(context, SHEET_SUPPLIERS, force_update=True)
         get_cached_sheet_data(context, "Сейф", force_update=True)
         await query.answer(f"✅ Долг для {supplier_name} успешно закрыт!", show_alert=True)
-        # Показываем обновленный список долгов
         await view_repayable_debts(update, context)
         
     except Exception as e:
@@ -6959,7 +6953,6 @@ async def repay_final(update: Update, context: ContextTypes.DEFAULT_TYPE, row_in
         await query.answer(f"❌ Ошибка обновления таблицы: {e}", show_alert=True)
     
     finally:
-        # --- Снимаем блокировку в любом случае ---
         context.user_data.pop('is_processing_payment', None)
 
     log_action(query.from_user, "Долги", "Погашение долга", f"Поставщик: {supplier_name}, Сумма: {total_to_pay}")
