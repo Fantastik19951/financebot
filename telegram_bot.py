@@ -1483,18 +1483,22 @@ def generate_comparison_chart(stats_data: dict) -> io.BytesIO:
     plt.close(fig)
     return buf
 
+# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 def get_safe_balance(context: ContextTypes.DEFAULT_TYPE):
-    """Считает баланс сейфа, используя кэшированные данные."""
+    """Считает баланс сейфа, корректно работая с кэшем."""
     rows = get_cached_sheet_data(context, "Сейф")
     if rows is None:
         logging.error("Не удалось получить данные для расчета баланса сейфа.")
-        return 0
+        return 0.0
 
-    balance = 0
+    balance = 0.0
     for row in rows:
         try:
             op_type = row[1]
-            amount = float(row[2].replace(',', '.')) if row[2] else 0
+            # --- ИСПРАВЛЕНИЕ: Используем нашу универсальную функцию parse_float ---
+            # Она умеет работать и со строками, и с числами.
+            amount = parse_float(row[2]) if len(row) > 2 else 0.0
+            
             if op_type == "Пополнение":
                 balance += amount
             elif op_type in ["Снятие", "Зарплата", "Расход"]:
