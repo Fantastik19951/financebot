@@ -6412,6 +6412,7 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sum_to_pay = amount_income - amount_return
         
         paid_status, debt_amount, due_date = "Нет", 0, ""
+        debt_pay_type = "" # Инициализируем переменную по умолчанию
 
         if pay_type.startswith("Долг"):
             debt_amount = sum_to_pay
