@@ -2207,7 +2207,7 @@ async def show_task_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg += "\n<i>На сегодня задач нет.</i>"
     else:
         for task in todays_tasks:
-            task_id, text, _, assigned_to, status, who_done = (task + [""] * 7)[:7]
+            task_id, text, _, assigned_to, status, who_done, _ = (task + [""] * 7)[:7]
             
             if status == "Выполнена":
                 btn_text = f"✅ {text} ({who_done})"
