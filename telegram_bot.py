@@ -7660,3 +7660,239 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await repay_final(update, context, int(data.split('_')[2]))
         elif data == "debts_history_start":
             all_logs = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
+            # Сортируем один раз при загрузке
+            context.user_data['debt_history_data'] = sorted(all_logs, key=lambda r: pdate(r[0]) or dt.date.min)
+            context.user_data.pop('debt_filters', None)
+            total_pages = math.ceil(len(all_logs) / 10) if all_logs else 1
+            page = max(0, total_pages - 1)
+            context.user_data['debt_history_page'] = page
+            await show_debt_history_view(update, context)
+        
+        elif data.startswith("debt_page_"):
+            page = int(data.split('_')[-1])
+            context.user_data['debt_history_page'] = page
+            await show_debt_history_view(update, context)
+
+        elif data == "debt_filters_menu":
+            await show_debt_filter_menu(update, context)
+            
+        elif data.startswith("toggle_filter_"):
+            await toggle_debt_filter(update, context)
+            
+        elif data == "apply_debt_filters":
+            context.user_data['debt_history_page'] = 0
+            await show_debt_history_view(update, context)
+        elif data.startswith("archive_supplier_confirm_"):
+            await confirm_archive_supplier(update, context)
+        elif data.startswith("archive_supplier_execute_"):
+            await execute_archive_supplier(update, context)
+        elif data.startswith("unarchive_supplier_confirm_"):
+            await confirm_unarchive_supplier(update, context)
+        elif data.startswith("unarchive_supplier_execute_"):
+            await execute_unarchive_supplier(update, context)
+        
+        elif data == "debt_search_start":
+            context.user_data['search_debt'] = {}
+            await query.message.edit_text("🔎 Введите имя поставщика для поиска в истории долгов:")
+            
+        # --- 10. УПРАВЛЕНИЕ ПЕРСОНАЛОМ (АДМИН) ---
+        elif data.startswith("view_salary_"): await show_seller_salary_details(update, context)
+        elif data.startswith("confirm_payout_"): await confirm_payout(update, context)
+        elif data.startswith("execute_payout_"): await execute_payout(update, context)
+        elif data.startswith("salary_history_"): await show_salary_history(update, context)
+        elif data == "start_expense_flow": await start_expense_flow(update, context)
+        elif data == "view_shifts":
+            await view_shifts_calendar(update, context)
+        elif data == "edit_shifts":
+            await edit_shifts_calendar(update, context)
+        elif data.startswith("shift_nav_"):
+            _, _, year, month = data.split('_')
+        # Определяем, в каком режиме мы были
+        # Мы можем сохранить это в user_data или просто решить по-умолчанию
+        # Для простоты, пусть навигация всегда ведет в режим админа, если он админ
+            if str(query.from_user.id) in ADMINS:
+                await edit_shifts_calendar(update, context, int(year), int(month))
+            else:
+                await view_shifts_calendar(update, context, int(year), int(month))
+        elif data.startswith("edit_shift_"):
+            await edit_single_shift(update, context)
+        elif data.startswith("toggle_seller_"):
+            await toggle_seller_for_shift(update, context)
+        elif data == "save_shift":
+            await save_shift_changes(update, context)
+        elif data.startswith("view_shift_"):
+            await show_shift_details(update, context)
+        elif data == "seller_stats":
+            await show_seller_stats_menu(update, context)
+        elif data.startswith("view_seller_stats_"):
+            await show_seller_stats(update, context)
+        elif data == "compare_sellers": await show_sellers_comparison(update, context)
+        elif data == "withdraw_salary":
+            await withdraw_daily_salary(update, context)
+        elif data == "analytics_expense_pie_chart":
+            await show_expense_pie_chart_menu(update, context)
+        elif data.startswith("exp_chart_period_"):
+            await process_expense_chart_period(update, context)
+        elif data == "analytics_financial_dashboard":
+            await show_financial_dashboard_menu(update, context)
+        elif data.startswith("fin_dash_period_"): # Используем новый префикс для избежания путаницы
+             await process_financial_dashboard_period(update, context)
+        elif data.startswith("custom_period_"):
+            await start_custom_period_analytics(update, context)
+        elif data.startswith("shift_protocol_"):
+            await generate_shift_protocol(update, context)
+        elif data.startswith("start_report_fix_"):
+            await start_report_fix(update, context)
+        elif data.startswith("report_fix_mode_"):
+            await select_field_for_fix(update, context)
+        elif data.startswith("report_fix_field_"):
+            await prompt_for_report_fix_value(update, context)
+
+    
+        # --- 11. СЕЙФ И ОСТАТОК ---
+        elif data == "inventory_balance": await show_inventory_balance_with_dynamics(update, context)
+        elif data == "safe_balance": await safe_balance(update, context)
+        elif data.startswith("safe_history"):
+            page = 0
+            # Если это самый первый вызов (без номера страницы), то вычисляем последнюю страницу
+            if data == "safe_history":
+                rows = get_cached_sheet_data(context, "Сейф") or []
+                total_pages = math.ceil(len(rows) / 10)
+                page = max(0, total_pages - 1)
+            else: # Если это навигация по страницам, берем номер из кнопки
+                try:
+                    page = int(data.split('_')[-1])
+                except (ValueError, IndexError):
+                    page = 0
+            await safe_history(update, context, page=page)
+            
+        elif data.startswith("inventory_history"):
+            page = 0
+            # Аналогичная логика для истории остатка
+            if data == "inventory_history":
+                rows = get_cached_sheet_data(context, SHEET_INVENTORY) or []
+                total_pages = math.ceil(len(rows) / 10)
+                page = max(0, total_pages - 1)
+            else:
+                try:
+                    page = int(data.split('_')[-1])
+                except (ValueError, IndexError):
+                    page = 0
+            await inventory_history(update, context, page=page)
+
+        elif data == "safe_deposit": await start_safe_deposit(update, context)
+        elif data == "safe_withdraw": await start_safe_withdraw(update, context)
+        elif data == "add_inventory_expense": await start_inventory_expense(update, context)
+        elif data == "admin_revision":
+            await show_revision_menu(update, context)
+        elif data == "start_new_revision":
+            await start_revision(update, context)
+
+        elif data.startswith("revision_history"):
+            page = 0
+            # Если это первый вызов (без номера страницы), вычисляем последнюю страницу
+            if data == "revision_history":
+                rows = get_cached_sheet_data(context, "Переучеты") or []
+                total_pages = math.ceil(len(rows) / 10)
+                page = max(0, total_pages - 1)
+            else: # Если это навигация, берем номер из кнопки
+                try:
+                    page = int(data.split('_')[-1])
+                except (ValueError, IndexError):
+                    page = 0
+            await show_revision_history(update, context, page=page)
+        elif data == "start_expense_flow":
+            # Эта функция сама определит, кто нажал на кнопку
+            await start_expense_flow(update, context)
+        elif data.startswith("expense_history"):
+            page = 0
+            # Если это первый вызов (без номера страницы), вычисляем последнюю страницу
+            if data == "expense_history":
+                rows = get_cached_sheet_data(context, SHEET_EXPENSES) or []
+                total_pages = math.ceil(len(rows) / 10)
+                page = max(0, total_pages - 1)
+            else: # Если это навигация, берем номер из кнопки
+                try:
+                    page = int(data.split('_')[-1])
+                except (ValueError, IndexError):
+                    page = 0
+            await show_expense_history(update, context, page=page)
+        elif data.startswith("exp_pay_type_"): await handle_admin_expense_pay_type(update, context)
+        
+        elif data == "staff_management": await staff_management_menu(update, context)
+
+        # --- 12. ПРОЧЕЕ ---
+        elif data == "staff_my_salary":
+            await show_my_salary(update, context)
+        elif data == "staff_my_schedule":
+            await show_my_schedule(update, context)
+        elif data == "analytics_insights":
+            # Просто вызываем существующую функцию, она все сделает
+            await show_business_insights(update, context)
+        elif data == "settings_system": # Для админских настроек
+            await query.message.edit_text("🔐 Системные настройки:", reply_markup=admin_system_settings_kb())
+        elif data == "action_log": await show_log_categories_menu(update, context)
+        elif data.startswith("log_view_"):
+            parts = data.split('_')
+            category = parts[2]
+            page = 0
+
+            # Если в данных кнопки нет номера страницы (len < 4), значит это первый клик
+            if len(parts) < 4:
+                # Вычисляем номер последней страницы
+                all_logs = get_cached_sheet_data(context, SHEET_LOG) or []
+                filtered_logs = [row for row in all_logs if len(row) > 3 and row[3] == category]
+                total_pages = math.ceil(len(filtered_logs) / 10)
+                page = max(0, total_pages - 1) # Устанавливаем последнюю страницу
+            else:
+                # Если это навигация, берем номер страницы из кнопки
+                page = int(parts[3])
+            
+            await show_log_for_category(update, context, category=category, page=page)
+
+        elif data == "noop": pass
+        else:
+            await query.answer("Команда не реализована.", show_alert=True)
+
+    except Exception as e:
+        logging.error(f"Ошибка обработки callback: {data}. Ошибка: {e}", exc_info=True)
+        await context.bot.send_message(chat_id=update.effective_chat.id, text=f"❌ Произошла критическая ошибка: {e}")
+        
+async def error_handler(update, context):
+    import traceback
+    tb = traceback.format_exc()
+    logging.error(f"Exception: {tb}")
+    if update and hasattr(update, "effective_chat") and update.effective_chat:
+        await context.bot.send_message(
+            chat_id=update.effective_chat.id,
+            text=f"❌ Произошла ошибка!\n<pre>{tb}</pre>",
+            parse_mode="HTML"
+        )
+
+
+
+
+# --- ЗАПУСК ---
+def main():
+    """Главная функция для настройки и запуска бота."""
+    
+    # 1. Создаем приложение
+    app = ApplicationBuilder().token(TOKEN).build()
+    
+    # 4. Регистрируем все обработчики (как и раньше)
+    app.add_handler(CallbackQueryHandler(cancel_report, pattern="^cancel_report$"))
+    app.add_handler(CommandHandler("cancel", cancel))
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Regex(r'(?i)^сейф$'), quick_safe_balance))
+    app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_error_handler(error_handler)
+    
+    logging.info("Бот запущен и готов к работе!")
+
+    # 5. Запускаем бота (этот метод сам справится с асинхронностью)
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
