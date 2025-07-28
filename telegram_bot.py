@@ -48,11 +48,12 @@ SHEET_DEBTS = "Долги"
 SHEET_SALARIES = "Зарплаты"
 SHEET_PLAN_FACT = "ПланФактНаЗавтра" 
 SHEET_PLANNING_SCHEDULE = "ПланированиеПоставщиков"
+SHEET_TASKS = "Задачи"
 SHEET_INVENTORY = "Остаток магазина"
 DIALOG_KEYS = [
     'report', 'supplier', 'planning', 'edit_plan', 'edit_invoice',
     'revision', 'search_debt', 'safe_op', 'inventory_expense', 
-    'repay', 'shift', 'report_period', 'admin_expense', 'custom_analytics_period', 'supplier_edit', 'seller_expense', 'supplier_edit', 'report_fix'
+    'repay', 'shift', 'report_period', 'admin_expense', 'custom_analytics_period', 'supplier_edit', 'seller_expense', 'supplier_edit', 'report_fix', 'new_task'
 ]
 
 
@@ -1016,6 +1017,7 @@ def get_gsheet():
             SHEET_SHIFTS: ['Дата', 'Продавец 1', 'Продавец 2'],
             SHEET_DEBTS: ['Дата', 'Поставщик', 'Сумма', 'Оплачено', 'Остаток', 'Срок погашения', 'Погашено', 'Тип оплаты'],
             SHEET_PLANNING_SCHEDULE: ["День недели", "Поставщик"],
+            SHEET_TASKS: ["ID Задачи", "Текст", "Дата и время", "Кому", "Статус", "Кто и когда выполнил", "ID Напоминания"],
             SHEET_PLAN_FACT: ["Дата", "Поставщик", "Сумма", "Тип оплаты", "Кто заполнил", "Статус"],
             "Переучеты": ["Дата", "Расчетная сумма", "Фактическая сумма", "Разница", "Комментарий", "Кто внёс"],
         }
@@ -1077,7 +1079,6 @@ def log_action(user: Update.effective_user, category: str, action: str, comment:
         logging.error(f"Ошибка логирования: {e}")
         
 
-# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 def get_suppliers_for_day(context: ContextTypes.DEFAULT_TYPE, day_of_week: str):
     """Получает список поставщиков на день, ИСПОЛЬЗУЯ КЭШ."""
     try:
@@ -2177,6 +2178,217 @@ async def show_financial_dashboard_menu(update: Update, context: ContextTypes.DE
         "🧮 Пожалуйста, выберите период для финансового отчета:",
         reply_markup=analytics_period_kb() # Используем существующую клавиатуру
     )
+
+# --- НОВЫЙ БЛОК: УПРАВЛЕНИЕ ЗАДАЧАМИ ---
+
+def task_menu_kb(is_admin=False):
+    """Создает клавиатуру для меню задач."""
+    kb = []
+    if is_admin:
+        kb.append([InlineKeyboardButton("➕ Новая задача", callback_data="start_new_task")])
+    kb.append([InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")])
+    return InlineKeyboardMarkup(kb)
+
+async def show_task_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает список задач на сегодня."""
+    query = update.callback_query
+    await query.message.edit_text("📋 Загружаю задачи на сегодня...")
+
+    today_str = sdate()
+    tasks = get_cached_sheet_data(context, SHEET_TASKS) or []
+    
+    todays_tasks = [row for row in tasks if len(row) > 2 and pdate(row[2].split()[0]) == pdate(today_str)]
+
+    msg = f"<b>📋 Задачи на сегодня ({today_str}):</b>\n"
+    kb = []
+
+    if not todays_tasks:
+        msg += "\n<i>На сегодня задач нет.</i>"
+    else:
+        for task in todays_tasks:
+            task_id, text, _, assigned_to, status, who_done = (task + [""] * 7)[:7]
+            
+            if status == "Выполнена":
+                btn_text = f"✅ {text} ({who_done})"
+                kb.append([InlineKeyboardButton(btn_text, callback_data="noop")])
+            else:
+                btn_text = f"⚪️ {text} (кому: {assigned_to})"
+                kb.append([InlineKeyboardButton(btn_text, callback_data=f"mark_task_done_{task_id}")])
+
+    # Добавляем кнопки управления в конец
+    is_admin = str(query.from_user.id) in ADMINS
+    if is_admin:
+        kb.append([InlineKeyboardButton("➕ Новая задача", callback_data="start_new_task")])
+    kb.append([InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")])
+
+    await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+async def start_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает диалог создания новой задачи."""
+    query = update.callback_query
+    context.user_data['new_task'] = {'step': 'text', 'sellers': []}
+    await query.message.edit_text("✍️ Введите текст новой задачи:")
+
+async def handle_task_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает ввод текста задачи и переходит к выбору исполнителей."""
+    context.user_data['new_task']['text'] = update.message.text
+    context.user_data['new_task']['step'] = 'sellers'
+    
+    kb = []
+    for seller in SELLERS:
+        kb.append([InlineKeyboardButton(f"⚪️ {seller}", callback_data=f"toggle_task_seller_{seller}")])
+    
+    kb.append([InlineKeyboardButton("✅ Далее", callback_data="task_sellers_done")])
+    await update.message.reply_text("👥 Выберите, кому предназначена задача (можно нескольким):", reply_markup=InlineKeyboardMarkup(kb))
+
+async def toggle_task_seller(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Добавляет/убирает продавца из списка исполнителей задачи."""
+    query = update.callback_query
+    seller_name = query.data.split('_')[-1]
+    
+    task_data = context.user_data['new_task']
+    selected_sellers = task_data.get('sellers', [])
+
+    if seller_name in selected_sellers:
+        selected_sellers.remove(seller_name)
+    else:
+        selected_sellers.append(seller_name)
+    
+    kb = []
+    for seller in SELLERS:
+        icon = "✅" if seller in selected_sellers else "⚪️"
+        kb.append([InlineKeyboardButton(f"{icon} {seller}", callback_data=f"toggle_task_seller_{seller}")])
+    
+    kb.append([InlineKeyboardButton("✅ Далее", callback_data="task_sellers_done")])
+    await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(kb))
+
+async def show_task_date_calendar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает календарь для выбора даты задачи."""
+    query = update.callback_query
+    # Сохраняем выбранных продавцов
+    context.user_data['new_task']['step'] = 'date'
+    
+    # Используем уже существующий календарь, но с другими колбэками
+    kb = generate_planning_calendar_keyboard(dt.date.today().year, dt.date.today().month)
+    # Заменяем колбэки на нужные нам
+    for row in kb.inline_keyboard:
+        for button in row:
+            if button.callback_data.startswith("plan_nav_"):
+                button.callback_data = button.callback_data.replace("plan_nav_", "task_date_select_")
+
+    await query.message.edit_text("🗓️ Выберите дату для напоминания (максимум на неделю вперед):", reply_markup=kb)
+
+async def show_task_time_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню выбора времени и обрабатывает ручной ввод."""
+    query = update.callback_query
+    date_str = query.data.split('_')[-1]
+    context.user_data['new_task']['date'] = date_str
+    context.user_data['new_task']['step'] = 'time'
+
+    kb = []
+    # Создаем кнопки с часами
+    for hour in range(8, 21, 2): # с 8 до 20 с шагом в 2 часа
+        kb.append([
+            InlineKeyboardButton(f"{hour:02d}:00", callback_data=f"task_time_select_{hour:02d}:00"),
+            InlineKeyboardButton(f"{hour+1:02d}:00", callback_data=f"task_time_select_{hour+1:02d}:00")
+        ])
+    
+    await query.message.edit_text(
+        "⏰ Выберите время напоминания или введите его вручную (например, `11:40` или `11 40`):",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
+async def save_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохраняет новую задачу и планирует уведомление."""
+    time_str = ""
+    if update.callback_query: # Если нажата кнопка
+        time_str = update.callback_query.data.split('_')[-1]
+    else: # Если введен текст
+        text = update.message.text.replace(' ', ':').replace(',', ':')
+        parts = text.split(':')
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            time_str = f"{int(parts[0]):02d}:{int(parts[1]):02d}"
+        else:
+            return await update.message.reply_text("❌ Неверный формат времени. Введите ЧЧ:ММ.")
+
+    task_data = context.user_data['new_task']
+    date_str = task_data['date']
+    
+    # Собираем полную дату и время
+    try:
+        dt_str = f"{date_str} {time_str}"
+        kiev_tz = pytz.timezone('Europe/Kiev')
+        run_time = kiev_tz.localize(dt.datetime.strptime(dt_str, f"{DATE_FMT} %H:%M"))
+    except ValueError:
+        return await update.message.reply_text("❌ Ошибка в дате или времени.")
+    
+    # Сохраняем в таблицу
+    task_id = str(uuid.uuid4())[:8] # Уникальный ID
+    job_id = f"task_reminder_{task_id}"
+    
+    row_data = [
+        task_id, task_data['text'], run_time.strftime(f"{DATE_FMT} %H:%M"),
+        ", ".join(task_data['sellers']), "Ожидает", "", job_id
+    ]
+    append_row_and_update_cache(context, SHEET_TASKS, row_data)
+
+    # Планируем уведомление
+    context.job_queue.run_once(send_task_notification, run_time, data=task_id, name=job_id)
+    
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text=f"✅ Задача '{task_data['text']}' создана!\nНапоминание придет {dt_str}.",
+        reply_markup=task_menu_kb(is_admin=True)
+    )
+    context.user_data.pop('new_task', None)
+
+async def mark_task_as_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмечает задачу как выполненную."""
+    query = update.callback_query
+    task_id = query.data.split('_')[-1]
+    who = USER_ID_TO_NAME.get(str(query.from_user.id), query.from_user.first_name)
+    
+    ws = GSHEET.worksheet(SHEET_TASKS)
+    cell = ws.find(task_id)
+    if not cell:
+        return await query.answer("❌ Задача не найдена (возможно, уже удалена).", show_alert=True)
+        
+    # Обновляем статус и исполнителя
+    ws.update_cell(cell.row, 5, "Выполнена")
+    ws.update_cell(cell.row, 6, f"{who} в {now()}")
+    
+    # Отменяем запланированное уведомление
+    job_id = ws.cell(cell.row, 7).value
+    current_jobs = context.job_queue.get_jobs_by_name(job_id)
+    if current_jobs:
+        for job in current_jobs:
+            job.schedule_removal()
+        logging.info(f"Уведомление для задачи {job_id} отменено.")
+
+    get_cached_sheet_data(context, SHEET_TASKS, force_update=True)
+    await query.answer("✅ Задача отмечена как выполненная!")
+    await show_task_menu(update, context)
+
+async def send_task_notification(context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет уведомление о задаче."""
+    task_id = context.job.data
+    tasks = get_cached_sheet_data(context, SHEET_TASKS) or []
+    
+    task_info = next((row for row in tasks if row and row[0] == task_id), None)
+    if not task_info or task_info[4] == "Выполнена":
+        logging.info(f"Уведомление для задачи {task_id} не отправлено (уже выполнена или удалена).")
+        return
+
+    text, assigned_to_str = task_info[1], task_info[3]
+    assigned_users = [name.strip() for name in assigned_to_str.split(',')]
+    
+    msg = f"❗️ НАПОМИНАНИЕ О ЗАДАЧЕ ❗️\n\n<b>{text}</b>"
+    
+    # Рассылаем всем, кому была назначена задача
+    for user_id, user_name in USER_ID_TO_NAME.items():
+        if user_name in assigned_users:
+            await context.bot.send_message(chat_id=user_id, text=msg, parse_mode=ParseMode.HTML)
 
 
 async def show_financial_dashboard_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3559,6 +3771,7 @@ def main_kb(is_admin=False):
     kb = [
         [InlineKeyboardButton("💼 Работа с остатком и сейфом", callback_data="stock_safe_menu")],
         [InlineKeyboardButton("📊 Работа со сменой", callback_data="finance_menu")],
+        [InlineKeyboardButton("🗒️ Задачи на день", callback_data="task_menu")], 
         [InlineKeyboardButton("👥 Меню продавцов", callback_data="staff_menu")],
         [InlineKeyboardButton("📦 Поставщики", callback_data="suppliers_menu"),
          InlineKeyboardButton("🏦 Долги", callback_data="debts_menu")],
@@ -7289,6 +7502,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if step == 'amount': return await handle_seller_expense_amount(update, context)
         elif step == 'comment': return await save_seller_expense(update, context)
 
+    elif state_key == 'new_task':
+        step = user_data['new_task'].get('step')
+        if step == 'text': return await handle_task_text(update, context)
+        elif step == 'time': return await save_new_task(update, context)
+
     elif state_key == 'admin_expense':
         step = user_data['admin_expense'].get('step')
         if step == 'amount': return await handle_admin_expense_amount(update, context)
@@ -7739,6 +7957,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
              await process_financial_dashboard_period(update, context)
         elif data.startswith("custom_period_"):
             await start_custom_period_analytics(update, context)
+        elif data == "task_menu":
+            await show_task_menu(update, context)
+        elif data == "start_new_task":
+            await start_new_task(update, context)
+        elif data.startswith("toggle_task_seller_"):
+            await toggle_task_seller(update, context)
+        elif data == "task_sellers_done":
+            await show_task_date_calendar(update, context)
+        elif data.startswith("task_date_select_"):
+            await show_task_time_menu(update, context)
+        elif data.startswith("task_time_select_"):
+            await save_new_task(update, context)
+        elif data.startswith("mark_task_done_"):
+            await mark_task_as_done(update, context)
         elif data.startswith("shift_protocol_"):
             await generate_shift_protocol(update, context)
         elif data.startswith("start_report_fix_"):
