@@ -7640,14 +7640,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await repay_confirm(update, context, int(data.split('_')[2]))
         elif data.startswith("repay_final_"):
             await repay_final(update, context, int(data.split('_')[2]))
+        
         elif data == "debts_history_start":
             all_logs = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
-            # Сортируем один раз при загрузке
+            # Сортируем по дате создания, чтобы самые новые были в конце
             context.user_data['debt_history_data'] = sorted(all_logs, key=lambda r: pdate(r[0]) or dt.date.min)
             context.user_data.pop('debt_filters', None)
+            
             total_pages = math.ceil(len(all_logs) / 10) if all_logs else 1
             page = max(0, total_pages - 1)
             context.user_data['debt_history_page'] = page
+            
             await show_debt_history_view(update, context)
         
         elif data.startswith("debt_page_"):
@@ -7662,8 +7665,31 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await toggle_debt_filter(update, context)
             
         elif data == "apply_debt_filters":
-            context.user_data['debt_history_page'] = 0
+            # Применяя фильтр, всегда переходим на последнюю страницу отфильтрованного списка
+            all_logs = context.user_data.get('debt_history_data', [])
+            filters = context.user_data.get('debt_filters', {})
+            
+            # Применяем фильтры для расчета
+            filtered_logs = all_logs
+            if statuses := filters.get('status'):
+                if "Оплаченные" in statuses and "Неоплаченные" not in statuses:
+                    filtered_logs = [r for r in filtered_logs if len(r) > 6 and r[6].lower() == 'да']
+                elif "Неоплаченные" in statuses and "Оплаченные" not in statuses:
+                    filtered_logs = [r for r in filtered_logs if len(r) > 6 and r[6].lower() != 'да']
+            if pay_types := filters.get('pay_type'):
+                filtered_logs = [r for r in filtered_logs if (r[7] or "Наличные") in pay_types]
+            if filters.get('date_range') == 'last_week':
+                today = dt.date.today()
+                start_of_week = today - dt.timedelta(days=today.weekday())
+                filtered_logs = [r for r in filtered_logs if pdate(r[0]) >= start_of_week]
+            
+            total_pages = math.ceil(len(filtered_logs) / 10) if filtered_logs else 1
+            page = max(0, total_pages - 1)
+            context.user_data['debt_history_page'] = page
+            
             await show_debt_history_view(update, context)
+            
+        
         elif data.startswith("archive_supplier_confirm_"):
             await confirm_archive_supplier(update, context)
         elif data.startswith("archive_supplier_execute_"):
