@@ -1944,7 +1944,7 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
             op_type = "Расход"
             comment = f"{comment_prefix} (оплата из кассы)"
         
-        add_safe_operation(query.from_user, op_type, abs(safe_adjustment), comment)
+        add_safe_operation(context, query.from_user, op_type, abs(safe_adjustment), comment)
 
 
         
@@ -3030,7 +3030,7 @@ async def execute_delete_invoice(update: Update, context: ContextTypes.DEFAULT_T
     try:
         # Откат сейфа, если была оплата наличными
         if pay_type == "Наличные":
-            add_safe_operation(user, "Пополнение", to_pay, f"Отмена оплаты по удаленной накладной от {invoice_date} ({supplier_name})")
+            add_safe_operation(context, user, "Пополнение", to_pay, f"Отмена оплаты по удаленной накладной от {invoice_date} ({supplier_name})")
 
         # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Добавляем 'who' в вызов функции ---
         add_inventory_operation("Корректировка", -markup_amount, f"Удаление накладной от {invoice_date} ({supplier_name})", who)
@@ -4207,7 +4207,7 @@ async def save_seller_expense(update: Update, context: ContextTypes.DEFAULT_TYPE
     who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
     
     # 1. Списываем деньги из сейфа
-    add_safe_operation(user, "Расход", amount, f"Расход продавца: {comment}")
+    add_safe_operation(context, user, "Расход", amount, f"Расход продавца: {comment}")
     
     # 2. Записываем в таблицу расходов
     ws_exp = GSHEET.worksheet(SHEET_EXPENSES)
@@ -5703,7 +5703,7 @@ async def execute_report_fix(update: Update, context: ContextTypes.DEFAULT_TYPE)
             # Если выручка по наличности увеличилась, это Пополнение сейфа, и наоборот
             if cash_diff != 0:
                 op_type = "Пополнение" if cash_diff > 0 else "Расход"
-                add_safe_operation(user, op_type, abs(cash_diff), comment)
+                add_safe_operation(context, user, op_type, abs(cash_diff), comment)
 
             # Если общая выручка увеличилась, это Продажа, и остаток УМЕНЬШАЕТСЯ
             if total_sales_diff != 0:
@@ -6418,8 +6418,6 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
             debt_amount = sum_to_pay
             due_date_obj = supplier_data.get('due_date')
             due_date = sdate(due_date_obj) if due_date_obj else ""
-            debt_row = [sdate(), supplier_data['name'], sum_to_pay, 0, sum_to_pay, due_date, "Нет", debt_pay_type]
-            append_row_and_update_cache(context, SHEET_DEBTS, debt_row)
         else:
             paid_status = "Да"
             if pay_type == "Наличные":
@@ -6432,14 +6430,12 @@ async def save_supplier(update: Update, context: ContextTypes.DEFAULT_TYPE):
             supplier_data.get('comment', ''), who, ""
         ]
         
-        ws_sup = GSHEET.worksheet(SHEET_SUPPLIERS)
         append_row_and_update_cache(context, SHEET_SUPPLIERS, row_to_save)
         log_action(user, "Накладные", "Создание накладной", f"Поставщик: {supplier_data['name']}, Приход: {amount_income:.2f}₴")
         
-
+        # --- ОСТАЕТСЯ ТОЛЬКО ЭТОТ, ПРАВИЛЬНЫЙ БЛОК ДЛЯ ДОЛГОВ ---
         if pay_type.startswith("Долг"):
             debt_pay_type = "Карта" if "(Карта)" in pay_type else "Наличные"
-            ws_debts = GSHEET.worksheet(SHEET_DEBTS)
             debt_row = [sdate(), supplier_data['name'], sum_to_pay, 0, sum_to_pay, due_date, "Нет", debt_pay_type]
             append_row_and_update_cache(context, SHEET_DEBTS, debt_row)
 
