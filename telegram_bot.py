@@ -2205,6 +2205,24 @@ def build_task_keyboard(tasks: list, is_admin: bool):
     kb.append([InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")])
     return InlineKeyboardMarkup(kb)
 
+async def confirm_mark_task_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню подтверждения перед выполнением задачи."""
+    query = update.callback_query
+    task_id = query.data.split('_')[-1]
+    
+    tasks = get_cached_sheet_data(context, SHEET_TASKS) or []
+    task_text = next((row[1] for row in tasks if row and row[0] == task_id), "Неизвестная задача")
+
+    kb = [
+        [InlineKeyboardButton("✅ Да, выполнить", callback_data=f"execute_task_done_{task_id}")],
+        [InlineKeyboardButton("❌ Отмена", callback_data="task_menu")]
+    ]
+    await query.message.edit_text(
+        f"Вы уверены, что хотите отметить задачу \"<b>{task_text}</b>\" как выполненную?",
+        parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
 async def show_task_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает список задач на сегодня с учетом прав доступа."""
     query = update.callback_query
@@ -2335,9 +2353,9 @@ async def save_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text=f"✅ Задача '{task_data['text']}' создана!\nНапоминание придет {dt_str}."
     )
     context.user_data.pop('new_task', None)
-    await main_menu(update, context)
+    await start(update, context)
 
-async def mark_task_as_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def execute_mark_task_as_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмечает задачу как выполненной и уведомляет создателя."""
     query = update.callback_query
     task_id = query.data.split('_')[-1]
@@ -2373,9 +2391,19 @@ async def mark_task_as_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await show_task_menu(update, context)
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def send_task_notification(context: ContextTypes.DEFAULT_TYPE):
-    """Отправляет уведомление о задаче."""
+    """Отправляет уведомление о задаче, избегая дублей."""
     task_id = context.job.data
+    
+    # --- ЗАЩИТА ОТ ДУБЛИРОВАНИЯ ---
+    notification_key = f"sent_notification_for_task_{task_id}"
+    if context.bot_data.get(notification_key, False):
+        logging.warning(f"Попытка дублирующей отправки уведомления для задачи {task_id}. Отменено.")
+        return
+    context.bot_data[notification_key] = True
+    # --- КОНЕЦ ЗАЩИТЫ ---
+
     tasks = get_cached_sheet_data(context, SHEET_TASKS) or []
     
     task_info = next((row for row in tasks if row and row[0] == task_id), None)
@@ -2386,12 +2414,11 @@ async def send_task_notification(context: ContextTypes.DEFAULT_TYPE):
     assigned_users = [name.strip() for name in assigned_to_str.split(',')]
     
     priority_icon = "🔴" if priority == "Важный" else "⚪️"
-    msg = f"{priority_icon} **НАПОМИНАНИЕ О ЗАДАЧЕ** ❗️\n\n`{text}`"
+    msg = f"{priority_icon} <b>НАПОМИНАНИЕ О ЗАДАЧЕ</b> ❗️\n\n<i>{text}</i>"
     
     for user_id, user_name in USER_ID_TO_NAME.items():
         if user_name in assigned_users:
-            await context.bot.send_message(chat_id=user_id, text=msg, parse_mode=ParseMode.MARKDOWN)
-
+            await context.bot.send_message(chat_id=user_id, text=msg, parse_mode=ParseMode.HTML)
 
 async def show_financial_dashboard_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает меню выбора периода для финансового отчета."""
@@ -8016,7 +8043,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("task_time_select_"):
             await save_new_task(update, context)
         elif data.startswith("mark_task_done_"):
-            await mark_task_as_done(update, context)
+            # Теперь эта кнопка ведет на подтверждение
+            await confirm_mark_task_done(update, context)
+        elif data.startswith("execute_task_done_"):
+    # А эта кнопка уже выполняет действие
+            await execute_mark_task_as_done(update, context)
         elif data.startswith("shift_protocol_"):
             await generate_shift_protocol(update, context)
         elif data.startswith("start_report_fix_"):
