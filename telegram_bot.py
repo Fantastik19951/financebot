@@ -6510,7 +6510,7 @@ async def handle_supplier_writeoff_amount(update: Update, context: ContextTypes.
             supplier_name = context.user_data['supplier'].get('name', 'Неизвестный')
             user = update.effective_user
             who = USER_ID_TO_NAME.get(str(user.id), user.first_name)
-            add_inventory_operation("Списание", writeoff_amount, f"Списание по накладной от {supplier_name}", who)
+            add_inventory_operation(context, "Списание", writeoff_amount, f"Списание по накладной от {supplier_name}", who)
             await update.message.reply_text(f"✅ Сумма {writeoff_amount:.2f}₴ списана с остатка магазина.")
 
         await _ask_for_invoice_markup(update, context)
