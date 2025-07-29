@@ -2371,8 +2371,9 @@ async def save_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 async def confirm_mark_task_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает меню подтверждения с деталями задачи."""
+    """Показывает меню подтверждения перед выполнением задачи."""
     query = update.callback_query
     task_id = query.data.split('_')[-1]
     
@@ -2380,10 +2381,14 @@ async def confirm_mark_task_done(update: Update, context: ContextTypes.DEFAULT_T
     task_info = next((row for row in tasks if row and row[0] == task_id), None)
 
     if not task_info:
-        return await query.answer("❌ Задача не найдена.", show_alert=True)
+        return await query.answer("❌ Задача не найдена (возможно, уже удалена).", show_alert=True)
 
-    text, _, datetime_str, assigned_to, _, _, _ = (task_info + [""] * 8)[:8]
-
+    # --- ИСПРАВЛЕНИЕ: Надежно получаем данные по индексам ---
+    # [1] - Текст, [3] - Дата и время, [4] - Кому
+    text = task_info[1]
+    datetime_str = task_info[3]
+    assigned_to = task_info[4]
+    
     msg = (f"<b>Подтвердите выполнение задачи:</b>\n\n"
            f"<b>Текст:</b> {text}\n"
            f"<b>Исполнители:</b> {assigned_to}\n"
