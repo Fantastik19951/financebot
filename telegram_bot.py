@@ -2229,6 +2229,20 @@ async def show_task_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=build_task_keyboard(todays_tasks, is_admin))
 
+# --- ДОБАВЬТЕ ЭТУ НОВУЮ ФУНКЦИЮ ---
+def find_next_shift_for_seller(context: ContextTypes.DEFAULT_TYPE, seller_name: str, start_date: dt.date) -> dt.date | None:
+    """Ищет следующую рабочую дату для продавца, начиная с указанной даты."""
+    shifts = get_cached_sheet_data(context, SHEET_SHIFTS) or []
+    
+    # Ищем в пределах следующих 30 дней
+    for i in range(31):
+        check_date = start_date + dt.timedelta(days=i)
+        check_date_str = sdate(check_date)
+        for row in shifts:
+            if len(row) > 1 and row[0] == check_date_str and seller_name in row[1:]:
+                return check_date
+    return None
+
 async def start_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Начинает диалог создания новой задачи."""
     query = update.callback_query
@@ -2502,8 +2516,9 @@ async def snooze_task_reminder(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # Логику переноса на следующую смену добавим позже, она требует доступа к графику.
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def daily_task_cleanup(context: ContextTypes.DEFAULT_TYPE):
-    """Ежедневная задача: удаляет выполненные вчерашние задачи и переносит невыполненные."""
+    """Ежедневная задача: удаляет выполненные вчерашние задачи и УМНО переносит невыполненные."""
     logging.info("TASK_CLEANUP: Запущена ежедневная очистка задач.")
     
     today = dt.date.today()
@@ -2521,8 +2536,22 @@ async def daily_task_cleanup(context: ContextTypes.DEFAULT_TYPE):
                 status = row[6]
                 if status == "Выполнена":
                     rows_to_delete.append(i)
-                else:
-                    new_datetime_str = f"{sdate(today)} 20:00"
+                else: # Если не выполнена
+                    assigned_sellers = [name.strip() for name in row[4].split(',')]
+                    if not assigned_sellers: continue
+
+                    # Ищем следующую смену для ПЕРВОГО исполнителя в списке
+                    first_seller = assigned_sellers[0]
+                    next_shift_date = find_next_shift_for_seller(context, first_seller, today)
+                    
+                    # Если смена найдена, переносим на 9 утра того дня. Если нет - на 20:00 сегодня.
+                    if next_shift_date:
+                        new_datetime_str = f"{sdate(next_shift_date)} 09:00"
+                        logging.info(f"Задача {row[0]} для {first_seller} перенесена на следующую смену: {new_datetime_str}")
+                    else:
+                        new_datetime_str = f"{sdate(today)} 20:00"
+                        logging.info(f"Следующая смена для {first_seller} не найдена. Задача {row[0]} перенесена на сегодня на вечер.")
+
                     ws.update_cell(i, 4, new_datetime_str)
                     
                     job_id = row[8]
@@ -2533,7 +2562,6 @@ async def daily_task_cleanup(context: ContextTypes.DEFAULT_TYPE):
                     kiev_tz = pytz.timezone('Europe/Kiev')
                     run_time = kiev_tz.localize(dt.datetime.strptime(new_datetime_str, f"{DATE_FMT} %H:%M"))
                     context.job_queue.run_once(send_task_notification, run_time, data=row[0], name=job_id)
-                    logging.info(f"Задача {row[0]} перенесена на {new_datetime_str}")
         except (ValueError, IndexError):
             continue
             
