@@ -2235,6 +2235,7 @@ async def start_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['new_task'] = {'step': 'text', 'sellers': [], 'creator_id': query.from_user.id}
     await query.message.edit_text(
         "✍️ Введите текст новой задачи:",
+        # --- ИЗМЕНЕНИЕ: Добавлена кнопка отмены ---
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="task_menu")]])
     )
 
@@ -2286,12 +2287,21 @@ async def show_task_date_calendar(update: Update, context: ContextTypes.DEFAULT_
     await query.message.edit_text("🗓️ Выберите дату для напоминания (максимум на неделю вперед):", reply_markup=generate_task_calendar_keyboard(year, month))
 
 async def show_task_time_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает меню выбора времени и обрабатывает ручной ввод."""
+    """Показывает меню выбора времени в два столбца."""
     query = update.callback_query
     context.user_data['new_task']['date'] = query.data.split('_')[-1]
     context.user_data['new_task']['step'] = 'time'
 
-    kb = [[InlineKeyboardButton(f"{h:02d}:00", callback_data=f"task_time_select_{h:02d}:00")] for h in range(8, 22)]
+    kb = []
+    # --- ИЗМЕНЕНИЕ: Клавиатура в два столбца ---
+    hours = list(range(8, 22)) # с 8:00 до 21:00
+    for i in range(0, len(hours), 2):
+        row = [
+            InlineKeyboardButton(f"{hours[i]:02d}:00", callback_data=f"task_time_select_{hours[i]:02d}:00")
+        ]
+        if i + 1 < len(hours):
+            row.append(InlineKeyboardButton(f"{hours[i+1]:02d}:00", callback_data=f"task_time_select_{hours[i+1]:02d}:00"))
+        kb.append(row)
     
     await query.message.edit_text(
         "⏰ Выберите время напоминания или введите его вручную (например, `11:40` или `11 40`):",
@@ -2300,17 +2310,27 @@ async def show_task_time_menu(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
 async def save_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Сохраняет новую задачу и планирует уведомление."""
+    """Сохраняет новую задачу, планирует уведомление и немедленно оповещает исполнителей."""
+    query = update.callback_query
+    message = update.message
     time_str = ""
-    if update.callback_query:
-        time_str = update.callback_query.data.split('_')[-1]
-    else:
-        text = update.message.text.replace(' ', ':').replace(',', ':').replace('.', ':')
+
+    if query:
+        time_str = query.data.split('_')[-1]
+    else: # Если введен текст
+        # --- ИЗМЕНЕНИЕ: Удаляем сообщение с кнопками ---
+        if 'last_time_menu_id' in context.user_data['new_task']:
+            try:
+                await context.bot.delete_message(chat_id=message.chat_id, message_id=context.user_data['new_task']['last_time_menu_id'])
+            except BadRequest:
+                pass # Игнорируем, если сообщение уже удалено
+        
+        text = message.text.replace(' ', ':').replace(',', ':').replace('.', ':')
         parts = text.split(':')
         if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
             time_str = f"{int(parts[0]):02d}:{int(parts[1]):02d}"
         else:
-            return await update.message.reply_text("❌ Неверный формат времени. Введите ЧЧ:ММ.")
+            return await message.reply_text("❌ Неверный формат времени. Введите ЧЧ:ММ.")
 
     task_data = context.user_data['new_task']
     date_str = task_data['date']
@@ -2333,14 +2353,16 @@ async def save_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     context.job_queue.run_once(send_task_notification, run_time, data=task_id, name=job_id)
     
+    # --- НОВЫЙ БЛОК: Интерактивное уведомление для исполнителей ---
     notification_text = (f"🔔 **Новая задача для вас**\n\n"
                          f"<b>Задача:</b> {task_data['text']}\n"
                          f"<b>Срок:</b> {date_str} в {time_str}")
+    kb = [[InlineKeyboardButton("✅ Взято в работу", callback_data="delete_this_message")]]
     for seller_name in task_data['sellers']:
         user_id = next((uid for uid, name in USER_ID_TO_NAME.items() if name == seller_name), None)
         if user_id:
-            await context.bot.send_message(chat_id=user_id, text=notification_text, parse_mode=ParseMode.HTML)
-
+            await context.bot.send_message(chat_id=user_id, text=notification_text, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+    
     await context.bot.send_message(
         chat_id=update.effective_chat.id,
         text=f"✅ Задача '{task_data['text']}' создана и отправлена исполнителям."
@@ -2348,23 +2370,30 @@ async def save_new_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.pop('new_task', None)
     await start(update, context)
 
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
 async def confirm_mark_task_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает меню подтверждения перед выполнением задачи."""
+    """Показывает меню подтверждения с деталями задачи."""
     query = update.callback_query
     task_id = query.data.split('_')[-1]
     
     tasks = get_cached_sheet_data(context, SHEET_TASKS) or []
-    task_text = next((row[1] for row in tasks if row and row[0] == task_id), "Неизвестная задача")
+    task_info = next((row for row in tasks if row and row[0] == task_id), None)
+
+    if not task_info:
+        return await query.answer("❌ Задача не найдена.", show_alert=True)
+
+    text, _, datetime_str, assigned_to, _, _, _ = (task_info + [""] * 8)[:8]
+
+    msg = (f"<b>Подтвердите выполнение задачи:</b>\n\n"
+           f"<b>Текст:</b> {text}\n"
+           f"<b>Исполнители:</b> {assigned_to}\n"
+           f"<b>Срок:</b> {datetime_str}")
 
     kb = [
         [InlineKeyboardButton("✅ Да, выполнить", callback_data=f"execute_task_done_{task_id}")],
         [InlineKeyboardButton("❌ Отмена", callback_data="task_menu")]
     ]
-    await query.message.edit_text(
-        f"Вы уверены, что хотите отметить задачу \"<b>{task_text}</b>\" как выполненную?",
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
+    await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
 
 async def execute_mark_task_as_done(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмечает задачу как выполненной и уведомляет создателя."""
@@ -2440,9 +2469,33 @@ async def send_task_notification(context: ContextTypes.DEFAULT_TYPE):
     priority_icon = "🔴" if priority == "Важный" else "⚪️"
     msg = f"{priority_icon} <b>НАПОМИНАНИЕ О ЗАДАЧЕ</b> ❗️\n\n<i>{text}</i>"
     
+    # --- НОВЫЕ КНОПКИ ---
+    kb = [[
+        InlineKeyboardButton("✅ Уже выполнено", callback_data=f"mark_task_done_confirm_{task_id}"),
+        InlineKeyboardButton("⏳ Еще не готово", callback_data=f"snooze_task_{task_id}")
+    ]]
+    
     for user_id, user_name in USER_ID_TO_NAME.items():
         if user_name in assigned_users:
-            await context.bot.send_message(chat_id=user_id, text=msg, parse_mode=ParseMode.HTML)
+            await context.bot.send_message(chat_id=user_id, text=msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
+async def snooze_task_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Переносит напоминание о задаче на 30 минут."""
+    query = update.callback_query
+    task_id = query.data.split('_')[-1]
+    
+    # Удаляем старое уведомление
+    await query.message.delete()
+
+    # Перепланируем
+    new_run_time = dt.datetime.now() + dt.timedelta(minutes=30)
+    job_id = f"task_reminder_{task_id}"
+    context.job_queue.run_once(send_task_notification, new_run_time, data=task_id, name=job_id)
+    
+    await context.bot.send_message(chat_id=query.from_user.id, text=f"✅ Хорошо, я напомню об этой задаче через 30 минут.")
+
+# Логику переноса на следующую смену добавим позже, она требует доступа к графику.
 
 async def daily_task_cleanup(context: ContextTypes.DEFAULT_TYPE):
     """Ежедневная задача: удаляет выполненные вчерашние задачи и переносит невыполненные."""
@@ -8116,6 +8169,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_completed_task_details(update, context)
         elif data == "delete_this_message":
             await query.message.delete()
+        elif data.startswith("snooze_task_"):
+            await snooze_task_reminder(update, context)
         elif data.startswith("shift_protocol_"):
             await generate_shift_protocol(update, context)
         elif data.startswith("start_report_fix_"):
