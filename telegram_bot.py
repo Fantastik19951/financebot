@@ -38,7 +38,7 @@ USER_ID_TO_NAME = {
     "7777240213": "Евгений Тест",
     "7880600411": "Мария"
 }
-SELLERS = ["Сергей", "Наталия", "Людмила", "Мария", "Евгений Тест"]
+SELLERS = ["Сергей", "Наталия", "Людмила", "Мария"]
 ADMIN_CHAT_IDS = [5144039813, 476179186]
 SHEET_REPORT = "Дневные отчёты"
 SHEET_SUPPLIERS = "Поставщики"
@@ -54,7 +54,7 @@ SHEET_INVENTORY = "Остаток магазина"
 DIALOG_KEYS = [
     'report', 'supplier', 'planning', 'edit_plan', 'edit_invoice',
     'revision', 'search_debt', 'safe_op', 'inventory_expense', 
-    'repay', 'shift', 'report_period', 'admin_expense', 'custom_analytics_period', 'supplier_edit', 'seller_expense', 'supplier_edit', 'report_fix', 'new_task'
+    'repay', 'shift', 'report_period', 'admin_expense', 'custom_analytics_period', 'supplier_edit', 'seller_expense', 'supplier_edit', 'report_fix', 'new_task', 'markup_analysis' 
 ]
 
 
@@ -1807,6 +1807,7 @@ async def edit_invoice_start(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.message.edit_text("<b>✏️ Редактирование накладной</b>\n\nВыберите галочками поля, которые хотите изменить, и нажмите 'Сохранить'.",
                                   parse_mode=ParseMode.HTML, reply_markup=kb)
 
+# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 async def show_sales_trend_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает меню выбора периода для графика продаж, корректно обрабатывая сообщения с фото."""
     query = update.callback_query
@@ -1814,12 +1815,18 @@ async def show_sales_trend_menu(update: Update, context: ContextTypes.DEFAULT_TY
     text_to_send = "📈 Пожалуйста, выберите период для построения графика динамики продаж:"
     keyboard = sales_trend_period_kb()
 
+    # --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+    # Пытаемся отредактировать сообщение. Если это не получается (потому что там фото),
+    # то удаляем его и отправляем новое.
     try:
         await query.message.edit_text(text_to_send, reply_markup=keyboard)
-    except BadRequest:
-        # Удаляем старое сообщение с фото
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            await query.answer() # Просто подтверждаем нажатие, если ничего не изменилось
+            return
+            
+        # Если ошибка другая (например, "no text to edit"), удаляем и отправляем заново
         await query.message.delete()
-        # Отправляем новое текстовое сообщение с меню
         await context.bot.send_message(
             chat_id=query.message.chat_id,
             text=text_to_send,
@@ -4225,25 +4232,50 @@ async def save_inventory_expense(update: Update, context: ContextTypes.DEFAULT_T
 # --- НОВЫЙ БЛОК: АНАЛИЗ НАЦЕНКИ ПОСТАВЩИКОВ ---
 
 async def start_markup_analysis_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает меню выбора поставщика для анализа наценки."""
+    """Начинает диалог анализа наценки, запрашивая имя для поиска."""
     query = update.callback_query
-    await query.message.edit_text("⏳ Загружаю список активных поставщиков...")
+    # Устанавливаем состояние для handle_text, чтобы он ожидал ввод
+    context.user_data['markup_analysis'] = {'step': 'search'}
+    await query.message.edit_text(
+        "💰 **Анализ Наценки Поставщиков**\n\n"
+        "Введите имя или часть имени поставщика для анализа:",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]])
+    )
 
-    active_suppliers = get_all_supplier_names(context)
-    if not active_suppliers:
-        return await query.message.edit_text("❌ Нет активных поставщиков для анализа.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_menu")]]))
-
-    kb = [[InlineKeyboardButton(name, callback_data=f"markup_supplier_{name}")] for name in active_suppliers]
-    kb.append([InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")])
+async def handle_markup_supplier_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ищет поставщиков для анализа наценки и предлагает варианты."""
+    search_query = update.message.text.strip()
     
-    await query.message.edit_text("💰 Выберите поставщика для анализа динамики наценки:", reply_markup=InlineKeyboardMarkup(kb))
+    all_suppliers = get_all_supplier_names(context)
+    normalized_query = normalize_text(search_query)
+    matches = [name for name in all_suppliers if normalized_query in normalize_text(name)]
+
+    if not matches:
+        await update.message.reply_text(
+            "🚫 Поставщик не найден. Попробуйте другой запрос.",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]])
+        )
+        return
+
+    kb = []
+    for name in matches[:20]: # Ограничиваем вывод
+        # При нажатии на кнопку переходим к выбору периода
+        kb.append([InlineKeyboardButton(name, callback_data=f"markup_supplier_{name}")])
+    
+    kb.append([InlineKeyboardButton("❌ Отмена", callback_data="analytics_menu")])
+    
+    await update.message.reply_text(
+        "Вот что удалось найти. Выберите правильный вариант:",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
 
 async def handle_markup_supplier_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показывает меню выбора периода для анализа."""
+    """Показывает меню выбора периода для анализа, корректно обрабатывая сообщения с фото."""
     query = update.callback_query
     supplier_name = query.data.split('markup_supplier_')[-1]
     context.user_data['markup_analysis'] = {'supplier': supplier_name}
     
+    text_to_send = f"Выберите период для анализа поставщика '<b>{supplier_name}</b>':"
     kb = [
         [
             InlineKeyboardButton("30 дней", callback_data=f"markup_period_30"),
@@ -4252,7 +4284,24 @@ async def handle_markup_supplier_selection(update: Update, context: ContextTypes
         ],
         [InlineKeyboardButton("🔙 К выбору поставщика", callback_data="analytics_markup_analysis")]
     ]
-    await query.message.edit_text(f"Выберите период для анализа поставщика '<b>{supplier_name}</b>':", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+    markup = InlineKeyboardMarkup(kb)
+
+    try:
+        await query.message.edit_text(text_to_send, parse_mode=ParseMode.HTML, reply_markup=markup)
+    except BadRequest as e:
+        if "Message is not modified" in str(e):
+            await query.answer()
+            return
+        # Если ошибка другая (например, "no text to edit"), удаляем и отправляем заново
+        await query.message.delete()
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=text_to_send,
+            parse_mode=ParseMode.HTML,
+            reply_markup=markup
+        )
+
+
 
 def generate_supplier_markup_analysis(context: ContextTypes.DEFAULT_TYPE, supplier_name: str, days: int) -> tuple[io.BytesIO | None, str]:
     """Анализирует наценку, строит график и формирует текстовый вывод."""
@@ -7839,6 +7888,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await list_suppliers_for_editing(update, context) 
         elif step == 'new_name':
             return await save_edited_supplier_name(update, context)
+
+    elif state_key == 'markup_analysis':
+        step = user_data['markup_analysis'].get('step')
+        if step == 'search':
+            return await handle_markup_supplier_search(update, context)
     
     elif state_key == 'supplier':
         step = user_data['supplier'].get('step')
