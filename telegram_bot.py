@@ -3903,6 +3903,7 @@ def analytics_menu_kb():
         [InlineKeyboardButton("📈 Динамика Продаж", callback_data="analytics_sales_trends")],
         [InlineKeyboardButton("📊 Статистика продавцов", callback_data="seller_stats")],
         [InlineKeyboardButton("📦 ABC-анализ Поставщиков", callback_data="analytics_abc_suppliers")],
+        [InlineKeyboardButton("💰 Анализ Наценки Поставщиков", callback_data="analytics_markup_analysis")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
     
@@ -4221,6 +4222,142 @@ async def save_inventory_expense(update: Update, context: ContextTypes.DEFAULT_T
     
     context.user_data.pop('inventory_expense', None)
 
+# --- НОВЫЙ БЛОК: АНАЛИЗ НАЦЕНКИ ПОСТАВЩИКОВ ---
+
+async def start_markup_analysis_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню выбора поставщика для анализа наценки."""
+    query = update.callback_query
+    await query.message.edit_text("⏳ Загружаю список активных поставщиков...")
+
+    active_suppliers = get_all_supplier_names(context)
+    if not active_suppliers:
+        return await query.message.edit_text("❌ Нет активных поставщиков для анализа.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_menu")]]))
+
+    kb = [[InlineKeyboardButton(name, callback_data=f"markup_supplier_{name}")] for name in active_suppliers]
+    kb.append([InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")])
+    
+    await query.message.edit_text("💰 Выберите поставщика для анализа динамики наценки:", reply_markup=InlineKeyboardMarkup(kb))
+
+async def handle_markup_supplier_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает меню выбора периода для анализа."""
+    query = update.callback_query
+    supplier_name = query.data.split('markup_supplier_')[-1]
+    context.user_data['markup_analysis'] = {'supplier': supplier_name}
+    
+    kb = [
+        [
+            InlineKeyboardButton("30 дней", callback_data=f"markup_period_30"),
+            InlineKeyboardButton("90 дней", callback_data=f"markup_period_90"),
+            InlineKeyboardButton("Год", callback_data=f"markup_period_365")
+        ],
+        [InlineKeyboardButton("🔙 К выбору поставщика", callback_data="analytics_markup_analysis")]
+    ]
+    await query.message.edit_text(f"Выберите период для анализа поставщика '<b>{supplier_name}</b>':", parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+def generate_supplier_markup_analysis(context: ContextTypes.DEFAULT_TYPE, supplier_name: str, days: int) -> tuple[io.BytesIO | None, str]:
+    """Анализирует наценку, строит график и формирует текстовый вывод."""
+    end_date = dt.date.today()
+    start_date = end_date - dt.timedelta(days=days)
+    
+    all_invoices = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
+    supplier_invoices = [row for row in all_invoices if len(row) > 5 and row[1] == supplier_name and (d := pdate(row[0])) and start_date <= d <= end_date]
+    
+    if len(supplier_invoices) < 2:
+        return None, "Недостаточно данных для анализа (нужно минимум 2 накладные за период)."
+
+    dates = []
+    markups = []
+    anomalies = []
+    for row in supplier_invoices:
+        try:
+            to_pay = parse_float(row[4])
+            after_markup = parse_float(row[5])
+            if to_pay > 0:
+                markup = ((after_markup / to_pay) - 1) * 100
+                dates.append(pdate(row[0]))
+                markups.append(markup)
+                if markup < 15: # Пример аномально низкой наценки
+                    anomalies.append({'date': row[0], 'markup': markup})
+        except (ValueError, IndexError):
+            continue
+
+    if not markups:
+        return None, "Не удалось рассчитать наценку ни по одной из накладных."
+
+    # --- Анализ данных ---
+    avg_markup = sum(markups) / len(markups)
+    min_markup = min(markups)
+    max_markup = max(markups)
+    
+    # Простой анализ тренда (сравнение первой и второй половины периода)
+    mid_point = len(markups) // 2
+    first_half_avg = sum(markups[:mid_point]) / mid_point if mid_point > 0 else 0
+    second_half_avg = sum(markups[mid_point:]) / (len(markups) - mid_point) if (len(markups) - mid_point) > 0 else 0
+    trend_diff = second_half_avg - first_half_avg
+    
+    # --- Формирование текста ---
+    msg = f"<b>Анализ наценки для \"{supplier_name}\"</b>\n<i>за последние {days} дней</i>\n\n"
+    msg += f"  • Средняя наценка: <b>{avg_markup:.1f}%</b>\n"
+    msg += f"  • Мин/Макс: {min_markup:.1f}% / {max_markup:.1f}%\n"
+    
+    if abs(trend_diff) > 1:
+        trend_icon = "📉" if trend_diff < 0 else "📈"
+        msg += f"  • Тренд: {trend_icon} <b>{'Снижение' if trend_diff < 0 else 'Рост'} на {abs(trend_diff):.1f}%</b>\n"
+    
+    if anomalies:
+        msg += "\n⚠️ <b>Обнаружены аномалии (низкая наценка):</b>\n"
+        for anom in anomalies[:3]: # Показываем до 3 аномалий
+            msg += f"  • {anom['date']}: всего {anom['markup']:.1f}%\n"
+            
+    # --- Построение графика ---
+    plt.style.use('seaborn-v0_8-darkgrid')
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    ax.plot(dates, markups, marker='o', linestyle='--', color='b', label='Наценка по накладным')
+    ax.axhline(y=avg_markup, color='r', linestyle='-', label=f'Средняя ({avg_markup:.1f}%)')
+    
+    ax.set_title(f'Динамика наценки для "{supplier_name}"', fontsize=16)
+    ax.set_ylabel('Наценка, %')
+    ax.yaxis.set_major_formatter(plt.FuncFormatter('{:.0f}%'.format))
+    fig.autofmt_xdate()
+    ax.legend()
+    ax.grid(True)
+    
+    buf = io.BytesIO()
+    fig.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close(fig)
+    
+    return buf, msg
+
+async def process_markup_analysis_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор периода и показывает результат анализа."""
+    query = update.callback_query
+    await query.message.edit_text("⏳ Анализирую накладные и строю график...")
+    
+    days = int(query.data.split('_')[-1])
+    supplier_name = context.user_data.get('markup_analysis', {}).get('supplier')
+
+    if not supplier_name:
+        return await query.message.edit_text("❌ Ошибка: поставщик не выбран. Начните заново.")
+
+    image_buffer, caption_text = generate_supplier_markup_analysis(context, supplier_name, days)
+    
+    await query.message.delete()
+    
+    if image_buffer is None:
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=f"😔 <b>Анализ для \"{supplier_name}\"</b>\n\n{caption_text}",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data=f"markup_supplier_{supplier_name}")]]))
+    else:
+        await context.bot.send_photo(
+            chat_id=query.message.chat_id,
+            photo=image_buffer,
+            caption=caption_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data=f"markup_supplier_{supplier_name}")]]))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -8294,6 +8431,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "analytics_insights":
             # Просто вызываем существующую функцию, она все сделает
             await show_business_insights(update, context)
+        elif data == "analytics_markup_analysis":
+            await start_markup_analysis_menu(update, context)
+        elif data.startswith("markup_supplier_"):
+            await handle_markup_supplier_selection(update, context)
+        elif data.startswith("markup_period_"):
+            await process_markup_analysis_period(update, context)
         elif data == "settings_system": # Для админских настроек
             await query.message.edit_text("🔐 Системные настройки:", reply_markup=admin_system_settings_kb())
         elif data == "action_log": await show_log_categories_menu(update, context)
