@@ -54,7 +54,7 @@ SHEET_INVENTORY = "Остаток магазина"
 DIALOG_KEYS = [
     'report', 'supplier', 'planning', 'edit_plan', 'edit_invoice',
     'revision', 'search_debt', 'safe_op', 'inventory_expense', 
-    'repay', 'shift', 'report_period', 'admin_expense', 'custom_analytics_period', 'supplier_edit', 'seller_expense', 'supplier_edit', 'report_fix', 'new_task', 'markup_analysis' 
+    'repay', 'shift', 'report_period', 'admin_expense', 'custom_analytics_period', 'supplier_edit', 'seller_expense', 'supplier_edit', 'report_fix', 'new_task', 'markup_analysis', 'custom_period_abc'
 ]
 
 
