@@ -689,8 +689,9 @@ async def toggle_debt_filter(update: Update, context: ContextTypes.DEFAULT_TYPE)
         if "Message is not modified" not in str(e):
             raise
 
+# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 def perform_abc_analysis(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date, end_date: dt.date) -> dict | None:
-    """Проводит ABC-анализ поставщиков по сумме закупок за период."""
+    """Проводит ABC-анализ поставщиков по СУММЕ ЗАКУПОК за период."""
     suppliers_rows = get_cached_sheet_data(context, SHEET_SUPPLIERS)
     if not suppliers_rows:
         return None
@@ -702,6 +703,7 @@ def perform_abc_analysis(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date
             sup_date = pdate(row[0])
             if sup_date and start_date <= sup_date <= end_date:
                 supplier_name = row[1].strip()
+                # Используем "К оплате" - это и есть сумма закупки
                 amount_to_pay = parse_float(row[4])
                 supplier_totals[supplier_name] += amount_to_pay
         except (ValueError, IndexError):
@@ -723,14 +725,15 @@ def perform_abc_analysis(context: ContextTypes.DEFAULT_TYPE, start_date: dt.date
         percentage = (total / grand_total) * 100
         cumulative_percentage += percentage
         
+        # --- ИЗМЕНЕНИЕ: Формируем строку с эмодзи ---
         supplier_info = f"<b>{name}</b>: {total:,.2f}₴ ({percentage:.1f}%)".replace(',', ' ')
         
-        if cumulative_percentage <= 75: # Группа A - ~75% оборота
-            group_a.append(supplier_info)
-        elif cumulative_percentage <= 95: # Группа B - следующие ~20%
-            group_b.append(supplier_info)
-        else: # Группа C - оставшиеся
-            group_c.append(supplier_info)
+        if cumulative_percentage <= 80: # Группа A - 80%
+            group_a.append(f"🅰️ {supplier_info}")
+        elif cumulative_percentage <= 95: # Группа B - следующие 15%
+            group_b.append(f"🅱️ {supplier_info}")
+        else: # Группа C - оставшиеся 5%
+            group_c.append(f"🅾️ {supplier_info}")
             
     return {'A': group_a, 'B': group_b, 'C': group_c, 'total': grand_total}
     
@@ -2621,16 +2624,18 @@ async def show_abc_analysis_menu(update: Update, context: ContextTypes.DEFAULT_T
     )
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 async def process_abc_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE, start_date: dt.date = None, end_date: dt.date = None):
     """Обрабатывает выбор периода и показывает результат ABC-анализа."""
     query = update.callback_query
     
+    # Определяем, как было вызвано (от кнопки или от текста)
+    target_message = query.message if query else update.message
     if query:
-        await query.message.edit_text("⏳ Провожу ABC-анализ...")
-    else: # Вызов из handle_text
-        await update.message.reply_text("⏳ Провожу ABC-анализ...")
+        await target_message.edit_text("⏳ Провожу ABC-анализ...")
+    else:
+        await target_message.reply_text("⏳ Провожу ABC-анализ...")
 
-    # Если даты не переданы, вычисляем их из callback_data
     if start_date is None or end_date is None:
         days = int(query.data.split('_')[-1])
         end_date = dt.date.today()
@@ -2641,17 +2646,18 @@ async def process_abc_analysis(update: Update, context: ContextTypes.DEFAULT_TYP
     if not analysis_result:
         msg = "😔 Недостаточно данных для проведения ABC-анализа за выбранный период."
     else:
+        # --- ИЗМЕНЕНИЕ: Используем правильную терминологию ---
         msg = (f"<b>📦 ABC-анализ поставщиков</b>\n"
                f"<i>Период: {sdate(start_date)} - {sdate(end_date)}</i>\n"
-               f"<i>Общий оборот: {analysis_result['total']:,.2f}₴</i>\n\n".replace(',', ' ') +
-               "<b>Группа А (Ключевые, ~75% оборота):</b>\n" +
+               f"<i>Общая сумма закупок: {analysis_result['total']:,.2f}₴</i>\n\n".replace(',', ' ') +
+               "<b>Группа А (Ключевые, ~80% закупок):</b>\n" +
                "\n".join(analysis_result['A']) + "\n\n" +
-               "<b>Группа B (Стабильные, ~20% оборота):</b>\n" +
+               "<b>Группа B (Стабильные, ~15% закупок):</b>\n" +
                "\n".join(analysis_result['B']) + "\n\n" +
-               "<b>Группа C (Прочие, ~5% оборота):</b>\n" +
+               "<b>Группа C (Прочие, ~5% закупок):</b>\n" +
                "\n".join(analysis_result['C']))
     
-    target_message = query.message if query else update.message
+    # Используем reply_text, чтобы избежать ошибок с редактированием
     await target_message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=abc_analysis_period_kb())
 
 
