@@ -367,6 +367,7 @@ def abc_analysis_period_kb():
             InlineKeyboardButton("90 дней", callback_data="abc_period_90"),
             InlineKeyboardButton("Год", callback_data="abc_period_365")
         ],
+        [InlineKeyboardButton("🗓 Произвольный период", callback_data="custom_period_abc")],
         [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
     ])
 
@@ -1932,7 +1933,7 @@ async def execute_invoice_edit(update: Update, context: ContextTypes.DEFAULT_TYP
     new_markup = parse_float(new_row[5])
     markup_diff = new_markup - old_markup
     if abs(markup_diff) > 0.01:
-        add_inventory_operation("Корректировка", markup_diff, comment_prefix, who)
+        add_inventory_operation(context, "Корректировка", markup_diff, comment_prefix, who)
 
     # --- НАЧАЛО КЛЮЧЕВОГО ИСПРАВЛЕНИЯ (КОРРЕКТИРОВКА СЕЙФА) ---
     # 4.2. Точная корректировка сейфа на основе типа оплаты
@@ -2619,38 +2620,39 @@ async def show_abc_analysis_menu(update: Update, context: ContextTypes.DEFAULT_T
         reply_markup=abc_analysis_period_kb()
     )
 
-async def process_abc_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запускает ABC-анализ и отправляет отформатированный результат."""
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+async def process_abc_analysis(update: Update, context: ContextTypes.DEFAULT_TYPE, start_date: dt.date = None, end_date: dt.date = None):
+    """Обрабатывает выбор периода и показывает результат ABC-анализа."""
     query = update.callback_query
-    await query.message.edit_text("⏳ Провожу анализ, это может занять минуту...")
+    
+    if query:
+        await query.message.edit_text("⏳ Провожу ABC-анализ...")
+    else: # Вызов из handle_text
+        await update.message.reply_text("⏳ Провожу ABC-анализ...")
 
-    days = int(query.data.split('_')[-1])
-    end_date = dt.date.today()
-    start_date = end_date - dt.timedelta(days=days - 1)
+    # Если даты не переданы, вычисляем их из callback_data
+    if start_date is None or end_date is None:
+        days = int(query.data.split('_')[-1])
+        end_date = dt.date.today()
+        start_date = end_date - dt.timedelta(days=days - 1)
 
     analysis_result = perform_abc_analysis(context, start_date, end_date)
 
     if not analysis_result:
-        await query.message.edit_text("😔 Недостаточно данных для проведения анализа за этот период.", reply_markup=abc_analysis_period_kb())
-        return
-
-    msg = f"<b>📦 ABC-анализ Поставщиков</b>\n<i>за период {sdate(start_date)} - {sdate(end_date)}</i>\n\n"
-    msg += f"Общая сумма закупок: <b>{analysis_result['total']:,.2f}₴</b>\n".replace(',', ' ')
+        msg = "😔 Недостаточно данных для проведения ABC-анализа за выбранный период."
+    else:
+        msg = (f"<b>📦 ABC-анализ поставщиков</b>\n"
+               f"<i>Период: {sdate(start_date)} - {sdate(end_date)}</i>\n"
+               f"<i>Общий оборот: {analysis_result['total']:,.2f}₴</i>\n\n".replace(',', ' ') +
+               "<b>Группа А (Ключевые, ~75% оборота):</b>\n" +
+               "\n".join(analysis_result['A']) + "\n\n" +
+               "<b>Группа B (Стабильные, ~20% оборота):</b>\n" +
+               "\n".join(analysis_result['B']) + "\n\n" +
+               "<b>Группа C (Прочие, ~5% оборота):</b>\n" +
+               "\n".join(analysis_result['C']))
     
-    msg += "\n🅰️ <b>Группа А (Ключевые поставщики)</b>\n"
-    msg += "\n".join(f"  • {item}" for item in analysis_result['A']) or "  (нет)"
-    
-    msg += "\n\n🅱️ <b>Группа B (Важные поставщики)</b>\n"
-    msg += "\n".join(f"  • {item}" for item in analysis_result['B']) or "  (нет)"
-    
-    msg += "\n\n🅾️ <b>Группа C (Второстепенные поставщики)</b>\n"
-    msg += "\n".join(f"  • {item}" for item in analysis_result['C']) or "  (нет)"
-
-    await query.message.edit_text(
-        msg, 
-        parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="analytics_abc_suppliers")]])
-    )
+    target_message = query.message if query else update.message
+    await target_message.reply_text(msg, parse_mode=ParseMode.HTML, reply_markup=abc_analysis_period_kb())
 
 
 
@@ -3432,7 +3434,7 @@ async def execute_delete_invoice(update: Update, context: ContextTypes.DEFAULT_T
             add_safe_operation(context, user, "Пополнение", to_pay, f"Отмена оплаты по удаленной накладной от {invoice_date} ({supplier_name})")
 
         # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Добавляем 'who' в вызов функции ---
-        add_inventory_operation("Корректировка", -markup_amount, f"Удаление накладной от {invoice_date} ({supplier_name})", who)
+        add_inventory_operation(context, "Корректировка", -markup_amount, f"Удаление накладной от {invoice_date} ({supplier_name})", who)
 
         # Откат долга, если он был
         if pay_type.startswith("Долг"):
@@ -3462,6 +3464,45 @@ async def execute_delete_invoice(update: Update, context: ContextTypes.DEFAULT_T
     except Exception as e:
         await query.message.edit_text(f"❌ Произошла критическая ошибка при удалении: {e}")
         logging.error(f"Ошибка при удалении накладной (строка {row_index}): {e}", exc_info=True)
+
+# --- ДОБАВЬТЕ ЭТОТ БЛОК НОВЫХ ФУНКЦИЙ ---
+
+async def start_custom_period_abc(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает диалог выбора произвольного периода для ABC-анализа."""
+    query = update.callback_query
+    context.user_data['custom_abc_period'] = {'step': 'start_date'}
+    await query.message.edit_text(
+        "🗓 Введите начальную дату для анализа (ДД.ММ.ГГГГ):",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("❌ Отмена", callback_data="analytics_abc_suppliers")]])
+    )
+
+async def handle_abc_start_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает ввод начальной даты и запрашивает конечную."""
+    try:
+        start_date = pdate(update.message.text)
+        if not start_date: raise ValueError("Неверный формат даты")
+        
+        context.user_data['custom_abc_period']['start_date'] = start_date
+        context.user_data['custom_abc_period']['step'] = 'end_date'
+        await update.message.reply_text(f"Начальная дата: {sdate(start_date)}\n\nТеперь введите конечную дату (ДД.ММ.ГГГГ):")
+    except ValueError:
+        await update.message.reply_text("❌ Неверный формат даты. Пожалуйста, используйте ДД.ММ.ГГГГ")
+
+async def handle_abc_end_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает ввод конечной даты и запускает анализ."""
+    try:
+        end_date = pdate(update.message.text)
+        start_date = context.user_data['custom_abc_period']['start_date']
+        if not end_date or end_date < start_date:
+            raise ValueError("Конечная дата не может быть раньше начальной.")
+            
+        # Запускаем анализ с нашими датами
+        await process_abc_analysis(update, context, start_date=start_date, end_date=end_date)
+        
+    except ValueError as e:
+        await update.message.reply_text(f"❌ {e}")
+    finally:
+        context.user_data.pop('custom_abc_period', None)
         
 async def handle_planning_supplier_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает выбор поставщика при планировании и добавляет умную подсказку."""
@@ -6325,7 +6366,7 @@ async def execute_report_fix(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
             # Если общая выручка увеличилась, это Продажа, и остаток УМЕНЬШАЕТСЯ
             if total_sales_diff != 0:
-                add_inventory_operation("Продажа", total_sales_diff, comment, who)
+                add_inventory_operation(context, "Продажа", total_sales_diff, comment, who)
 
             # --- ПЕРЕСЧЕТ ЗАРПЛАТЫ ---
             ws_salaries = GSHEET.worksheet(SHEET_SALARIES)
@@ -7888,6 +7929,10 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return await list_suppliers_for_editing(update, context) 
         elif step == 'new_name':
             return await save_edited_supplier_name(update, context)
+    elif state_key == 'custom_abc_period':
+        step = user_data['custom_abc_period'].get('step')
+        if step == 'start_date': return await handle_abc_start_date(update, context)
+        elif step == 'end_date': return await handle_abc_end_date(update, context)
 
     elif state_key == 'markup_analysis':
         step = user_data['markup_analysis'].get('step')
@@ -8275,6 +8320,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_abc_analysis_menu(update, context)
         elif data.startswith("abc_period_"):
             await process_abc_analysis(update, context)
+        elif data == "custom_period_abc":
+            await start_custom_period_abc(update, context)
         
         # --- 9. ДОЛГИ ---
         elif data.startswith("current_debts_"):
