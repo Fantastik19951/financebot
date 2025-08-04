@@ -2983,46 +2983,51 @@ async def show_report(update: Update, context: ContextTypes.DEFAULT_TYPE, start_
         else:
             raise
 
+# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 async def show_daily_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Формирует и показывает умную и полную оперативную панель на текущий день."""
     query = update.callback_query
     await query.message.edit_text("⏳ Собираю самую полную оперативную сводку...")
 
     today_str = sdate()
-    today = pdate(today_str)
-
+    
     # --- 1. Загружаем все необходимые данные ---
     all_data = {
-        sheet: get_cached_sheet_data(context, sheet, force_update=True) or []
-        for sheet in [SHEET_SHIFTS, SHEET_PLAN_FACT, SHEET_SUPPLIERS, SHEET_DEBTS, "Сейф", SHEET_EXPENSES, SHEET_INVENTORY]
+        sheet: get_cached_sheet_data(context, sheet) or []
+        for sheet in [SHEET_SHIFTS, SHEET_PLAN_FACT, SHEET_SUPPLIERS, "Сейф", SHEET_EXPENSES, SHEET_INVENTORY]
     }
 
     # --- 2. Обрабатываем данные ---
     on_shift_today = next((", ".join(filter(None, row[1:])) for row in all_data[SHEET_SHIFTS] if row and row[0] == today_str), "Не указано")
     
-    # --- ВОЗВРАЩАЕМ ПРОГНОЗЫ ---
     sales_forecast = get_sales_forecast_for_today(context)
     avg_costs = get_avg_daily_costs(context)
     profit_forecast = (sales_forecast - avg_costs) if sales_forecast is not None and avg_costs is not None else None
 
-    # --- Детальный расчет сегодняшних финансов по наличным ---
+    # --- ИСПРАВЛЕНИЕ ЛОГИКИ РАСЧЕТА ОСТАТКА К ОПЛАТЕ ---
     todays_plans = [row for row in all_data[SHEET_PLAN_FACT] if row and row[0] == today_str]
     todays_cash_plans = [p for p in todays_plans if len(p) > 3 and 'налич' in p[3].lower()]
+    
     total_cash_planned = sum(parse_float(p[2]) for p in todays_cash_plans)
     
     todays_cash_invoices = [inv for inv in all_data[SHEET_SUPPLIERS] if inv and inv[0] == today_str and len(inv) > 6 and inv[6] == "Наличные"]
     total_cash_paid = sum(parse_float(inv[4]) for inv in todays_cash_invoices)
     
+    # Составляем список поставщиков, которые уже приехали и были оплачены наличными
     paid_suppliers = {inv[1].strip() for inv in todays_cash_invoices}
-    remaining_to_pay_list = [f"  • {p[1]} ({parse_float(p[2]):.2f}₴)" for p in todays_cash_plans if p[1].strip() not in paid_suppliers]
     
-    remaining_cash_to_pay = max(0, total_cash_planned - total_cash_paid)
+    # Находим планы тех поставщиков, которые еще НЕ приехали
+    remaining_to_pay_plans = [p for p in todays_cash_plans if p[1].strip() not in paid_suppliers]
+    # Суммируем их плановые суммы - это и есть то, что осталось оплатить
+    remaining_cash_to_pay = sum(parse_float(p[2]) for p in remaining_to_pay_plans)
+    # Формируем список для отображения
+    remaining_to_pay_list = [f"  • {p[1]} ({parse_float(p[2]):.2f}₴)" for p in remaining_to_pay_plans]
+    # --- КОНЕЦ ИСПРАВЛЕНИЯ ---
 
     # --- 3. Собираем итоговое сообщение ---
     msg = f"<b>☀️ Оперативная сводка на {today_str}</b>\n"
     msg += f"<b>👤 На смене:</b> {on_shift_today}\n"
     
-    # --- ВОЗВРАЩАЕМ БЛОК С ПРОГНОЗАМИ ---
     if sales_forecast is not None:
         msg += f"🔮 <b>Прогноз на день:</b>\n"
         msg += f"   • Выручка: ~{sales_forecast:,.0f}₴\n".replace(',', ' ')
@@ -3032,14 +3037,12 @@ async def show_daily_dashboard(update: Update, context: ContextTypes.DEFAULT_TYP
     msg += "──────────────────\n"
     
     msg += "<b>💰 Финансы (Наличные):</b>\n"
-    msg += f"  • Запланировано к оплате (НАЛ): {total_cash_planned:.2f}₴\n"
-    msg += f"  • Уже оплачено сегодня (НАЛ): {total_cash_paid:.2f}₴\n"
-    msg += f"  • <b>Осталось оплатить (НАЛ): {remaining_cash_to_pay:.2f}₴</b>\n"
+    msg += f"  • Запланировано к оплате: {total_cash_planned:.2f}₴\n"
+    msg += f"  • Уже оплачено сегодня: {total_cash_paid:.2f}₴\n"
+    msg += f"  • <b>Осталось оплатить: {remaining_cash_to_pay:.2f}₴</b>\n"
     if remaining_to_pay_list:
         msg += "\n".join(remaining_to_pay_list)
         
-    # ... (остальная часть функции для вывода фактических приходов и кнопок остается без изменений) ...
-
     msg += "\n\n<b>✅ Фактические приходы за сегодня:</b>\n"
     all_todays_invoices = [row for row in all_data[SHEET_SUPPLIERS] if row and row[0] == today_str]
     if not all_todays_invoices:
@@ -3057,6 +3060,94 @@ async def show_daily_dashboard(update: Update, context: ContextTypes.DEFAULT_TYP
     except BadRequest as e:
         if "Message is not modified" not in str(e):
             logging.error(f"Ошибка при обновлении сводки: {e}")
+
+def predict_cash_gap(context: ContextTypes.DEFAULT_TYPE, days_ahead: int = 7) -> str:
+    today = dt.date.today()
+    end_date = today + dt.timedelta(days=days_ahead)
+    
+    # 1. Прогнозируемая выручка на период (берём среднее за 8 последних недель по дням недели)
+    reports = get_cached_sheet_data(context, SHEET_REPORT) or []
+    weekday_sales = {i: [] for i in range(7)}
+    for row in reports:
+        d = pdate(row[0])
+        if d and (today - dt.timedelta(days=56)) <= d < today:
+            weekday_sales[d.weekday()].append(parse_float(row[4]))
+    # Считаем среднюю выручку на каждый день недели
+    weekday_avg = {w: (sum(lst)/len(lst) if lst else 0) for w, lst in weekday_sales.items()}
+    forecast_income = 0
+    for i in range(days_ahead):
+        d = today + dt.timedelta(days=i)
+        forecast_income += weekday_avg.get(d.weekday(), 0)
+
+    # 2. Обязательные выплаты — долги с наступающим сроком, плановые расходы, зарплаты, аренда и пр.
+    debts = get_cached_sheet_data(context, SHEET_DEBTS) or []
+    mandatory_payments = 0
+    for row in debts:
+        if len(row) > 6 and row[6].strip().lower() != "да":  # Не оплачено
+            due_date = pdate(row[5])
+            if due_date and today <= due_date <= end_date:
+                mandatory_payments += parse_float(row[4])  # Остаток по долгу
+
+    # Плановые оплаты (из ПланФактНаЗавтра)
+    plan_fact = get_cached_sheet_data(context, SHEET_PLAN_FACT) or []
+    for row in plan_fact:
+        date = pdate(row[0])
+        if date and today <= date <= end_date:
+            mandatory_payments += parse_float(row[2])
+
+    # Зарплаты
+    salaries = get_cached_sheet_data(context, SHEET_SALARIES) or []
+    for row in salaries:
+        d = pdate(row[0])
+        if d and today <= d <= end_date:
+            mandatory_payments += parse_float(row[3])
+
+    # + можешь добавить сюда "Аренда", если она фикс в расходах или отдельным листом
+
+    # 3. Фактический остаток на сегодня
+    safe_rows = get_cached_sheet_data(context, "Сейф") or []
+    current_balance = 0
+    for row in safe_rows:
+        # row = [дата, тип операции, сумма, комментарий, кто]
+        try:
+            op_date = pdate(row[0])
+            amount = parse_float(row[2])
+            op_type = row[1].lower()
+            if op_type == "старт":
+                current_balance = amount
+            elif op_type in ["пополнение", "приход"]:
+                current_balance += amount
+            elif op_type in ["выдача", "расход"]:
+                current_balance -= amount
+        except Exception:
+            continue
+
+    # 4. Прогноз на конец периода
+    forecast_balance = current_balance + forecast_income - mandatory_payments
+
+    msg = (
+        f"<b>🛑 Прогноз кассового разрыва</b>\n"
+        f"Период: <code>{sdate(today)} - {sdate(end_date)}</code>\n"
+        f"Обязательные выплаты: <b>{mandatory_payments:,.0f}₴</b>\n"
+        f"Прогноз поступлений: <b>{forecast_income:,.0f}₴</b>\n"
+        f"Текущий баланс: <b>{current_balance:,.0f}₴</b>\n"
+        f"<b>Ожидаемый баланс: {forecast_balance:,.0f}₴</b>\n"
+    )
+    if forecast_balance < 0:
+        msg += f"\n⚠️ <b>Дефицит: {forecast_balance:,.0f}₴</b> — денег не хватит, нужно оптимизировать расходы или ускорить доходы!"
+    else:
+        msg += f"\n✅ Всё ок: дефицита не прогнозируется."
+    return msg.replace(',', ' ')
+
+async def admin_cash_gap_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик кнопки 'Проверка разрыва'."""
+    msg = predict_cash_gap(context, days_ahead=7)
+    await update.callback_query.message.edit_text(
+        msg, parse_mode=ParseMode.HTML,
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]])
+    )
+
+
 
 async def ask_for_invoice_edit_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Эта функция теперь ТОЛЬКО задает вопросы, основываясь на текущем состоянии."""
@@ -4184,6 +4275,7 @@ def admin_panel_kb():
         [InlineKeyboardButton("⚙️ Системные настройки", callback_data="system_settings")],
         [InlineKeyboardButton("📋 Журнал действий", callback_data="action_log")],
         [InlineKeyboardButton("🧮 Переучёт", callback_data="admin_revision")],
+        [InlineKeyboardButton("🔑 Проверка разрыва", callback_data="admin_cash_gap_check")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
     
@@ -8110,6 +8202,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             old_name = context.user_data.get('supplier_edit', {}).get('old_name', 'N/A')
             context.user_data['supplier_edit']['step'] = 'new_name'
             await query.message.edit_text(f"Введите новое имя для '<b>{old_name}</b>':", parse_mode=ParseMode.HTML)
+        elif data == "admin_cash_gap_check":
+            await admin_cash_gap_check(update, context)
+
         
         elif data.startswith("dossier_"):
             await show_supplier_dossier(update, context)
