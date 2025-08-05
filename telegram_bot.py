@@ -3667,10 +3667,14 @@ async def start_dialogue_analytics(update: Update, context: ContextTypes.DEFAULT
     )
 
 # --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+# --- ЗАМЕНИТЕ ТОЛЬКО ЭТУ ФУНКЦИЮ ---
 async def handle_dialogue_analytics_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает выбор пользователя и проводит полный первичный анализ."""
     query = update.callback_query
-    question = query.data.split('_')[-1]
+    
+    # --- ИСПРАВЛЕНИЕ: Правильно извлекаем тип вопроса ---
+    prefix = "dialogue_q_"
+    question = query.data[len(prefix):]
     
     await query.message.edit_text("⏳ Анализирую данные за последние 60 дней... Это может занять до минуты.")
 
@@ -3689,7 +3693,6 @@ async def handle_dialogue_analytics_choice(update: Update, context: ContextTypes
     # --- 2. Логика для каждого вопроса ---
 
     if question == "profit_down":
-        # ... (логика для "Почему упала прибыль?", которую мы уже реализовали, остается здесь)
         current_revenue = sum(parse_float(r[4]) for r in reports if (d := pdate(r[0])) and current_period_start <= d < today)
         previous_revenue = sum(parse_float(r[4]) for r in reports if (d := pdate(r[0])) and previous_period_start <= d < current_period_start)
         current_cogs = sum(parse_float(s[4]) for s in suppliers if (d := pdate(s[0])) and current_period_start <= d < today)
@@ -3723,7 +3726,6 @@ async def handle_dialogue_analytics_choice(update: Update, context: ContextTypes
         else:
             msg = f"📈 Расходы за последние 30 дней **выросли на {expenses_diff:,.2f}₴**.\n\n".replace(',', ' ')
             
-            # Находим категории, которые выросли больше всего
             current_cats = defaultdict(float)
             for row in expenses:
                 if len(row) > 2 and (d := pdate(row[0])) and current_period_start <= d < today:
@@ -3739,7 +3741,6 @@ async def handle_dialogue_analytics_choice(update: Update, context: ContextTypes
     elif question == "compare_sellers":
         msg = "<b>👥 Сравнение эффективности продавцов</b> (за последние 30 дней):\n\n"
         
-        # Собираем данные по каждому продавцу
         seller_stats = defaultdict(lambda: {'sales': 0, 'shifts': 0, 'markups': []})
         for row in reports:
             if len(row) > 4 and (d := pdate(row[0])) and current_period_start <= d < today:
