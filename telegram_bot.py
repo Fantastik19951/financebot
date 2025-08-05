@@ -3139,13 +3139,6 @@ def predict_cash_gap(context: ContextTypes.DEFAULT_TYPE, days_ahead: int = 7) ->
         msg += f"\n✅ Всё ок: дефицита не прогнозируется."
     return msg.replace(',', ' ')
 
-async def admin_cash_gap_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработчик кнопки 'Проверка разрыва'."""
-    msg = predict_cash_gap(context, days_ahead=7)
-    await update.callback_query.message.edit_text(
-        msg, parse_mode=ParseMode.HTML,
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Назад", callback_data="admin_panel")]])
-    )
 
 
 
@@ -3654,6 +3647,141 @@ async def quick_safe_balance(update: Update, context: ContextTypes.DEFAULT_TYPE)
     
     # Отправляем ответ личным сообщением
     await update.message.reply_text(msg, parse_mode=ParseMode.HTML)
+
+# --- НОВЫЙ БЛОК: ДИАЛОГОВАЯ АНАЛИТИКА ---
+
+async def start_dialogue_analytics(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начинает диалог с 'финансовым аналитиком'."""
+    query = update.callback_query
+    
+    kb = [
+        [InlineKeyboardButton("📉 Почему упала прибыль?", callback_data="dialogue_q_profit_down")],
+        [InlineKeyboardButton("📈 Почему выросли расходы?", callback_data="dialogue_q_expenses_up")],
+        [InlineKeyboardButton("👥 Сравнить эффективность продавцов", callback_data="dialogue_q_compare_sellers")],
+        [InlineKeyboardButton("🔙 Назад в Аналитику", callback_data="analytics_menu")]
+    ]
+    
+    await query.message.edit_text(
+        "Здравствуйте! Я ваш финансовый аналитик. Что вас интересует?",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ЦЕЛИКОМ ---
+async def handle_dialogue_analytics_choice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает выбор пользователя и проводит полный первичный анализ."""
+    query = update.callback_query
+    question = query.data.split('_')[-1]
+    
+    await query.message.edit_text("⏳ Анализирую данные за последние 60 дней... Это может занять до минуты.")
+
+    # --- 1. Собираем все необходимые данные ---
+    today = dt.date.today()
+    current_period_start = today - dt.timedelta(days=30)
+    previous_period_start = today - dt.timedelta(days=60)
+    
+    reports = get_cached_sheet_data(context, SHEET_REPORT) or []
+    suppliers = get_cached_sheet_data(context, SHEET_SUPPLIERS) or []
+    expenses = get_cached_sheet_data(context, SHEET_EXPENSES) or []
+
+    msg = ""
+    kb = []
+
+    # --- 2. Логика для каждого вопроса ---
+
+    if question == "profit_down":
+        # ... (логика для "Почему упала прибыль?", которую мы уже реализовали, остается здесь)
+        current_revenue = sum(parse_float(r[4]) for r in reports if (d := pdate(r[0])) and current_period_start <= d < today)
+        previous_revenue = sum(parse_float(r[4]) for r in reports if (d := pdate(r[0])) and previous_period_start <= d < current_period_start)
+        current_cogs = sum(parse_float(s[4]) for s in suppliers if (d := pdate(s[0])) and current_period_start <= d < today)
+        previous_cogs = sum(parse_float(s[4]) for s in suppliers if (d := pdate(s[0])) and previous_period_start <= d < current_period_start)
+        current_expenses = sum(parse_float(e[1]) for e in expenses if (d := pdate(e[0])) and current_period_start <= d < today)
+        previous_expenses = sum(parse_float(e[1]) for e in expenses if (d := pdate(e[0])) and previous_period_start <= d < current_period_start)
+        current_profit = current_revenue - current_cogs - current_expenses
+        previous_profit = previous_revenue - previous_cogs - previous_expenses
+        profit_diff = current_profit - previous_profit
+
+        if profit_diff >= 0:
+            msg = f"📈 По моим данным, чистая прибыль за последние 30 дней **выросла** на {profit_diff:,.2f}₴. Проблем не обнаружено.".replace(',', ' ')
+        else:
+            msg = (f"📉 Я проанализировал данные. Ваша чистая прибыль за последние 30 дней **снизилась на {abs(profit_diff):,.2f}₴**.\n\n"
+                   f"Основные факторы:\n").replace(',', ' ')
+            cogs_diff = current_cogs - previous_cogs
+            expenses_diff = current_expenses - previous_expenses
+            if cogs_diff > 0: msg += f"  • Затраты на закупку товаров выросли на {cogs_diff:,.2f}₴.\n".replace(',', ' ')
+            if expenses_diff > 0: msg += f"  • Прочие расходы выросли на {expenses_diff:,.2f}₴.\n".replace(',', ' ')
+            msg += "\nЧто проанализируем глубже?"
+            kb.append([InlineKeyboardButton("📊 Показать динамику наценки", callback_data="deep_dive_markup_chart")])
+            kb.append([InlineKeyboardButton("🍰 Показать структуру расходов", callback_data="deep_dive_expense_chart")])
+
+    elif question == "expenses_up":
+        current_expenses = sum(parse_float(e[1]) for e in expenses if (d := pdate(e[0])) and current_period_start <= d < today)
+        previous_expenses = sum(parse_float(e[1]) for e in expenses if (d := pdate(e[0])) and previous_period_start <= d < current_period_start)
+        expenses_diff = current_expenses - previous_expenses
+
+        if expenses_diff <= 0:
+            msg = f"📉 Расходы за последние 30 дней **снизились** на {abs(expenses_diff):,.2f}₴. Отличная работа!".replace(',', ' ')
+        else:
+            msg = f"📈 Расходы за последние 30 дней **выросли на {expenses_diff:,.2f}₴**.\n\n".replace(',', ' ')
+            
+            # Находим категории, которые выросли больше всего
+            current_cats = defaultdict(float)
+            for row in expenses:
+                if len(row) > 2 and (d := pdate(row[0])) and current_period_start <= d < today:
+                    current_cats[row[2].strip().capitalize()] += parse_float(row[1])
+            
+            msg += "<b>Основные статьи роста:</b>\n"
+            for cat, total in sorted(current_cats.items(), key=lambda item: item[1], reverse=True)[:3]:
+                msg += f"  • {cat}: {total:,.2f}₴\n".replace(',', ' ')
+            
+            msg += "\nЧто проанализируем глубже?"
+            kb.append([InlineKeyboardButton("🍰 Показать полную структуру расходов", callback_data="deep_dive_expense_chart")])
+
+    elif question == "compare_sellers":
+        msg = "<b>👥 Сравнение эффективности продавцов</b> (за последние 30 дней):\n\n"
+        
+        # Собираем данные по каждому продавцу
+        seller_stats = defaultdict(lambda: {'sales': 0, 'shifts': 0, 'markups': []})
+        for row in reports:
+            if len(row) > 4 and (d := pdate(row[0])) and current_period_start <= d < today:
+                seller_name = row[1]
+                seller_stats[seller_name]['sales'] += parse_float(row[4])
+                seller_stats[seller_name]['shifts'] += 1
+        
+        for row in suppliers:
+            if len(row) > 11 and (d := pdate(row[0])) and current_period_start <= d < today:
+                seller_name = row[11]
+                to_pay, after_markup = parse_float(row[4]), parse_float(row[5])
+                if to_pay > 0:
+                    seller_stats[seller_name]['markups'].append(((after_markup / to_pay) - 1) * 100)
+
+        for seller, stats in sorted(seller_stats.items(), key=lambda item: item[1]['sales'], reverse=True):
+            avg_sales = stats['sales'] / stats['shifts'] if stats['shifts'] > 0 else 0
+            avg_markup = sum(stats['markups']) / len(stats['markups']) if stats['markups'] else 0
+            msg += f"👤 <b>{seller}:</b>\n"
+            msg += f"   • Выручка: {stats['sales']:,.2f}₴ ({stats['shifts']} смен)\n".replace(',', ' ')
+            msg += f"   • Средняя выручка за смену: {avg_sales:,.2f}₴\n".replace(',', ' ')
+            msg += f"   • Средняя наценка: {avg_markup:.1f}%\n"
+
+        msg += "\nЧто проанализируем глубже?"
+        kb.append([InlineKeyboardButton("📊 Показать график сравнения по дням недели", callback_data="deep_dive_seller_comparison")])
+
+    kb.append([InlineKeyboardButton("🔙 Назад", callback_data="dialogue_analytics_start")])
+    await query.message.edit_text(msg, parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup(kb))
+
+
+# --- ЗАМЕНИТЕ ЭТУ ФУНКЦИЮ ---
+async def handle_dialogue_deep_dive(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает запрос на углубленный анализ и перенаправляет на нужную функцию."""
+    query = update.callback_query
+    dive_type = query.data.split('_')[-1]
+    
+    if dive_type == "markup_chart":
+        await start_markup_analysis_menu(update, context)
+    elif dive_type == "expense_chart":
+        await show_expense_pie_chart_menu(update, context)
+    elif dive_type == "seller_comparison":
+        # Перенаправляем на уже существующую функцию сравнения
+        await show_sellers_comparison(update, context)
         
 async def send_shift_closed_notification(context: ContextTypes.DEFAULT_TYPE):
     """Отправляет уведомление о закрытии смены всем пользователям, КРОМЕ инициатора."""
@@ -4042,6 +4170,7 @@ def stock_safe_menu_kb():
     
 def analytics_menu_kb():
     return InlineKeyboardMarkup([
+        [InlineKeyboardButton("💬 Задать вопрос данным", callback_data="dialogue_analytics_start")],
         [InlineKeyboardButton("🕵️‍♂️ Бизнес-Инсайты", callback_data="analytics_insights")],
         [InlineKeyboardButton("📊 Финансовая Панель", callback_data="analytics_financial_dashboard")],
         [InlineKeyboardButton("🍰 Расходы по категориям", callback_data="analytics_expense_pie_chart")],
@@ -4275,7 +4404,6 @@ def admin_panel_kb():
         [InlineKeyboardButton("⚙️ Системные настройки", callback_data="system_settings")],
         [InlineKeyboardButton("📋 Журнал действий", callback_data="action_log")],
         [InlineKeyboardButton("🧮 Переучёт", callback_data="admin_revision")],
-        [InlineKeyboardButton("🔑 Проверка разрыва", callback_data="admin_cash_gap_check")],
         [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
     ])
     
@@ -8635,6 +8763,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await show_business_insights(update, context)
         elif data == "analytics_markup_analysis":
             await start_markup_analysis_menu(update, context)
+        elif data == "dialogue_analytics_start":
+            await start_dialogue_analytics(update, context)
+        elif data.startswith("dialogue_q_"):
+            await handle_dialogue_analytics_choice(update, context)
+        elif data.startswith("deep_dive_"):
+            await handle_dialogue_deep_dive(update, context)
         elif data.startswith("markup_supplier_"):
             await handle_markup_supplier_selection(update, context)
         elif data.startswith("markup_period_"):
