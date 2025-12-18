@@ -974,14 +974,54 @@ def get_cached_sheet_data(context: ContextTypes.DEFAULT_TYPE, sheet_name: str, c
         logging.error(f"Не удалось прочитать или кэшировать лист '{sheet_name}': {e}")
         return None
 
+def find_first_empty_row(ws, start_row: int = 2) -> int:
+    """Находит первую строку с пустыми данными (по первому столбцу), игнорируя форматирование."""
+    col_values = ws.col_values(1)
+    for i in range(start_row - 1, len(col_values)):
+        if not col_values[i] or col_values[i].strip() == '':
+            return i + 1
+    return len(col_values) + 1
+
+def format_row_with_borders(ws, row_num: int, num_cols: int):
+    """Форматирует строку: центрирование текста и обводка ячеек."""
+    try:
+        from gspread_formatting import CellFormat, TextFormat, format_cell_range, Border, Borders
+        
+        end_col = chr(ord('A') + num_cols - 1) if num_cols <= 26 else 'Z'
+        cell_range = f"A{row_num}:{end_col}{row_num}"
+        
+        border = Border("SOLID", {"red": 0, "green": 0, "blue": 0, "alpha": 1})
+        fmt = CellFormat(
+            horizontalAlignment="CENTER",
+            verticalAlignment="MIDDLE",
+            borders=Borders(top=border, bottom=border, left=border, right=border)
+        )
+        format_cell_range(ws, cell_range, fmt)
+    except ImportError:
+        logging.warning("gspread_formatting не установлен, форматирование пропущено")
+    except Exception as e:
+        logging.warning(f"Не удалось применить форматирование к строке {row_num}: {e}")
+
 def append_row_and_update_cache(context: ContextTypes.DEFAULT_TYPE, sheet_name: str, row_data: list):
-    """ГЛОБАЛЬНАЯ ФУНКЦИЯ: Добавляет строку в таблицу и мгновенно обновляет кэш."""
+    """ГЛОБАЛЬНАЯ ФУНКЦИЯ: Добавляет строку в первую пустую ячейку таблицы и мгновенно обновляет кэш."""
     try:
         ws = GSHEET.worksheet(sheet_name)
-        ws.append_row(row_data)
+        
+        empty_row = find_first_empty_row(ws, start_row=2)
+        
+        current_rows = ws.row_count
+        if empty_row > current_rows:
+            rows_to_add = empty_row - current_rows + 10
+            ws.add_rows(rows_to_add)
+            logging.info(f"Добавлено {rows_to_add} строк в лист '{sheet_name}'")
+        
+        end_col = chr(ord('A') + len(row_data) - 1) if len(row_data) <= 26 else 'Z'
+        cell_range = f"A{empty_row}:{end_col}{empty_row}"
+        ws.update(cell_range, [row_data])
+        
+        format_row_with_borders(ws, empty_row, len(row_data))
 
         cache = context.bot_data.setdefault('sheets_cache', {})
-        # Проверяем, существует ли кэш для этого листа
         if sheet_name in cache:
             sheet_cache, _ = cache.get(sheet_name, ([], None))
             sheet_cache.append(row_data)
