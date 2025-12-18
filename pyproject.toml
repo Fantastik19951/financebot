@@ -10,6 +10,7 @@ python = "^3.11" # Или ваша версия Python12
 python-telegram-bot = "*"
 python-dotenv = "*"
 gspread = "*"
+gspread-formatting = "*"
 oauth2client = "*"
 matplotlib = "*"
 numpy = "*"
