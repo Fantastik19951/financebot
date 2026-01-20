@@ -7663,7 +7663,12 @@ async def view_repayable_debts(update: Update, context: ContextTypes.DEFAULT_TYP
     await query.message.edit_text("⏳ Загружаю список долгов для погашения...")
 
     rows = get_cached_sheet_data(context, SHEET_DEBTS, force_update=True) or []
-    unpaid_debts = [row + [i+2] for i, row in enumerate(rows) if len(row) >= 7 and row[6].strip().lower() != "да"]
+    unpaid_debts = [
+        row + [i+2] for i, row in enumerate(rows) 
+        if len(row) >= 7 
+        and row[6].strip().lower() != "да" 
+        and parse_float(row[4]) > 0  # Исключаем долги с нулевым остатком
+    ]
     unpaid_debts.sort(key=lambda x: pdate(x[5]) or dt.date.max)
 
     if not unpaid_debts:
