@@ -37,8 +37,9 @@ USER_ID_TO_NAME = {
     "6851274022": "Людмила",
     "7455095273": "Евгений Тест",
     "7880600411": "Мария"
+    "1474738868": "Марина"
 }
-SELLERS = ["Сергей", "Наталия", "Людмила", "Мария"]
+SELLERS = ["Сергей", "Наталия", "Людмила", "Мария", "Марина"]
 ADMIN_CHAT_IDS = [5144039813, 476179186, 7455095273]
 SHEET_REPORT = "Дневные отчёты"
 SHEET_SUPPLIERS = "Поставщики"
@@ -1777,7 +1778,7 @@ async def staff_management_menu(update: Update, context: ContextTypes.DEFAULT_TY
     query = update.callback_query
     await query.message.edit_text("⏳ Загружаю данные по зарплатам...")
 
-    sellers_to_check = ["Людмила", "Мария"]
+    sellers_to_check = ["Людмила", "Мария", "Марина"]
     kb = []
     
     try:
@@ -7843,7 +7844,7 @@ async def withdraw_daily_salary(update: Update, context: ContextTypes.DEFAULT_TY
     seller_name = USER_ID_TO_NAME.get(user_id)
 
     # Разрешаем операцию только определенным продавцам и админам
-    if seller_name not in ["Мария", "Людмила"]:
+    if seller_name not in ["Мария", "Людмила", "Марина"]:
         return await query.message.edit_text("🚫 У вас нет прав на выполнение этой операции.", reply_markup=stock_safe_menu_kb())
 
     today_str = sdate()
